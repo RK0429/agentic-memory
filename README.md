@@ -1,4 +1,4 @@
-# agentic-memory
+# agentic-mem
 
 Persistent memory system for AI agents — session notes, rolling state, and RAG search.
 
@@ -13,20 +13,20 @@ Persistent memory system for AI agents — session notes, rolling state, and RAG
 ## Installation
 
 ```bash
-pip install agentic-memory
+pip install agentic-mem
 ```
 
 With optional features:
 
 ```bash
 # Japanese tokenization support
-pip install agentic-memory[japanese]
+pip install agentic-mem[japanese]
 
 # Dense embedding search
-pip install agentic-memory[dense]
+pip install agentic-mem[dense]
 
 # All extras
-pip install agentic-memory[all]
+pip install agentic-mem[all]
 ```
 
 ## Quick Start
@@ -72,7 +72,7 @@ Or with `uvx`:
   "mcpServers": {
     "memory": {
       "command": "uvx",
-      "args": ["agentic-memory", "serve"]
+      "args": ["agentic-mem", "serve"]
     }
   }
 }

@@ -1,5 +1,5 @@
 [project]
-name = "agentic-memory"
+name = "agentic-mem"
 version = "0.1.0"
 description = "Persistent memory system for AI agents — session notes, rolling state, and RAG search"
 readme = "README.md"
@@ -41,7 +41,7 @@ dense = [
     "sentence-transformers>=2.2.0",
 ]
 all = [
-    "agentic-memory[japanese,dense]",
+    "agentic-mem[japanese,dense]",
 ]
 
 [project.scripts]

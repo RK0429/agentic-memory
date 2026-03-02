@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [[package]]
-name = "agentic-memory"
+name = "agentic-mem"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -38,7 +38,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentic-memory", extras = ["japanese", "dense"], marker = "extra == 'all'" },
+    { name = "agentic-mem", extras = ["japanese", "dense"], marker = "extra == 'all'" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
     { name = "numpy", marker = "extra == 'dense'", specifier = ">=1.26.0" },
