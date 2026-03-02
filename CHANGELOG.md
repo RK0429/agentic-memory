@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-02
+
+### Fixed
+
+- Fix `UnboundLocalError` in `upsert_dense()` where local variable `dense` shadowed the module import
+- Resolve mypy type errors (rename shadowing variables in search.py and index.py)
+- Fix all ruff linting and formatting errors
+
+## [0.1.0] - 2026-03-02
+
 ### Added
 
 - Initial package structure
