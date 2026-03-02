@@ -7,8 +7,9 @@ import datetime as _dt
 import inspect
 import json
 import sys
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence, cast
+from typing import Any, cast
 
 import click
 
@@ -404,7 +405,9 @@ def cmd_index_build(
 
 
 @index_group.command("upsert")
-@click.option("--note", "note_path", required=True, type=click.Path(path_type=Path), help="Note path.")
+@click.option(
+    "--note", "note_path", required=True, type=click.Path(path_type=Path), help="Note path."
+)
 @click.option("--no-dense", is_flag=True, help="Skip dense embedding generation.")
 @click.pass_context
 def cmd_index_upsert(ctx: click.Context, note_path: Path, no_dense: bool) -> None:
@@ -426,7 +429,9 @@ def cmd_index_upsert(ctx: click.Context, note_path: Path, no_dense: bool) -> Non
 
 @main.command("evidence")
 @click.option("--query", required=True, help="Search query.")
-@click.option("--paths", "paths_opt", type=click.Path(path_type=Path), multiple=True, help="Note path(s).")
+@click.option(
+    "--paths", "paths_opt", type=click.Path(path_type=Path), multiple=True, help="Note path(s)."
+)
 @click.argument("paths_arg", nargs=-1, type=click.Path(path_type=Path))
 @click.option("--max-lines", type=int, default=8, show_default=True)
 @click.pass_context
@@ -451,7 +456,9 @@ def cmd_evidence(
     click.echo(pack, nl=False)
 
 
-def _run_server(run_server: Any, memory_dir: Path, transport: str, port: int, verbose: bool) -> None:
+def _run_server(
+    run_server: Any, memory_dir: Path, transport: str, port: int, verbose: bool
+) -> None:
     try:
         params = inspect.signature(run_server).parameters
     except (TypeError, ValueError):
@@ -489,7 +496,9 @@ def cmd_serve(ctx: click.Context, transport: str, port: int) -> None:
     try:
         from agentic_memory.server import run_server
     except Exception as exc:
-        raise click.ClickException(f"Failed to import agentic_memory.server.run_server: {exc}") from exc
+        raise click.ClickException(
+            f"Failed to import agentic_memory.server.run_server: {exc}"
+        ) from exc
 
     _run_server(
         run_server=run_server,

@@ -129,7 +129,9 @@ def test_cli_state_set(tmp_memory_dir: Path) -> None:
     memory_dir = tmp_memory_dir
 
     _run(runner, memory_dir, ["state", "add", "--section", "focus", "--item", "Old Item"])
-    set_result = _run(runner, memory_dir, ["state", "set", "--section", "focus", "--item", "New Item"])
+    set_result = _run(
+        runner, memory_dir, ["state", "set", "--section", "focus", "--item", "New Item"]
+    )
     assert set_result.exit_code == 0
 
     show = _run(runner, memory_dir, ["state", "show", "--section", "focus"])
@@ -147,7 +149,9 @@ def test_cli_state_remove(tmp_memory_dir: Path) -> None:
         memory_dir,
         ["state", "add", "--section", "focus", "--item", "Keep This", "--item", "Remove This"],
     )
-    removed = _run(runner, memory_dir, ["state", "remove", "--section", "focus", "--pattern", "Remove"])
+    removed = _run(
+        runner, memory_dir, ["state", "remove", "--section", "focus", "--pattern", "Remove"]
+    )
     assert removed.exit_code == 0
     assert removed.output.splitlines()[0].strip() == "1"
 
@@ -174,7 +178,9 @@ def test_cli_search(tmp_memory_dir: Path) -> None:
     runner = CliRunner()
     memory_dir = tmp_memory_dir
 
-    result = _run(runner, memory_dir, ["search", "--query", "__no_result_expected__", "--engine", "python"])
+    result = _run(
+        runner, memory_dir, ["search", "--query", "__no_result_expected__", "--engine", "python"]
+    )
     assert result.exit_code == 0
     assert "No matches." in result.output
 

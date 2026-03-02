@@ -1,4 +1,5 @@
 """Dense retrieval helpers for agentic-memory search."""
+
 from __future__ import annotations
 
 import json
@@ -42,7 +43,7 @@ def _get_model(model_name: str = "cl-nagoya/ruri-v3-70m"):
     if not is_dense_available():
         return None
 
-    if _MODEL is not None and _MODEL_NAME == model_name:
+    if _MODEL is not None and model_name == _MODEL_NAME:
         return _MODEL
 
     try:

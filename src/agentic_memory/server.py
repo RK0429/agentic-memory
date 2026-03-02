@@ -6,9 +6,10 @@ import dataclasses
 import io
 import json
 import os
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -143,7 +144,8 @@ def memory_state_show(
 ) -> str:
     """Show rolling state sections.
 
-    `section` filters one state section, `stale_days` marks stale items, and `as_json` uses JSON output.
+    `section` filters one state section, `stale_days` marks stale items,
+    and `as_json` uses JSON output.
     `memory_dir` selects the state file location.
     Returns formatted state text, or JSON string when `as_json=True`.
     """

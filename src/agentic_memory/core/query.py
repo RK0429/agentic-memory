@@ -1,11 +1,13 @@
 """Query parsing and expansion helpers for agentic-memory search."""
+
 from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
 import difflib
 import shlex
-from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from agentic_memory.core import tokenizer
 
@@ -15,7 +17,7 @@ if TYPE_CHECKING:
 _normalize_text = tokenizer._normalize_text
 
 
-def _parse_date(s: str) -> Optional[_dt.date]:
+def _parse_date(s: str) -> _dt.date | None:
     s = (s or "").strip()
     try:
         return _dt.date.fromisoformat(s)
@@ -27,7 +29,7 @@ def _safe_lower(s: str) -> str:
     return _normalize_text(s).lower()
 
 
-def _tokenize_for_match(s: str) -> List[str]:
+def _tokenize_for_match(s: str) -> list[str]:
     return tokenizer.tokenize(s)
 
 
@@ -40,8 +42,8 @@ def _get_nested(d: dict, path: Sequence[str], default=None):
     return cur
 
 
-def _dedupe_keep_order(items: Sequence[str], casefold: bool = True) -> List[str]:
-    out: List[str] = []
+def _dedupe_keep_order(items: Sequence[str], casefold: bool = True) -> list[str]:
+    out: list[str] = []
     seen = set()
     for item in items:
         norm = _normalize_text(item).strip()
@@ -62,16 +64,16 @@ class QueryTerm:
     is_phrase: bool = False
     must: bool = False
     exclude: bool = False
-    field: Optional[str] = None
+    field: str | None = None
     weight: float = 1.0
-    date_range: Optional[Tuple[Optional[_dt.date], Optional[_dt.date]]] = None
+    date_range: tuple[_dt.date | None, _dt.date | None] | None = None
 
 
 class QueryParseError(ValueError):
     """Raised when a query cannot be parsed."""
 
 
-def parse_query(query: str) -> List[QueryTerm]:
+def parse_query(query: str) -> list[QueryTerm]:
     """
     Supports:
       - quoted phrases via shlex.split
@@ -84,7 +86,7 @@ def parse_query(query: str) -> List[QueryTerm]:
     except ValueError as exc:
         raise QueryParseError(str(exc)) from exc
 
-    out: List[QueryTerm] = []
+    out: list[QueryTerm] = []
     for tok in tokens:
         must = tok.startswith("+")
         exclude = tok.startswith("-")
@@ -130,11 +132,13 @@ def parse_query(query: str) -> List[QueryTerm]:
                 field, t = maybe_field, rest
 
         is_phrase = (" " in tok) or (" " in t)
-        out.append(QueryTerm(raw=tok, term=t, is_phrase=is_phrase, must=must, exclude=exclude, field=field))
+        out.append(
+            QueryTerm(raw=tok, term=t, is_phrase=is_phrase, must=must, exclude=exclude, field=field)
+        )
     return out
 
 
-def expand_terms(terms: List[QueryTerm], config: dict, enable: bool) -> List[QueryTerm]:
+def expand_terms(terms: list[QueryTerm], config: dict, enable: bool) -> list[QueryTerm]:
     """
     Optional helper: expands terms with simple heuristics + synonym map (config).
     This does NOT replace agent judgment; it's an optional assist.
@@ -144,7 +148,7 @@ def expand_terms(terms: List[QueryTerm], config: dict, enable: bool) -> List[Que
 
     decay = float(_get_nested(config, ["query_expansion", "decay"], 0.4) or 0.4)
     syn_map = _get_nested(config, ["query_expansion", "synonyms"], {}) or {}
-    expanded: List[QueryTerm] = []
+    expanded: list[QueryTerm] = []
     seen = set()
 
     def add(qt: QueryTerm) -> None:
@@ -197,11 +201,11 @@ def expand_terms(terms: List[QueryTerm], config: dict, enable: bool) -> List[Que
 
 
 def expand_with_fuzzy(
-    terms: List[QueryTerm],
+    terms: list[QueryTerm],
     vocab: set,
     config: dict,
     min_length: int = 4,
-) -> List[QueryTerm]:
+) -> list[QueryTerm]:
     """Expand query terms with fuzzy-matched vocabulary tokens using difflib."""
     if not vocab:
         return terms
@@ -252,11 +256,11 @@ def expand_with_fuzzy(
 
 
 def expand_with_feedback(
-    terms: List[QueryTerm],
+    terms: list[QueryTerm],
     feedback_terms: Sequence[str],
     feedback_decay: float,
     max_new_terms: int = 12,
-) -> List[QueryTerm]:
+) -> list[QueryTerm]:
     if not feedback_terms:
         return terms
 
@@ -299,20 +303,20 @@ def expand_with_feedback(
 
 
 def pseudo_relevance_feedback(
-    initial_results: List[Tuple[float, "IndexEntry", Dict]],
-    qterms: List[QueryTerm],
-    idf_cache: Dict[str, float],
+    initial_results: list[tuple[float, IndexEntry, dict]],
+    qterms: list[QueryTerm],
+    idf_cache: dict[str, float],
     top_k: int = 3,
     top_m: int = 5,
     prf_weight: float = 0.35,
-) -> List[QueryTerm]:
+) -> list[QueryTerm]:
     """Extract high-IDF terms from top-K results and add them as expanded query terms."""
     if not initial_results:
         return qterms
 
     existing_terms = {_safe_lower(qt.term) for qt in qterms if qt.term}
 
-    candidate_tokens: Dict[str, float] = {}
+    candidate_tokens: dict[str, float] = {}
     for _, entry, _ in initial_results[:top_k]:
         fields = entry.field_text()
         all_text = " ".join(fields.values())
@@ -328,7 +332,7 @@ def pseudo_relevance_feedback(
                 candidate_tokens[tok_lower] = idf
 
     ranked = sorted(candidate_tokens.items(), key=lambda x: x[1], reverse=True)
-    prf_terms: List[QueryTerm] = []
+    prf_terms: list[QueryTerm] = []
     seen = set()
     for tok, _ in ranked:
         if tok in seen:

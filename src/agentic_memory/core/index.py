@@ -3,9 +3,11 @@ index.py — Build / update memory index JSONL (lightweight, explainable index)
 
 Why this exists:
 - Improves retrieval quality and speed without bloating agent context.
-- Extracts *structured* signals (title/date/tags/files/errors/skills/decisions/next...) deterministically.
+- Extracts *structured* signals
+  (title/date/tags/files/errors/skills/decisions/next...) deterministically.
 - Standard library only.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -14,28 +16,47 @@ import os
 import re
 import sys
 import tempfile
+from contextlib import suppress
 from pathlib import Path
-from typing import Dict, List
 
-from agentic_memory.core import tokenizer
-from agentic_memory.core import dense
-from agentic_memory.core import sections
-from agentic_memory.core import signals
+from agentic_memory.core import dense, sections, signals, tokenizer
 
 ERROR_PATTERNS = [
-    r"\b[A-Z]{2,}[A-Z0-9_]{2,}\b",         # ECONNRESET, ERR_FOO_BAR
-    r"\bHTTP\s?[1-5]\d{2}\b",              # HTTP 500
-    r"\b[1-5]\d{2}\b",                     # 500, 404 (weak)
+    r"\b[A-Z]{2,}[A-Z0-9_]{2,}\b",  # ECONNRESET, ERR_FOO_BAR
+    r"\bHTTP\s?[1-5]\d{2}\b",  # HTTP 500
+    r"\b[1-5]\d{2}\b",  # 500, 404 (weak)
     r"\b[A-Za-z]+Exception\b",
     r"\b[A-Za-z]+Error\b",
     r"\bTraceback\b",
 ]
 
-STOPWORDS = set([
-    "the","and","or","to","of","in","a","an","for","on","with","by",
-    "md","daily","note","files","result","tests","time","date","context",
-])
+STOPWORDS = set(
+    [
+        "the",
+        "and",
+        "or",
+        "to",
+        "of",
+        "in",
+        "a",
+        "an",
+        "for",
+        "on",
+        "with",
+        "by",
+        "md",
+        "daily",
+        "note",
+        "files",
+        "result",
+        "tests",
+        "time",
+        "date",
+        "context",
+    ]
+)
 CJK_CHUNK_RE = tokenizer.CJK_CHUNK_RE
+
 
 def now_iso() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
@@ -53,29 +74,30 @@ def _normalize_note_path(note_path: Path, dailynote_dir: Path) -> str:
 def _atomic_write_text(path: Path, content: str) -> None:
     """Write content to path atomically via temp file + os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix='.tmp')
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp, str(path))
     except BaseException:
-        try:
+        with suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
 normalize_text = tokenizer.normalize_text
 
+
 def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="ignore")
+
 
 def first_h1(md: str) -> str:
     for ln in md.splitlines():
         if ln.startswith("# "):
             return ln[2:].strip()
     return "Untitled"
+
 
 def header_field(md: str, label: str) -> str:
     # matches "- Label: value" before the first "##"
@@ -85,7 +107,8 @@ def header_field(md: str, label: str) -> str:
         return ""
     return m.group(1).strip()
 
-def parse_list_field(v: str) -> List[str]:
+
+def parse_list_field(v: str) -> list[str]:
     v = normalize_text(v).strip()
     if not v:
         return []
@@ -93,8 +116,9 @@ def parse_list_field(v: str) -> List[str]:
     parts = [p.strip() for p in re.split(r"[,\u3001\uFF0C;；]+", v)]
     return dedupe([p for p in parts if p])
 
-def parse_sections(md: str) -> Dict[str, List[str]]:
-    sections: Dict[str, List[str]] = {}
+
+def parse_sections(md: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
     cur = None
     for ln in md.splitlines():
         m = re.match(r"^##\s+(.*)\s*$", ln)
@@ -106,7 +130,8 @@ def parse_sections(md: str) -> Dict[str, List[str]]:
             sections[cur].append(ln.rstrip())
     return sections
 
-def bullets(lines: List[str]) -> List[str]:
+
+def bullets(lines: list[str]) -> list[str]:
     out = []
     for ln in lines:
         s = ln.strip()
@@ -146,15 +171,12 @@ def normalize_path_candidate(raw: str) -> str:
         return ""
     # prefer backtick-enclosed token if present
     m = re.search(r"`([^`]+)`", c)
-    if m:
-        c = m.group(1).strip()
-    else:
-        c = c.split(" ", 1)[0].strip()
+    c = m.group(1).strip() if m else c.split(" ", 1)[0].strip()
     c = c.strip("`'\",.;:()[]{}")
     return c if is_path_like(c) else ""
 
 
-def extract_files(changes_lines: List[str]) -> List[str]:
+def extract_files(changes_lines: list[str]) -> list[str]:
     files = []
     i = 0
     while i < len(changes_lines):
@@ -186,7 +208,8 @@ def extract_files(changes_lines: List[str]) -> List[str]:
             i += 1
     return dedupe(files)
 
-def extract_commands(cmd_lines: List[str]) -> List[str]:
+
+def extract_commands(cmd_lines: list[str]) -> list[str]:
     cmds = []
     in_code = False
     for ln in cmd_lines:
@@ -203,9 +226,9 @@ def extract_commands(cmd_lines: List[str]) -> List[str]:
     return dedupe(cmds)[:30]
 
 
-def extract_plan_keywords(plan_lines: List[str]) -> List[str]:
+def extract_plan_keywords(plan_lines: list[str]) -> list[str]:
     """Extract keyword-like tokens from Plan/計画 section."""
-    raw_lines: List[str] = []
+    raw_lines: list[str] = []
     for ln in plan_lines:
         s = ln.strip()
         if not s:
@@ -240,11 +263,11 @@ def _normalize_test_item(raw: str) -> str:
     return s
 
 
-def _extract_inline_test_items(s: str) -> List[str]:
+def _extract_inline_test_items(s: str) -> list[str]:
     if not s:
         return []
     parts = [p.strip() for p in re.split(r"[,\u3001\uFF0C;；]+", s)]
-    out: List[str] = []
+    out: list[str] = []
     for part in parts:
         item = _normalize_test_item(part)
         if item:
@@ -252,9 +275,9 @@ def _extract_inline_test_items(s: str) -> List[str]:
     return out
 
 
-def extract_test_names(verification_lines: List[str]) -> List[str]:
+def extract_test_names(verification_lines: list[str]) -> list[str]:
     """Extract test names/commands under Verification > Tests."""
-    out: List[str] = []
+    out: list[str] = []
     in_tests = False
     for ln in verification_lines:
         s = ln.strip()
@@ -284,13 +307,13 @@ def extract_test_names(verification_lines: List[str]) -> List[str]:
     return dedupe(out)[:30]
 
 
-def extract_errors(md: str) -> List[str]:
+def extract_errors(md: str) -> list[str]:
     out = []
     for pat in ERROR_PATTERNS:
         for m in re.finditer(pat, md):
             tok = m.group(0)
             # trim too common numbers (e.g., 200, 201)
-            if tok.isdigit() and tok in {"200","201","202","204"}:
+            if tok.isdigit() and tok in {"200", "201", "202", "204"}:
                 continue
             if len(tok) < 4 and tok.isdigit():
                 continue
@@ -298,7 +321,8 @@ def extract_errors(md: str) -> List[str]:
     # keep somewhat unique + short list
     return dedupe(out)[:40]
 
-def extract_skill_candidates(lines: List[str]) -> List[str]:
+
+def extract_skill_candidates(lines: list[str]) -> list[str]:
     out = []
     for ln in lines:
         s = ln.strip()
@@ -313,7 +337,7 @@ def extract_skill_candidates(lines: List[str]) -> List[str]:
     return dedupe(out)
 
 
-def extract_skill_feedback(lines: List[str]) -> List[dict]:
+def extract_skill_feedback(lines: list[str]) -> list[dict]:
     """Parse SIGFB lines into structured feedback entries.
 
     Format: SIGFB: <skill_path> | <signal_type> | <description>
@@ -334,23 +358,28 @@ def extract_skill_feedback(lines: List[str]) -> List[dict]:
                 signal_type = parts[1]
                 if signal_type not in valid_types:
                     print(f"Warning: unknown SIGFB type '{signal_type}' in: {s}", file=sys.stderr)
-                out.append({
-                    "skill": parts[0],
-                    "type": parts[1],
-                    "desc": parts[2],
-                })
+                out.append(
+                    {
+                        "skill": parts[0],
+                        "type": parts[1],
+                        "desc": parts[2],
+                    }
+                )
             elif len(parts) == 2:
                 signal_type = parts[1]
                 if signal_type not in valid_types:
                     print(f"Warning: unknown SIGFB type '{signal_type}' in: {s}", file=sys.stderr)
-                out.append({
-                    "skill": parts[0],
-                    "type": parts[1],
-                    "desc": "",
-                })
+                out.append(
+                    {
+                        "skill": parts[0],
+                        "type": parts[1],
+                        "desc": "",
+                    }
+                )
     return out
 
-def summary_from_sections(secs: Dict[str, List[str]], max_chars: int) -> str:
+
+def summary_from_sections(secs: dict[str, list[str]], max_chars: int) -> str:
     preferred = ["成果", "目標", "判断", "次のアクション", "注意点・残課題"]
     for key in preferred:
         lines = [ln.strip() for ln in sections.get_section(secs, key) if ln.strip()]
@@ -369,20 +398,22 @@ def summary_from_sections(secs: Dict[str, List[str]], max_chars: int) -> str:
             return (s[:max_chars] + "\u2026") if len(s) > max_chars else s
     return ""
 
-def split_tokens(s: str) -> List[str]:
+
+def split_tokens(s: str) -> list[str]:
     return tokenizer.tokenize(s, stopwords=STOPWORDS, min_length=2)
+
 
 def auto_keywords(
     title: str,
-    tags: List[str],
-    keywords: List[str],
-    files: List[str],
-    errors: List[str],
-    skills: List[str],
-    work_log_keywords: List[str] | None = None,
-    plan_keywords: List[str] | None = None,
-    test_names: List[str] | None = None,
-) -> List[str]:
+    tags: list[str],
+    keywords: list[str],
+    files: list[str],
+    errors: list[str],
+    skills: list[str],
+    work_log_keywords: list[str] | None = None,
+    plan_keywords: list[str] | None = None,
+    test_names: list[str] | None = None,
+) -> list[str]:
     seed = []
     seed.extend(split_tokens(title))
     seed.extend(tags)
@@ -406,7 +437,8 @@ def auto_keywords(
         seed_norm.append(t.lower())
     return dedupe(seed_norm)[:40]
 
-def dedupe(xs: List[str]) -> List[str]:
+
+def dedupe(xs: list[str]) -> list[str]:
     seen = set()
     out = []
     for x in xs:
@@ -420,10 +452,15 @@ def dedupe(xs: List[str]) -> List[str]:
         out.append(k)
     return out
 
+
 def upsert(index_path: Path, entry: dict):
     rows = []
     if index_path.exists():
-        rows = [json.loads(l) for l in index_path.read_text(encoding="utf-8", errors="ignore").splitlines() if l.strip()]
+        rows = [
+            json.loads(line)
+            for line in index_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if line.strip()
+        ]
     out = []
     replaced = False
     for r in rows:
@@ -480,7 +517,7 @@ def upsert_dense(index_path: Path, entry: dict) -> bool:
 
     vector_dim = int(vec.shape[0])
     dense = np.zeros((0, vector_dim), dtype=np.float32)
-    paths: List[str] = []
+    paths: list[str] = []
 
     if dense_paths_path.exists():
         try:
@@ -534,7 +571,7 @@ def upsert_dense(index_path: Path, entry: dict) -> bool:
     return True
 
 
-def detect_sigfb_status(sigfb_lines: List[str]) -> str:
+def detect_sigfb_status(sigfb_lines: list[str]) -> str:
     """Detect SIGFB section status.
 
     Returns:
@@ -554,6 +591,7 @@ def detect_sigfb_status(sigfb_lines: List[str]) -> str:
             if s2.strip():
                 has_content = True
     return "recorded" if has_content else "missing"
+
 
 def build_entry(note_path: Path, max_summary_chars: int, dailynote_dir: Path) -> dict:
     md = read_text(note_path)
@@ -584,7 +622,9 @@ def build_entry(note_path: Path, max_summary_chars: int, dailynote_dir: Path) ->
 
     summ = summary_from_sections(secs, max_summary_chars)
 
-    auto_kw = auto_keywords(title, tags, keywords, files, errs, skc, work_log_kw, plan_kw, test_names)
+    auto_kw = auto_keywords(
+        title, tags, keywords, files, errs, skc, work_log_kw, plan_kw, test_names
+    )
 
     return {
         "path": _normalize_note_path(note_path, dailynote_dir),
@@ -611,11 +651,21 @@ def build_entry(note_path: Path, max_summary_chars: int, dailynote_dir: Path) ->
         "indexed_at": now_iso(),
     }
 
-def build_vocab_cache(entries: List[dict], vocab_path: Path) -> int:
+
+def build_vocab_cache(entries: list[dict], vocab_path: Path) -> int:
     """Build vocabulary cache from index entries for fuzzy matching support."""
     tokens: set[str] = set()
     for entry in entries:
-        for field in ("tags", "keywords", "auto_keywords", "files", "errors", "skills", "plan_keywords", "test_names"):
+        for field in (
+            "tags",
+            "keywords",
+            "auto_keywords",
+            "files",
+            "errors",
+            "skills",
+            "plan_keywords",
+            "test_names",
+        ):
             values = entry.get(field) or []
             if isinstance(values, list):
                 for v in values:
@@ -640,7 +690,16 @@ def update_vocab_cache_incremental(entry: dict, vocab_path: Path) -> None:
             existing = set(data.get("vocab") or [])
         except Exception:
             pass
-    for field in ("tags", "keywords", "auto_keywords", "files", "errors", "skills", "plan_keywords", "test_names"):
+    for field in (
+        "tags",
+        "keywords",
+        "auto_keywords",
+        "files",
+        "errors",
+        "skills",
+        "plan_keywords",
+        "test_names",
+    ):
         values = entry.get(field) or []
         if isinstance(values, list):
             for v in values:
@@ -667,7 +726,7 @@ def _vocab_is_stale(vocab_path: Path, index_path: Path) -> bool:
         return False
 
 
-def list_notes(dailynote_dir: Path) -> List[Path]:
+def list_notes(dailynote_dir: Path) -> list[Path]:
     if not dailynote_dir.exists():
         return []
     notes = []
@@ -679,6 +738,7 @@ def list_notes(dailynote_dir: Path) -> List[Path]:
         notes.append(p)
     return sorted(notes)
 
+
 def rebuild_index(
     *,
     index_path: Path,
@@ -686,7 +746,7 @@ def rebuild_index(
     max_summary_chars: int = 280,
     no_dense: bool = False,
     since: str | None = None,
-) -> List[dict]:
+) -> list[dict]:
     """Rebuild the entire memory index from note files."""
     notes = list_notes(dailynote_dir)
     since_date = None
@@ -696,7 +756,7 @@ def rebuild_index(
         except ValueError as exc:
             raise ValueError(f"Invalid since date: {since}") from exc
 
-    entries: List[dict] = []
+    entries: list[dict] = []
     for note_path in notes:
         # Apply since filter by checking directory date structure
         if since_date is not None:
@@ -711,7 +771,8 @@ def rebuild_index(
     index_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(
         index_path,
-        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + ("\n" if entries else ""),
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries)
+        + ("\n" if entries else ""),
     )
 
     vocab_path = index_path.parent / "_vocab.json"
@@ -741,7 +802,7 @@ def index_note(
 
     vocab_path = index_path.parent / "_vocab.json"
     if _vocab_is_stale(vocab_path, index_path):
-        rows: List[dict] = []
+        rows: list[dict] = []
         if index_path.exists():
             rows = [
                 json.loads(line)

@@ -85,12 +85,14 @@ def test_save_state_roundtrip(tmp_path: Path) -> None:
     state.save_state(state_path, original)
     loaded = state.load_state(state_path)
 
-    assert loaded[state.STATE_SHORT_KEYS["focus"]][0].render() == original[
-        state.STATE_SHORT_KEYS["focus"]
-    ][0].render()
-    assert loaded[state.STATE_SHORT_KEYS["open"]][0].render() == original[
-        state.STATE_SHORT_KEYS["open"]
-    ][0].render()
+    assert (
+        loaded[state.STATE_SHORT_KEYS["focus"]][0].render()
+        == original[state.STATE_SHORT_KEYS["focus"]][0].render()
+    )
+    assert (
+        loaded[state.STATE_SHORT_KEYS["open"]][0].render()
+        == original[state.STATE_SHORT_KEYS["open"]][0].render()
+    )
 
 
 def test_deduplicate() -> None:
@@ -209,8 +211,7 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
 
     assert rc == 0
     assert any(
-        item.text == "Add integration coverage."
-        for item in loaded[state.STATE_SHORT_KEYS["focus"]]
+        item.text == "Add integration coverage." for item in loaded[state.STATE_SHORT_KEYS["focus"]]
     )
     assert any(
         item.text == "Use stricter token validation."

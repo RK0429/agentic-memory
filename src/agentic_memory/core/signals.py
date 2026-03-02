@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 
 SIGNAL_TYPES = ("success", "friction", "failure", "workaround", "gap")
@@ -252,12 +252,14 @@ def check_improvement_triggers(
                 pass
 
     if len(entries) >= periodic_threshold and not has_recent_review:
-        triggers.append({
-            "type": "periodic_review",
-            "skill": "*",
-            "detail": f"インデックスに{len(entries)}件のエントリ — 全スキル定期レビューを推奨",
-            "severity": "medium",
-        })
+        triggers.append(
+            {
+                "type": "periodic_review",
+                "skill": "*",
+                "detail": f"インデックスに{len(entries)}件のエントリ — 全スキル定期レビューを推奨",
+                "severity": "medium",
+            }
+        )
 
     for cand in candidates:
         severity = cand.get("severity", "")
@@ -269,22 +271,28 @@ def check_improvement_triggers(
             friction = int(breakdown.get("friction", 0))
             workaround = int(breakdown.get("workaround", 0))
             if friction + workaround >= 3:
-                triggers.append({
-                    "type": "pattern_escalation",
-                    "skill": skill,
-                    "detail": f"friction({friction})+workaround({workaround})の蓄積パターンを検出",
-                    "severity": "medium",
-                })
+                triggers.append(
+                    {
+                        "type": "pattern_escalation",
+                        "skill": skill,
+                        "detail": (
+                            f"friction({friction})+workaround({workaround})の蓄積パターンを検出"
+                        ),
+                        "severity": "medium",
+                    }
+                )
 
         # gap_expansion: gap count >= 2 for same skill
         gap_count = int(breakdown.get("gap", 0))
         if gap_count >= 2:
-            triggers.append({
-                "type": "gap_expansion",
-                "skill": skill,
-                "detail": f"gap({gap_count}件) — 新モジュール拡張の候補",
-                "severity": "medium",
-            })
+            triggers.append(
+                {
+                    "type": "gap_expansion",
+                    "skill": skill,
+                    "detail": f"gap({gap_count}件) — 新モジュール拡張の候補",
+                    "severity": "medium",
+                }
+            )
 
     return triggers
 

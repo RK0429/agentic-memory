@@ -87,7 +87,9 @@ def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    result = memory_state_add(section="focus", items=["Task A", "Task B"], memory_dir=str(memory_dir))
+    result = memory_state_add(
+        section="focus", items=["Task A", "Task B"], memory_dir=str(memory_dir)
+    )
     assert result.endswith("_state.md")
 
     output = memory_state_show(section="focus", memory_dir=str(memory_dir))
@@ -183,7 +185,9 @@ def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     memory_dir = tmp_memory_dir
 
     created_path = Path(memory_note_new(title="Upsert One", memory_dir=str(memory_dir)))
-    raw = memory_index_upsert(note_path=str(created_path), no_dense=True, memory_dir=str(memory_dir))
+    raw = memory_index_upsert(
+        note_path=str(created_path), no_dense=True, memory_dir=str(memory_dir)
+    )
 
     payload = json.loads(raw)
     assert isinstance(payload, dict)

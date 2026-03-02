@@ -1,4 +1,5 @@
 """Index loading and scoring helpers for agentic-memory search."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -7,10 +8,9 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
-from agentic_memory.core.query import QueryTerm
 from agentic_memory.core import tokenizer
+from agentic_memory.core.query import QueryTerm
 
 ASCII_WORD_CHARS = "A-Za-z0-9_"
 ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9_\./\-]+")
@@ -25,7 +25,7 @@ def _now_local() -> _dt.datetime:
     return _dt.datetime.now()
 
 
-def _parse_date(s: str) -> Optional[_dt.date]:
+def _parse_date(s: str) -> _dt.date | None:
     s = (s or "").strip()
     try:
         return _dt.date.fromisoformat(s)
@@ -44,20 +44,20 @@ class IndexEntry:
     date: str = ""
     time: str = ""
     context: str = ""
-    tags: List[str] = dataclasses.field(default_factory=list)
-    keywords: List[str] = dataclasses.field(default_factory=list)
-    auto_keywords: List[str] = dataclasses.field(default_factory=list)
-    files: List[str] = dataclasses.field(default_factory=list)
-    errors: List[str] = dataclasses.field(default_factory=list)
-    skills: List[str] = dataclasses.field(default_factory=list)
+    tags: list[str] = dataclasses.field(default_factory=list)
+    keywords: list[str] = dataclasses.field(default_factory=list)
+    auto_keywords: list[str] = dataclasses.field(default_factory=list)
+    files: list[str] = dataclasses.field(default_factory=list)
+    errors: list[str] = dataclasses.field(default_factory=list)
+    skills: list[str] = dataclasses.field(default_factory=list)
     decisions: str = ""
     next: str = ""
     pitfalls: str = ""
-    commands: List[str] = dataclasses.field(default_factory=list)
+    commands: list[str] = dataclasses.field(default_factory=list)
     summary: str = ""
-    work_log_keywords: List[str] = dataclasses.field(default_factory=list)
+    work_log_keywords: list[str] = dataclasses.field(default_factory=list)
 
-    def field_text(self) -> Dict[str, str]:
+    def field_text(self) -> dict[str, str]:
         return {
             "title": self.title or "",
             "context": self.context or "",
@@ -76,8 +76,8 @@ class IndexEntry:
         }
 
 
-def load_index(path: Path) -> List[IndexEntry]:
-    entries: List[IndexEntry] = []
+def load_index(path: Path) -> list[IndexEntry]:
+    entries: list[IndexEntry] = []
     if not path.exists():
         return entries
 
@@ -113,7 +113,7 @@ def load_index(path: Path) -> List[IndexEntry]:
     return entries
 
 
-def _build_doc_blobs(docs: List[Dict[str, str]]) -> List[str]:
+def _build_doc_blobs(docs: list[dict[str, str]]) -> list[str]:
     return [_safe_lower(" ".join(d.values())) for d in docs]
 
 
@@ -130,9 +130,9 @@ def _strict_term_match(haystack: str, needle: str, is_phrase: bool) -> bool:
     return nd in hs
 
 
-def build_idf_cache(qterms: List[QueryTerm], docs: List[Dict[str, str]]) -> Dict[str, float]:
+def build_idf_cache(qterms: list[QueryTerm], docs: list[dict[str, str]]) -> dict[str, float]:
     """Precompute IDF for query terms once per query."""
-    term_flags: Dict[str, bool] = {}
+    term_flags: dict[str, bool] = {}
     for qt in qterms:
         if not qt.term or qt.exclude:
             continue
@@ -148,7 +148,7 @@ def build_idf_cache(qterms: List[QueryTerm], docs: List[Dict[str, str]]) -> Dict
     if n_docs <= 0:
         return {t: 1.0 for t in terms}
 
-    cache: Dict[str, float] = {}
+    cache: dict[str, float] = {}
     for t, is_phrase in term_flags.items():
         df = 0
         for blob in blobs:
@@ -173,7 +173,10 @@ def _count_matches(haystack: str, needle: str, is_phrase: bool) -> int:
 
 
 def _match_quality(haystack: str, needle: str, is_phrase: bool) -> float:
-    """Return match quality: 1.0=whole word, 0.85=prefix, 0.80=suffix, 0.55=substring, 0.0=no match."""
+    """Return match quality.
+
+    1.0=whole word, 0.85=prefix, 0.80=suffix, 0.55=substring, 0.0=no match.
+    """
     hs = _safe_lower(haystack)
     nd = _safe_lower(needle).strip()
     if not nd:
@@ -195,11 +198,11 @@ def _match_quality(haystack: str, needle: str, is_phrase: bool) -> float:
     return 0.0
 
 
-def _compute_avg_field_lengths(entries: List[IndexEntry]) -> Dict[str, float]:
+def _compute_avg_field_lengths(entries: list[IndexEntry]) -> dict[str, float]:
     """Compute average field lengths (in whitespace-delimited tokens) across all entries."""
     if not entries:
         return {}
-    sums: Dict[str, float] = {}
+    sums: dict[str, float] = {}
     for e in entries:
         for k, v in e.field_text().items():
             sums[k] = sums.get(k, 0.0) + len(v.split())
@@ -208,17 +211,17 @@ def _compute_avg_field_lengths(entries: List[IndexEntry]) -> Dict[str, float]:
 
 def score_entry(
     entry: IndexEntry,
-    qterms: List[QueryTerm],
-    weights: Dict[str, float],
-    idf_cache: Dict[str, float],
+    qterms: list[QueryTerm],
+    weights: dict[str, float],
+    idf_cache: dict[str, float],
     prefer_recent: bool,
     half_life_days: float,
     recency_boost_max: float,
     explain: bool = False,
-    avg_field_lengths: Optional[Dict[str, float]] = None,
+    avg_field_lengths: dict[str, float] | None = None,
     delta: float = DELTA,
-    precomputed_fields: Optional[Dict[str, str]] = None,
-) -> Tuple[float, Dict]:
+    precomputed_fields: dict[str, str] | None = None,
+) -> tuple[float, dict]:
     fields = precomputed_fields if precomputed_fields is not None else entry.field_text()
     fields_l = {k: _safe_lower(v) for k, v in fields.items()}
 
@@ -250,7 +253,7 @@ def score_entry(
                 return 0.0, {"missing_must": qt.raw}
 
     total = 0.0
-    details: Dict = {"terms": []} if explain else {}
+    details: dict = {"terms": []} if explain else {}
 
     for qt in qterms:
         if qt.exclude or not qt.term:
@@ -297,16 +300,22 @@ def score_entry(
                 )
 
         if explain:
-            details["terms"].append({"term": qt.raw, "contribs": contribs, "term_factor": term_factor})
+            details["terms"].append(
+                {"term": qt.raw, "contribs": contribs, "term_factor": term_factor}
+            )
 
     if prefer_recent:
         d = _parse_date(entry.date)
         if d:
             age_days = max(0.0, (_now_local().date() - d).days)
             w = math.exp(-math.log(2) * age_days / max(1.0, half_life_days))
-            total *= (1.0 + recency_boost_max * w)
+            total *= 1.0 + recency_boost_max * w
             if explain:
-                details["recency"] = {"age_days": age_days, "w": round(w, 3), "boost_max": recency_boost_max}
+                details["recency"] = {
+                    "age_days": age_days,
+                    "w": round(w, 3),
+                    "boost_max": recency_boost_max,
+                }
 
     return total, details
 

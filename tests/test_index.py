@@ -15,7 +15,7 @@ def test_build_entry(sample_note_path: Path, tmp_memory_dir: Path) -> None:
     assert entry["keywords"] == ["token", "refresh"]
     assert entry["files"] == ["src/auth.py", "tests/test_auth.py"]
     assert "uv run pytest tests/test_auth.py" in entry["commands"]
-    assert any("AuthError" == err for err in entry["errors"])
+    assert any(err == "AuthError" for err in entry["errors"])
     assert entry["path"].startswith("memory/2026-01-01/")
 
 
@@ -47,7 +47,9 @@ def test_upsert_replace(sample_index_path: Path) -> None:
     assert rows[0]["title"] == "B"
 
 
-def test_rebuild_index(sample_note_path: Path, sample_index_path: Path, tmp_memory_dir: Path) -> None:
+def test_rebuild_index(
+    sample_note_path: Path, sample_index_path: Path, tmp_memory_dir: Path
+) -> None:
     second_dir = tmp_memory_dir / "2026-01-02"
     second_dir.mkdir(parents=True, exist_ok=True)
     second_note = second_dir / "0900_second.md"
@@ -71,7 +73,9 @@ def test_rebuild_index(sample_note_path: Path, sample_index_path: Path, tmp_memo
     )
 
     assert len(entries) == 2
-    rows = [line for line in sample_index_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [
+        line for line in sample_index_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(rows) == 2
     assert sample_note_path.exists()
     assert second_note.exists()

@@ -7,20 +7,18 @@ Design goals:
 - Explainability: optionally print score contributions per field/term.
 - Configurable: loads `_rag_config.json` if present.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
-from agentic_memory.core import dense
+from agentic_memory.core import dense, sections, tokenizer
 from agentic_memory.core import index as memory_index
-from agentic_memory.core import rerank
-from agentic_memory.core import sections
-from agentic_memory.core import tokenizer
 from agentic_memory.core.fallback import fallback_search_files, rg_available, search_python
 from agentic_memory.core.query import (
     QueryTerm,
@@ -74,15 +72,15 @@ def _safe_lower(s: str) -> str:
     return _normalize_text(s).lower()
 
 
-def _split_camel(s: str) -> List[str]:
+def _split_camel(s: str) -> list[str]:
     return tokenizer._split_camel(s)
 
 
-def _extract_cjk_ngrams(s: str, min_n: int = 2, max_n: int = 3, max_terms: int = 120) -> List[str]:
+def _extract_cjk_ngrams(s: str, min_n: int = 2, max_n: int = 3, max_terms: int = 120) -> list[str]:
     return tokenizer._cjk_ngrams(s, min_n=min_n, max_n=max_n, max_terms=max_terms)
 
 
-def _tokenize_for_match(s: str) -> List[str]:
+def _tokenize_for_match(s: str) -> list[str]:
     return tokenizer.tokenize(s)
 
 
@@ -95,8 +93,8 @@ def _get_nested(d: dict, path: Sequence[str], default=None):
     return cur
 
 
-def _dedupe_keep_order(items: Sequence[str], casefold: bool = True) -> List[str]:
-    out: List[str] = []
+def _dedupe_keep_order(items: Sequence[str], casefold: bool = True) -> list[str]:
+    out: list[str] = []
     seen = set()
     for item in items:
         norm = _normalize_text(item).strip()
@@ -110,9 +108,9 @@ def _dedupe_keep_order(items: Sequence[str], casefold: bool = True) -> List[str]
     return out
 
 
-def _validate_config(config: dict) -> Tuple[dict, List[str]]:
+def _validate_config(config: dict) -> tuple[dict, list[str]]:
     """Validate critical config fields and apply safe defaults when invalid."""
-    warnings: List[str] = []
+    warnings: list[str] = []
 
     if not isinstance(config, dict):
         warnings.append("_rag_config.json root must be an object; defaults are used.")
@@ -141,7 +139,9 @@ def _validate_config(config: dict) -> Tuple[dict, List[str]]:
     if rerank_cfg_raw is not None and not isinstance(rerank_cfg_raw, dict):
         warnings.append("config.rerank must be an object; defaults are used.")
 
-    auto_threshold = _get_nested(config, ["rerank", "auto_threshold"], DEFAULT_RERANK_AUTO_THRESHOLD)
+    auto_threshold = _get_nested(
+        config, ["rerank", "auto_threshold"], DEFAULT_RERANK_AUTO_THRESHOLD
+    )
     if isinstance(auto_threshold, int) and not isinstance(auto_threshold, bool):
         rerank_cfg["auto_threshold"] = auto_threshold
     else:
@@ -173,8 +173,8 @@ def _validate_config(config: dict) -> Tuple[dict, List[str]]:
     return validated, warnings
 
 
-def _load_config(path: Path) -> Tuple[dict, List[str]]:
-    warnings: List[str] = []
+def _load_config(path: Path) -> tuple[dict, list[str]]:
+    warnings: list[str] = []
     raw: dict = {}
 
     if path.exists():
@@ -196,10 +196,10 @@ def _load_config(path: Path) -> Tuple[dict, List[str]]:
 
 
 # ---------- Recall-feedback / vocab helpers ----------
-def _latest_note_path(memory_dir: Path) -> Optional[Path]:
+def _latest_note_path(memory_dir: Path) -> Path | None:
     if not memory_dir.exists():
         return None
-    latest: Optional[Tuple[float, Path]] = None
+    latest: tuple[float, Path] | None = None
     for p in memory_dir.rglob("*.md"):
         if not p.is_file() or p.name.startswith("_"):
             continue
@@ -212,7 +212,7 @@ def _latest_note_path(memory_dir: Path) -> Optional[Path]:
     return latest[1] if latest else None
 
 
-def _extract_recall_feedback_terms(note_path: Path, max_terms: int = 30) -> List[str]:
+def _extract_recall_feedback_terms(note_path: Path, max_terms: int = 30) -> list[str]:
     try:
         lines = note_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except Exception:
@@ -224,7 +224,7 @@ def _extract_recall_feedback_terms(note_path: Path, max_terms: int = 30) -> List
         "Recall feedback (optional)",
     )
     recall_feedback_en_prefix = recall_feedback_alias.lower().split("(", 1)[0].strip()
-    raw_values: List[str] = []
+    raw_values: list[str] = []
 
     for ln in lines:
         heading = re.match(r"^##\s+(.*)\s*$", ln)
@@ -248,7 +248,7 @@ def _extract_recall_feedback_terms(note_path: Path, max_terms: int = 30) -> List
         if ("useful notes" in label) or ("missed notes" in label):
             raw_values.append(value)
 
-    extracted: List[str] = []
+    extracted: list[str] = []
     for value in raw_values:
         parts = re.split(r"[,\u3001\uFF0C;；|]+", value)
         for part in parts:
@@ -275,7 +275,7 @@ def _load_vocab(memory_dir: Path) -> set:
 
 
 # ---------- Snippet extraction ----------
-def extract_snippets(path: Path, query_terms: List[QueryTerm], top_snippets: int) -> List[str]:
+def extract_snippets(path: Path, query_terms: list[QueryTerm], top_snippets: int) -> list[str]:
     if not path.exists():
         return []
     try:
@@ -285,7 +285,7 @@ def extract_snippets(path: Path, query_terms: List[QueryTerm], top_snippets: int
 
     positives = [qt.term for qt in query_terms if qt.term and not qt.exclude]
     if not positives:
-        return [f"L{i+1}: {lines[i]}" for i in range(min(top_snippets, len(lines)))]
+        return [f"L{i + 1}: {lines[i]}" for i in range(min(top_snippets, len(lines)))]
 
     positives = sorted(set(positives), key=lambda s: (-len(s), s))
     pats = [re.escape(p) for p in positives if p.strip()]
@@ -304,8 +304,10 @@ def extract_snippets(path: Path, query_terms: List[QueryTerm], top_snippets: int
 
 
 # ---------- Fallback adaptation ----------
-def _ranked_to_results(ranked: List[Tuple[str, int]], top: int, explain: bool) -> List[Tuple[float, IndexEntry, Dict]]:
-    out: List[Tuple[float, IndexEntry, Dict]] = []
+def _ranked_to_results(
+    ranked: list[tuple[str, int]], top: int, explain: bool
+) -> list[tuple[float, IndexEntry, dict]]:
+    out: list[tuple[float, IndexEntry, dict]] = []
     for p, hitcount in ranked[:top]:
         e = IndexEntry(path=p, title="", date="", time="")
         detail = {"hitcount": hitcount} if explain else {}
@@ -315,12 +317,12 @@ def _ranked_to_results(ranked: List[Tuple[str, int]], top: int, explain: bool) -
 
 def _search_with_engine(
     engine: str,
-    query_terms: List[QueryTerm],
+    query_terms: list[QueryTerm],
     memory_dir: Path,
     top: int,
     explain: bool,
     has_rg: bool,
-) -> List[Tuple[float, IndexEntry, Dict]]:
+) -> list[tuple[float, IndexEntry, dict]]:
     if engine == "rg":
         ranked = fallback_search_files(query_terms, memory_dir)
         return _ranked_to_results(ranked, top, explain)
@@ -336,7 +338,7 @@ def _search_with_engine(
 
 
 # ---------- Index staleness ----------
-def _latest_note_mtime(memory_dir: Path) -> Optional[float]:
+def _latest_note_mtime(memory_dir: Path) -> float | None:
     if not memory_dir.exists():
         return None
     latest = None
@@ -364,7 +366,7 @@ def _index_is_stale(index_path: Path, memory_dir: Path) -> bool:
     return index_mtime < latest_note
 
 
-def _sync_index(memory_dir: Path, index_path: Path) -> Tuple[bool, str]:
+def _sync_index(memory_dir: Path, index_path: Path) -> tuple[bool, str]:
     try:
         memory_index.rebuild_index(
             index_path=index_path,
@@ -376,12 +378,12 @@ def _sync_index(memory_dir: Path, index_path: Path) -> Tuple[bool, str]:
 
 
 def _weighted_rrf_merge(
-    bm25_ranking: List[Tuple[str, float]],
-    dense_ranking: List[Tuple[str, float]],
+    bm25_ranking: list[tuple[str, float]],
+    dense_ranking: list[tuple[str, float]],
     k: int,
     dense_weight: float,
-) -> List[Tuple[str, float]]:
-    scores: Dict[str, float] = {}
+) -> list[tuple[str, float]]:
+    scores: dict[str, float] = {}
 
     for rank, (path, _) in enumerate(bm25_ranking, start=1):
         scores[path] = scores.get(path, 0.0) + (1.0 / (k + rank))
@@ -398,10 +400,10 @@ def search(
     query: str,
     memory_dir: Path,
     engine: str = "auto",
-    top: Optional[int] = None,
-    snippets: Optional[int] = None,
+    top: int | None = None,
+    snippets: int | None = None,
     prefer_recent: bool = False,
-    half_life_days: Optional[float] = None,
+    half_life_days: float | None = None,
     explain: bool = False,
     suggest: bool = False,
     no_expand: bool = False,
@@ -412,19 +414,23 @@ def search(
     no_rerank: bool = False,
     prf: bool = False,
     no_prf: bool = False,
-    default_date_range: Optional[int] = None,
-) -> Dict:
+    default_date_range: int | None = None,
+) -> dict:
     dn_dir = memory_dir
     index_path = dn_dir / "_index.jsonl"
     config_path = dn_dir / "_rag_config.json"
 
     config, config_warnings = _load_config(config_path)
-    warnings: List[str] = list(config_warnings)
+    warnings: list[str] = list(config_warnings)
 
     weights = _get_nested(config, ["weights"], {}) or {}
     merged_weights = {
         **DEFAULT_WEIGHTS,
-        **{k: float(v) for k, v in weights.items() if isinstance(v, (int, float)) and not isinstance(v, bool)},
+        **{
+            k: float(v)
+            for k, v in weights.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        },
     }
 
     prefer_recent_default = bool(_get_nested(config, ["search", "prefer_recent_default"], False))
@@ -439,7 +445,11 @@ def search(
     bm25_delta = float(_get_nested(config, ["search", "bm25_delta"], DELTA))
 
     top_n = top if top is not None else int(_get_nested(config, ["search", "top_default"], 10))
-    snippets_n = snippets if snippets is not None else int(_get_nested(config, ["search", "snippets_default"], 3))
+    snippets_n = (
+        snippets
+        if snippets is not None
+        else int(_get_nested(config, ["search", "snippets_default"], 3))
+    )
 
     qterms = parse_query(query)
 
@@ -473,11 +483,13 @@ def search(
         if vocab:
             expanded = expand_with_fuzzy(expanded, vocab, config)
 
-    feedback_expand_default = bool(_get_nested(config, ["query_expansion", "feedback_enabled_default"], True))
+    feedback_expand_default = bool(
+        _get_nested(config, ["query_expansion", "feedback_enabled_default"], True)
+    )
     feedback_expand = feedback_expand_default and (not no_feedback_expand)
     feedback_decay = float(_get_nested(config, ["query_expansion", "feedback_decay"], 0.25))
-    feedback_terms: List[str] = []
-    feedback_note_path: Optional[Path] = None
+    feedback_terms: list[str] = []
+    feedback_note_path: Path | None = None
     if feedback_expand:
         feedback_note_path = _latest_note_path(dn_dir)
         if feedback_note_path is not None:
@@ -485,7 +497,9 @@ def search(
             expanded = expand_with_feedback(expanded, feedback_terms, feedback_decay=feedback_decay)
 
     if suggest:
-        suggestions = [qt.term for qt in expanded if qt.term and qt.term not in {t.term for t in qterms}]
+        suggestions = [
+            qt.term for qt in expanded if qt.term and qt.term not in {t.term for t in qterms}
+        ]
         uniq = []
         seen = set()
         for s in suggestions:
@@ -502,7 +516,9 @@ def search(
             "query": query,
             "expanded": expanded,
             "expanded_terms": [qt.term for qt in expanded],
-            "feedback_source_note": str(feedback_note_path) if feedback_terms and feedback_note_path else None,
+            "feedback_source_note": str(feedback_note_path)
+            if feedback_terms and feedback_note_path
+            else None,
             "feedback_terms_used": feedback_terms,
             "warnings": warnings,
             "results": [],
@@ -514,11 +530,13 @@ def search(
         }
 
     # Engine selection
-    entries: List[IndexEntry] = []
+    entries: list[IndexEntry] = []
     used_engine: str
     has_rg = rg_available()
     index_exists = index_path.exists()
-    stale_index = _index_is_stale(index_path, dn_dir) if (engine == "auto" and index_exists) else False
+    stale_index = (
+        _index_is_stale(index_path, dn_dir) if (engine == "auto" and index_exists) else False
+    )
 
     if engine == "index" and index_exists:
         entries = load_index(index_path)
@@ -531,7 +549,9 @@ def search(
         used_engine = "index"
     elif engine == "hybrid":
         used_engine = "rg" if has_rg else "python"
-        warnings.append("Index file was not found. Falling back to non-index engine (hybrid needs index).")
+        warnings.append(
+            "Index file was not found. Falling back to non-index engine (hybrid needs index)."
+        )
     elif engine == "auto" and index_exists and not stale_index:
         entries = load_index(index_path)
         used_engine = "index"
@@ -548,13 +568,15 @@ def search(
                 warnings.append("Falling back to non-index engine.")
         else:
             used_engine = "rg" if has_rg else "python"
-            warnings.append("Index is older than the latest note. Falling back to non-index engine.")
+            warnings.append(
+                "Index is older than the latest note. Falling back to non-index engine."
+            )
     elif engine in ("auto", "rg") and has_rg:
         used_engine = "rg"
     else:
         used_engine = "python"
 
-    results: List[Tuple[float, IndexEntry, Dict]] = []
+    results: list[tuple[float, IndexEntry, dict]] = []
 
     if used_engine == "index" and engine == "hybrid":
         docs_field_texts = [e.field_text() for e in entries]
@@ -562,7 +584,7 @@ def search(
         avg_fl = _compute_avg_field_lengths(entries)
 
         bm25_results = []
-        for e, ft in zip(entries, docs_field_texts):
+        for e, ft in zip(entries, docs_field_texts, strict=False):
             s, detail = score_entry(
                 e,
                 expanded,
@@ -582,7 +604,9 @@ def search(
         bm25_ranking = [(r[1].path, r[0]) for r in bm25_results]
 
         hybrid_rrf_k = int(_get_nested(config, ["hybrid", "rrf_k"], DEFAULT_HYBRID_RRF_K))
-        hybrid_dense_weight = float(_get_nested(config, ["hybrid", "dense_weight"], DEFAULT_HYBRID_DENSE_WEIGHT))
+        hybrid_dense_weight = float(
+            _get_nested(config, ["hybrid", "dense_weight"], DEFAULT_HYBRID_DENSE_WEIGHT)
+        )
 
         dense_ranking = dense.search_dense(query, dn_dir, top_k=top_n * 2)
         if dense_ranking:
@@ -609,7 +633,7 @@ def search(
         idf_cache = build_idf_cache(expanded, docs_field_texts)
         avg_fl = _compute_avg_field_lengths(entries)
 
-        for e, ft in zip(entries, docs_field_texts):
+        for e, ft in zip(entries, docs_field_texts, strict=False):
             s, detail = score_entry(
                 e,
                 expanded,
@@ -633,7 +657,7 @@ def search(
                 expanded = prf_expanded
                 idf_cache = build_idf_cache(expanded, docs_field_texts)
                 results = []
-                for e, ft in zip(entries, docs_field_texts):
+                for e, ft in zip(entries, docs_field_texts, strict=False):
                     s, detail = score_entry(
                         e,
                         expanded,
@@ -663,13 +687,17 @@ def search(
         results = _search_with_engine(used_engine, expanded, dn_dir, top_n, explain, has_rg)
 
     # W38: rerank auto-enable based on index size
-    rerank_auto_threshold = int(_get_nested(config, ["rerank", "auto_threshold"], DEFAULT_RERANK_AUTO_THRESHOLD))
+    rerank_auto_threshold = int(
+        _get_nested(config, ["rerank", "auto_threshold"], DEFAULT_RERANK_AUTO_THRESHOLD)
+    )
     rerank_auto_enabled = used_engine == "index" and len(entries) > rerank_auto_threshold
     rerank_enabled = (not no_rerank) and (rerank or rerank_auto_enabled)
 
     if rerank_auto_enabled and not rerank and not no_rerank:
         warnings.append(
-            f"Rerank auto-enabled: index entries ({len(entries)}) exceed rerank.auto_threshold ({rerank_auto_threshold})."
+            "Rerank auto-enabled: "
+            f"index entries ({len(entries)}) exceed "
+            f"rerank.auto_threshold ({rerank_auto_threshold})."
         )
 
     if rerank_enabled and results:
@@ -680,7 +708,9 @@ def search(
         "query": query,
         "expanded": expanded,
         "expanded_terms": [qt.term for qt in expanded],
-        "feedback_source_note": str(feedback_note_path) if feedback_terms and feedback_note_path else None,
+        "feedback_source_note": str(feedback_note_path)
+        if feedback_terms and feedback_note_path
+        else None,
         "feedback_terms_used": feedback_terms,
         "warnings": warnings,
         "results": results,

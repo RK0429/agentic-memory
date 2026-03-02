@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentic_memory.core import index
-from agentic_memory.core import query
-from agentic_memory.core import search
+from agentic_memory.core import index, query, search
 
 
-def test_search_no_index(tmp_memory_dir: Path, sample_note_path: Path, sample_index_path: Path) -> None:
+def test_search_no_index(
+    tmp_memory_dir: Path, sample_note_path: Path, sample_index_path: Path
+) -> None:
     sample_index_path.unlink()
 
     result = search.search(
@@ -21,7 +21,9 @@ def test_search_no_index(tmp_memory_dir: Path, sample_note_path: Path, sample_in
     assert result["results"]
 
 
-def test_search_with_index(tmp_memory_dir: Path, sample_note_path: Path, sample_index_path: Path) -> None:
+def test_search_with_index(
+    tmp_memory_dir: Path, sample_note_path: Path, sample_index_path: Path
+) -> None:
     index.rebuild_index(
         index_path=sample_index_path,
         dailynote_dir=tmp_memory_dir,

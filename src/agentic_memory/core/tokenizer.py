@@ -93,9 +93,7 @@ def _get_tokenizer_backend(config: dict) -> str:
     return backend
 
 
-def _cjk_ngrams(
-    text: str, min_n: int = 2, max_n: int = 3, max_terms: int = 120
-) -> list[str]:
+def _cjk_ngrams(text: str, min_n: int = 2, max_n: int = 3, max_terms: int = 120) -> list[str]:
     out: list[str] = []
     for match in CJK_CHUNK_RE.finditer(text):
         chunk = match.group(0)

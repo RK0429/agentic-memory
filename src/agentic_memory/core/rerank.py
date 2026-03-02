@@ -1,4 +1,5 @@
 """Cross-encoder reranking helpers for agentic-memory search results."""
+
 from __future__ import annotations
 
 import sys
@@ -36,7 +37,7 @@ def _get_reranker(model_name: str = MODEL_NAME):
     if not is_rerank_available():
         return None
 
-    if _RERANKER is not None and _RERANK_MODEL_NAME == model_name:
+    if _RERANKER is not None and model_name == _RERANK_MODEL_NAME:
         return _RERANKER
 
     try:
@@ -119,7 +120,8 @@ def rerank(
         scores = [float(score) for score in raw_scores]
 
         rescored: list[tuple[float, object, dict]] = [
-            (score, entry, detail) for score, (_, entry, detail) in zip(scores, candidates)
+            (score, entry, detail)
+            for score, (_, entry, detail) in zip(scores, candidates, strict=False)
         ]
         rescored.sort(key=lambda item: item[0], reverse=True)
         return rescored[:top_n]

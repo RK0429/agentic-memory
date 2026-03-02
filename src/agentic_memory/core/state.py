@@ -1,4 +1,5 @@
 """State management utilities for agentic-memory."""
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -9,12 +10,11 @@ import re
 import sys
 import tempfile
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
 
-from agentic_memory.core import sections
-from agentic_memory.core import signals
+from agentic_memory.core import sections, signals
 
 resolve_short_key = sections.resolve_short_key
 get_cap = sections.get_cap
@@ -62,10 +62,8 @@ def _atomic_write_text(path: Path, content: str) -> None:
             f.write(content)
         os.replace(tmp, str(path))
     except BaseException:
-        try:
+        with suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -138,9 +136,9 @@ class StateItem:
         return cls(date=(date or now_stamp()), text=raw)
 
 
-def parse_sections(md: str) -> Dict[str, List[str]]:
+def parse_sections(md: str) -> dict[str, list[str]]:
     """Markdown を ## 見出しごとにパースして {見出し名: [行リスト]} を返す"""
-    sections: Dict[str, List[str]] = {}
+    sections: dict[str, list[str]] = {}
     cur = None
     for line in md.splitlines():
         m = _HEADING_RE.match(line)
@@ -153,19 +151,19 @@ def parse_sections(md: str) -> Dict[str, List[str]]:
     return sections
 
 
-def load_state(path: Path) -> Dict[str, List[StateItem]]:
+def load_state(path: Path) -> dict[str, list[StateItem]]:
     """ステートファイルを読み込み、セクションごとの StateItem リストを返す。
     ファイルが存在しない場合は空のセクション辞書を返す。
     SECTION_ORDER に定義された全セクションが含まれるよう保証する。
     """
-    out: Dict[str, List[StateItem]] = {sec: [] for sec in SECTION_ORDER}
+    out: dict[str, list[StateItem]] = {sec: [] for sec in SECTION_ORDER}
     if not path.exists():
         return out
 
     md = path.read_text(encoding="utf-8", errors="ignore")
     secs = parse_sections(md)
     for sec in SECTION_ORDER:
-        parsed: List[StateItem] = []
+        parsed: list[StateItem] = []
         for line in get_section(secs, sec):
             item = StateItem.parse(line)
             if item is not None:
@@ -174,7 +172,7 @@ def load_state(path: Path) -> Dict[str, List[StateItem]]:
     return out
 
 
-def save_state(path: Path, sections: Dict[str, List[StateItem]]) -> None:
+def save_state(path: Path, sections: dict[str, list[StateItem]]) -> None:
     """セクション辞書をステートファイルに書き込む。
     ヘッダー: '# 作業状態（ローリング）\n\nLast updated: {now_stamp()}'
     各セクション: '## {見出し名}\n\n' + アイテムのrender()結果（空なら見出しのみ）
@@ -195,7 +193,7 @@ def save_state(path: Path, sections: Dict[str, List[StateItem]]) -> None:
             else:
                 raise TimeoutError("Could not acquire state lock within 5s")
         try:
-            lines: List[str] = []
+            lines: list[str] = []
             lines.append("# 作業状態（ローリング）")
             lines.append("")
             lines.append(f"Last updated: {now_stamp()}")
@@ -223,11 +221,11 @@ def _is_newer(lhs: StateItem, rhs: StateItem) -> bool:
     return ld > rd
 
 
-def deduplicate(items: List[StateItem]) -> List[StateItem]:
+def deduplicate(items: list[StateItem]) -> list[StateItem]:
     """重複排除。normalize_key() で比較し、同一テキストは新しい日付のものを残す。
     順序は入力順を維持する。"""
-    out: List[StateItem] = []
-    index: Dict[str, int] = {}
+    out: list[StateItem] = []
+    index: dict[str, int] = {}
     for item in items:
         key = item.normalize_key()
         if not key:
@@ -242,7 +240,7 @@ def deduplicate(items: List[StateItem]) -> List[StateItem]:
     return out
 
 
-def enforce_cap(items: List[StateItem], cap: int) -> List[StateItem]:
+def enforce_cap(items: list[StateItem], cap: int) -> list[StateItem]:
     """cap を超過する場合は末尾（最古=リスト末尾）を切り捨て"""
     safe_cap = max(cap, 0)
     if len(items) > safe_cap:
@@ -262,9 +260,12 @@ def is_stale(item: StateItem, stale_days: int) -> bool:
     return dt <= cutoff
 
 
-def bullets(lines: List[str]) -> List[str]:
-    """行リストからリスト項目のテキスト部分を抽出（'- ' を除去）。空行やリスト項目でない行はスキップ。"""
-    out: List[str] = []
+def bullets(lines: list[str]) -> list[str]:
+    """行リストからリスト項目のテキスト部分を抽出する。
+
+    `- ` を除去し、空行やリスト項目でない行はスキップする。
+    """
+    out: list[str] = []
     for ln in lines:
         s = ln.strip()
         if not s:
@@ -278,14 +279,14 @@ def _resolve_section_or_raise(key: str) -> str:
     return resolve_short_key(key)
 
 
-def _target_sections(section_arg: str | None) -> List[str]:
+def _target_sections(section_arg: str | None) -> list[str]:
     if section_arg is None:
         return list(SECTION_ORDER)
     return [_resolve_section_or_raise(section_arg)]
 
 
-def _parse_items_or_raise(texts: List[str]) -> List[StateItem]:
-    items: List[StateItem] = []
+def _parse_items_or_raise(texts: list[str]) -> list[StateItem]:
+    items: list[StateItem] = []
     for text in texts:
         items.append(StateItem.from_text(text))
     return items
@@ -319,9 +320,9 @@ def cmd_show(
     sections_data = load_state(state_path)
 
     if as_json:
-        payload: Dict[str, Dict[str, List[Dict[str, object]]]] = {"sections": {}}
+        payload: dict[str, dict[str, list[dict[str, object]]]] = {"sections": {}}
         for sec in targets:
-            rows: List[Dict[str, object]] = []
+            rows: list[dict[str, object]] = []
             for item in sections_data.get(sec, []):
                 stale = bool(stale_days and is_stale(item, stale_days))
                 rows.append({"date": item.date, "text": item.text, "stale": stale})
@@ -344,7 +345,7 @@ def cmd_show(
     return 0
 
 
-def cmd_set(state_path: Path, section: str, items: List[str]) -> int:
+def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
     try:
         section_name = _resolve_section_or_raise(section)
         new_items = _parse_items_or_raise(items)
@@ -359,7 +360,7 @@ def cmd_set(state_path: Path, section: str, items: List[str]) -> int:
     return 0
 
 
-def cmd_add(state_path: Path, section: str, items: List[str]) -> int:
+def cmd_add(state_path: Path, section: str, items: list[str]) -> int:
     try:
         section_name = _resolve_section_or_raise(section)
         new_items = _parse_items_or_raise(items)
@@ -391,10 +392,14 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
             return 2
 
     sections = load_state(state_path)
-    kept: List[StateItem] = []
+    kept: list[StateItem] = []
     removed = 0
     for item in sections.get(section_name, []):
-        matched = bool(matcher.search(item.text)) if matcher is not None else pattern.lower() in item.text.lower()
+        matched = (
+            bool(matcher.search(item.text))
+            if matcher is not None
+            else pattern.lower() in item.text.lower()
+        )
         if matched:
             removed += 1
             print(f"Removed: [{item.date}] {item.text}", file=sys.stderr)
@@ -425,7 +430,7 @@ def cmd_prune(
     removed = 0
 
     for sec in targets:
-        kept: List[StateItem] = []
+        kept: list[StateItem] = []
         for item in sections.get(sec, []):
             if is_stale(item, stale_days):
                 removed += 1
@@ -441,7 +446,7 @@ def cmd_prune(
     return 0
 
 
-def _auto_prune(sections: Dict[str, List[StateItem]], max_entries: int = 20) -> None:
+def _auto_prune(sections: dict[str, list[StateItem]], max_entries: int = 20) -> None:
     """Trim each rolling section to max_entries by dropping the oldest timestamps."""
     safe_max = max(max_entries, 0)
     for sec in SECTION_ORDER:
@@ -460,7 +465,7 @@ def _auto_prune(sections: Dict[str, List[StateItem]], max_entries: int = 20) -> 
         sections[sec] = [item for idx, item in enumerate(items) if idx in keep_indices]
 
 
-def _extract_from_note(note_text: str) -> Dict[str, List[str]]:
+def _extract_from_note(note_text: str) -> dict[str, list[str]]:
     secs = parse_sections(note_text)
     goal = bullets(get_section(secs, "目標"))
     nxt = bullets(get_section(secs, "次のアクション"))
@@ -490,11 +495,11 @@ def _normalize_note_path_for_index(note_path: Path, dailynote_dir: Path) -> str:
 
 
 def _ensure_note_index_entry(
-    entries: List[dict],
+    entries: list[dict],
     note_path: Path | None,
     index_path: Path,
     max_summary_chars: int = 280,
-) -> List[dict]:
+) -> list[dict]:
     if note_path is None:
         return entries
     expected_path = _normalize_note_path_for_index(note_path, index_path.parent)
@@ -516,11 +521,11 @@ def _ensure_note_index_entry(
 
 def _auto_improve_from_signals(
     index_path: Path,
-    sections: Dict[str, List[StateItem]],
+    sections: dict[str, list[StateItem]],
     threshold: int = 3,
     note_path: Path | None = None,
     max_summary_chars: int = 280,
-) -> List[StateItem]:
+) -> list[StateItem]:
     """Analyze skill signals and return improvement candidates as StateItems.
 
     Processes both high-severity candidates from analyze_signals() and
@@ -528,7 +533,7 @@ def _auto_improve_from_signals(
     Fail-safe: returns empty list on any error (missing index, parse error, etc.).
     """
     try:
-        entries: List[dict] = []
+        entries: list[dict] = []
         if index_path.exists():
             entries = signals.load_index(index_path)
         entries = _ensure_note_index_entry(
@@ -543,11 +548,10 @@ def _auto_improve_from_signals(
         return []
 
     existing_keys = {
-        item.normalize_key()
-        for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
+        item.normalize_key() for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
     }
 
-    new_items: List[StateItem] = []
+    new_items: list[StateItem] = []
 
     # High-severity candidates from analyze_signals
     for cand in candidates:
@@ -564,12 +568,9 @@ def _auto_improve_from_signals(
 
     # Additional triggers (periodic_review, pattern_escalation, gap_expansion)
     existing_backlog_texts = [
-        item.text.lower()
-        for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
+        item.text.lower() for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
     ]
-    triggers = signals.check_improvement_triggers(
-        entries, candidates, existing_backlog_texts
-    )
+    triggers = signals.check_improvement_triggers(entries, candidates, existing_backlog_texts)
     for trig in triggers:
         ttype = trig.get("type", "")
         skill = trig.get("skill", "")
@@ -615,13 +616,13 @@ def _merge_from_note(
     no_auto_improve: bool = False,
     auto_improve_add: bool = False,
     max_entries: int = 20,
-) -> tuple[Dict[str, List[StateItem]], List[str], int]:
+) -> tuple[dict[str, list[StateItem]], list[str], int]:
     note_text = note_path.read_text(encoding="utf-8", errors="ignore")
     sections = load_state(state_path)
     extracted = _extract_from_note(note_text)
 
     for sec in _FROM_NOTE_MERGE_TARGETS:
-        new_items: List[StateItem] = []
+        new_items: list[StateItem] = []
         for text in extracted.get(sec, []):
             try:
                 new_items.append(StateItem.from_text(text))
@@ -659,7 +660,8 @@ def _merge_from_note(
             else:
                 # Default: report candidates without adding
                 print(
-                    f"Auto-improve: {len(auto_items)} candidate(s) detected (use --auto-improve-add to add):",
+                    f"Auto-improve: {len(auto_items)} candidate(s) detected "
+                    "(use --auto-improve-add to add):",
                     file=sys.stderr,
                 )
                 for item in auto_items:
@@ -669,10 +671,7 @@ def _merge_from_note(
     save_state(state_path, sections)
 
     stale_count = sum(
-        1
-        for sec in SECTION_ORDER
-        for item in sections.get(sec, [])
-        if is_stale(item, 7)
+        1 for sec in SECTION_ORDER for item in sections.get(sec, []) if is_stale(item, 7)
     )
     updated_sections = list(extracted.keys())
     if STATE_SHORT_KEYS["improvements"] not in updated_sections:
@@ -712,4 +711,3 @@ def cmd_from_note(
 
     print(str(state_path))
     return 0
-

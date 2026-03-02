@@ -7,7 +7,20 @@ from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "assets/state-template.md"
 
-FALLBACK_TEMPLATE = "# 作業状態（ローリング）\nLast updated: <YYYY-MM-DD HH:MM>\n\n## 現在のフォーカス\n-\n\n## 未解決・次のアクション\n-\n\n## 主要な判断\n-\n\n## 注意点\n-\n\n## スキルバックログ\n-\n"
+FALLBACK_TEMPLATE = (
+    "# 作業状態（ローリング）\n"
+    "Last updated: <YYYY-MM-DD HH:MM>\n\n"
+    "## 現在のフォーカス\n"
+    "-\n\n"
+    "## 未解決・次のアクション\n"
+    "-\n\n"
+    "## 主要な判断\n"
+    "-\n\n"
+    "## 注意点\n"
+    "-\n\n"
+    "## スキルバックログ\n"
+    "-\n"
+)
 
 DEFAULT_CONFIG = {
     "weights": {

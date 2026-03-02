@@ -2,31 +2,41 @@
 evidence.py — Extract a compact evidence pack from memory markdown files.
 
 - Input: query + list of note paths
-- Output: Markdown pack with key sections (Goal/Outcome/Decisions/Next/Pitfalls/Commands/Verification/Changes)
+- Output: Markdown pack with key sections:
+  Goal/Outcome/Decisions/Next/Pitfalls/Commands/Verification/Changes
 - Only standard library.
 
-This script is designed as a helper for agentic RAG: it reduces reading cost while preserving provenance.
+This script is designed as a helper for agentic RAG:
+it reduces reading cost while preserving provenance.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List
 
 from agentic_memory.core import sections
 from agentic_memory.core.query import parse_query
 
 SECTION_ORDER = [
-    "目標", "成果", "判断", "次のアクション", "注意点・残課題",
-    "コマンド", "検証", "変更点", "作業ログ"
+    "目標",
+    "成果",
+    "判断",
+    "次のアクション",
+    "注意点・残課題",
+    "コマンド",
+    "検証",
+    "変更点",
+    "作業ログ",
 ]
 
-def parse_sections(md: str) -> Dict[str, List[str]]:
+
+def parse_sections(md: str) -> dict[str, list[str]]:
     """
     Very small markdown section parser for level-2 headings (## ...).
     Returns map: section title -> list of lines.
     """
-    sections: Dict[str, List[str]] = {}
+    sections: dict[str, list[str]] = {}
     cur = None
     for line in md.splitlines():
         m = re.match(r"^##\s+(.*)\s*$", line)
@@ -38,7 +48,8 @@ def parse_sections(md: str) -> Dict[str, List[str]]:
             sections[cur].append(line.rstrip())
     return sections
 
-def extract_header(md: str) -> Dict[str, str]:
+
+def extract_header(md: str) -> dict[str, str]:
     title = ""
     meta = {}
     for line in md.splitlines():
@@ -53,6 +64,7 @@ def extract_header(md: str) -> Dict[str, str]:
     meta["title"] = title
     return meta
 
+
 def build_regex_from_query(query: str) -> re.Pattern:
     terms = [qt.term for qt in parse_query(query) if qt.term and not qt.exclude]
     pats = [re.escape(t) for t in terms]
@@ -60,7 +72,8 @@ def build_regex_from_query(query: str) -> re.Pattern:
         return re.compile(r"$^")
     return re.compile("|".join(pats), re.IGNORECASE)
 
-def filter_lines(lines: List[str], rx: re.Pattern, max_lines: int) -> List[str]:
+
+def filter_lines(lines: list[str], rx: re.Pattern, max_lines: int) -> list[str]:
     """
     Keep lines matching rx, plus a few leading bullets if nothing matches.
     """
@@ -85,10 +98,11 @@ def filter_lines(lines: List[str], rx: re.Pattern, max_lines: int) -> List[str]:
             break
     return kept
 
-def generate_evidence_pack(query: str, paths: List[Path | str], max_lines: int = 8) -> str:
+
+def generate_evidence_pack(query: str, paths: list[Path | str], max_lines: int = 8) -> str:
     """Generate markdown evidence pack from note paths."""
     rx = build_regex_from_query(query)
-    out_lines: List[str] = []
+    out_lines: list[str] = []
     out_lines.append("# DailyNote Evidence Pack")
     out_lines.append(f"- Query: {query}")
     out_lines.append("")
@@ -104,12 +118,12 @@ def generate_evidence_pack(query: str, paths: List[Path | str], max_lines: int =
         parsed_sections = parse_sections(md)
 
         out_lines.append(f"## `{p_str}`")
-        title = meta.get("title","").strip()
+        title = meta.get("title", "").strip()
         if title:
             out_lines.append(f"- Title: {title}")
-        date = meta.get("Date","")
-        time = meta.get("Time","")
-        ctx = meta.get("Context","")
+        date = meta.get("Date", "")
+        time = meta.get("Time", "")
+        ctx = meta.get("Context", "")
         if date:
             out_lines.append(f"- Date: {date}")
         if time:

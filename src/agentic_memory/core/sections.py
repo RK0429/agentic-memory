@@ -1,10 +1,9 @@
 """Section aliases and caps for agentic-memory state/note parsing."""
+
 from __future__ import annotations
 
-from typing import Dict, List
-
 # ノートセクション: 日本語名 → 英語名
-NOTE_SECTION_ALIASES: Dict[str, str] = {
+NOTE_SECTION_ALIASES: dict[str, str] = {
     "目標": "Goal",
     "計画": "Plan",
     "作業ログ": "Work Log",
@@ -21,7 +20,7 @@ NOTE_SECTION_ALIASES: Dict[str, str] = {
 }
 
 # ステートセクション: 日本語名 → 英語名
-STATE_SECTION_ALIASES: Dict[str, str] = {
+STATE_SECTION_ALIASES: dict[str, str] = {
     "現在のフォーカス": "Current focus",
     "未解決・次のアクション": "Open threads / Next",
     "主要な判断": "Key decisions",
@@ -31,13 +30,13 @@ STATE_SECTION_ALIASES: Dict[str, str] = {
 }
 
 # 逆引き辞書（自動生成）
-_NOTE_REVERSE: Dict[str, str] = {v: k for k, v in NOTE_SECTION_ALIASES.items()}
-_STATE_REVERSE: Dict[str, str] = {v: k for k, v in STATE_SECTION_ALIASES.items()}
-_ALL_REVERSE: Dict[str, str] = {**_NOTE_REVERSE, **_STATE_REVERSE}
-_ALL_ALIASES: Dict[str, str] = {**NOTE_SECTION_ALIASES, **STATE_SECTION_ALIASES}
+_NOTE_REVERSE: dict[str, str] = {v: k for k, v in NOTE_SECTION_ALIASES.items()}
+_STATE_REVERSE: dict[str, str] = {v: k for k, v in STATE_SECTION_ALIASES.items()}
+_ALL_REVERSE: dict[str, str] = {**_NOTE_REVERSE, **_STATE_REVERSE}
+_ALL_ALIASES: dict[str, str] = {**NOTE_SECTION_ALIASES, **STATE_SECTION_ALIASES}
 
 
-def get_section(secs: Dict[str, List[str]], name: str) -> List[str]:
+def get_section(secs: dict[str, list[str]], name: str) -> list[str]:
     """Find section lines with Japanese priority and English fallback."""
     canonical = _ALL_REVERSE.get(name, name)
     if canonical in secs:
@@ -54,7 +53,7 @@ def get_section(secs: Dict[str, List[str]], name: str) -> List[str]:
 
 
 # ステートセクション ショートキー: ショートキー → 日本語正規名
-STATE_SHORT_KEYS: Dict[str, str] = {
+STATE_SHORT_KEYS: dict[str, str] = {
     "focus": "現在のフォーカス",
     "open": "未解決・次のアクション",
     "decisions": "主要な判断",
@@ -64,7 +63,7 @@ STATE_SHORT_KEYS: Dict[str, str] = {
 }
 
 # ステートセクション上限値
-STATE_CAPS: Dict[str, int] = {
+STATE_CAPS: dict[str, int] = {
     "focus": 3,
     "open": 8,
     "decisions": 8,
@@ -74,7 +73,7 @@ STATE_CAPS: Dict[str, int] = {
 }
 
 # ショートキー逆引き（日本語名 → ショートキー、英語名 → ショートキー）
-_SHORT_KEY_REVERSE: Dict[str, str] = {}
+_SHORT_KEY_REVERSE: dict[str, str] = {}
 for _sk, _ja in STATE_SHORT_KEYS.items():
     _SHORT_KEY_REVERSE[_ja] = _sk
     _en = STATE_SECTION_ALIASES.get(_ja)
