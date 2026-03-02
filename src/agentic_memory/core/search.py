@@ -17,8 +17,17 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from agentic_memory.core import dense, sections, tokenizer
-from agentic_memory.core import index as memory_index
+from agentic_memory.core import (
+    dense,
+    sections,
+    tokenizer,
+)
+from agentic_memory.core import (
+    index as memory_index,
+)
+from agentic_memory.core import (
+    rerank as rerank_module,
+)
 from agentic_memory.core.fallback import fallback_search_files, rg_available, search_python
 from agentic_memory.core.query import (
     QueryTerm,
@@ -410,8 +419,8 @@ def search(
     no_feedback_expand: bool = False,
     no_fuzzy: bool = False,
     sync_stale_index: bool = False,
-    rerank: bool = False,
-    no_rerank: bool = False,
+    use_rerank: bool = False,
+    no_use_rerank: bool = False,
     prf: bool = False,
     no_prf: bool = False,
     default_date_range: int | None = None,
@@ -500,16 +509,16 @@ def search(
         suggestions = [
             qt.term for qt in expanded if qt.term and qt.term not in {t.term for t in qterms}
         ]
-        uniq = []
-        seen = set()
-        for s in suggestions:
-            key = s.lower()
+        uniq: list[str] = []
+        seen: set[str] = set()
+        for suggested_term in suggestions:
+            key = suggested_term.lower()
             if key in seen:
                 continue
             seen.add(key)
             if len(uniq) >= 20:
                 break
-            uniq.append(s)
+            uniq.append(suggested_term)
 
         return {
             "engine": None,
@@ -579,14 +588,14 @@ def search(
     results: list[tuple[float, IndexEntry, dict]] = []
 
     if used_engine == "index" and engine == "hybrid":
-        docs_field_texts = [e.field_text() for e in entries]
+        docs_field_texts = [entry.field_text() for entry in entries]
         idf_cache = build_idf_cache(expanded, docs_field_texts)
         avg_fl = _compute_avg_field_lengths(entries)
 
-        bm25_results = []
-        for e, ft in zip(entries, docs_field_texts, strict=False):
-            s, detail = score_entry(
-                e,
+        bm25_results: list[tuple[float, IndexEntry, dict]] = []
+        for entry, field_text in zip(entries, docs_field_texts, strict=False):
+            score_value, detail = score_entry(
+                entry,
                 expanded,
                 merged_weights,
                 idf_cache,
@@ -596,10 +605,10 @@ def search(
                 explain=explain,
                 avg_field_lengths=avg_fl,
                 delta=bm25_delta,
-                precomputed_fields=ft,
+                precomputed_fields=field_text,
             )
-            if s > 0:
-                bm25_results.append((s, e, detail))
+            if score_value > 0:
+                bm25_results.append((score_value, entry, detail))
         bm25_results.sort(key=lambda x: x[0], reverse=True)
         bm25_ranking = [(r[1].path, r[0]) for r in bm25_results]
 
@@ -616,26 +625,26 @@ def search(
                 k=hybrid_rrf_k,
                 dense_weight=hybrid_dense_weight,
             )
-            entry_map = {e.path: e for e in entries}
+            entry_map = {entry.path: entry for entry in entries}
             detail_map = {r[1].path: r[2] for r in bm25_results}
             for path, rrf_score in merged[:top_n]:
-                e = entry_map.get(path)
-                if e is None:
-                    e = IndexEntry(path=path)
-                d = detail_map.get(path, {})
-                results.append((rrf_score, e, d))
+                merged_entry = entry_map.get(path)
+                if merged_entry is None:
+                    merged_entry = IndexEntry(path=path)
+                detail_dict = detail_map.get(path, {})
+                results.append((rrf_score, merged_entry, detail_dict))
         else:
             warnings.append("Dense search unavailable. Using BM25 only.")
             results = bm25_results[:top_n]
 
     elif used_engine == "index":
-        docs_field_texts = [e.field_text() for e in entries]
+        docs_field_texts = [entry.field_text() for entry in entries]
         idf_cache = build_idf_cache(expanded, docs_field_texts)
         avg_fl = _compute_avg_field_lengths(entries)
 
-        for e, ft in zip(entries, docs_field_texts, strict=False):
-            s, detail = score_entry(
-                e,
+        for entry, field_text in zip(entries, docs_field_texts, strict=False):
+            score_value, detail = score_entry(
+                entry,
                 expanded,
                 merged_weights,
                 idf_cache,
@@ -645,10 +654,10 @@ def search(
                 explain=explain,
                 avg_field_lengths=avg_fl,
                 delta=bm25_delta,
-                precomputed_fields=ft,
+                precomputed_fields=field_text,
             )
-            if s > 0:
-                results.append((s, e, detail))
+            if score_value > 0:
+                results.append((score_value, entry, detail))
         results.sort(key=lambda x: x[0], reverse=True)
 
         if prf and not no_prf and results:
@@ -657,9 +666,9 @@ def search(
                 expanded = prf_expanded
                 idf_cache = build_idf_cache(expanded, docs_field_texts)
                 results = []
-                for e, ft in zip(entries, docs_field_texts, strict=False):
-                    s, detail = score_entry(
-                        e,
+                for entry, field_text in zip(entries, docs_field_texts, strict=False):
+                    score_value, detail = score_entry(
+                        entry,
                         expanded,
                         merged_weights,
                         idf_cache,
@@ -669,10 +678,10 @@ def search(
                         explain=explain,
                         avg_field_lengths=avg_fl,
                         delta=bm25_delta,
-                        precomputed_fields=ft,
+                        precomputed_fields=field_text,
                     )
-                    if s > 0:
-                        results.append((s, e, detail))
+                    if score_value > 0:
+                        results.append((score_value, entry, detail))
                 results.sort(key=lambda x: x[0], reverse=True)
 
         results = results[:top_n]
@@ -691,9 +700,9 @@ def search(
         _get_nested(config, ["rerank", "auto_threshold"], DEFAULT_RERANK_AUTO_THRESHOLD)
     )
     rerank_auto_enabled = used_engine == "index" and len(entries) > rerank_auto_threshold
-    rerank_enabled = (not no_rerank) and (rerank or rerank_auto_enabled)
+    rerank_enabled = (not no_use_rerank) and (use_rerank or rerank_auto_enabled)
 
-    if rerank_auto_enabled and not rerank and not no_rerank:
+    if rerank_auto_enabled and not use_rerank and not no_use_rerank:
         warnings.append(
             "Rerank auto-enabled: "
             f"index entries ({len(entries)}) exceed "
@@ -701,7 +710,7 @@ def search(
         )
 
     if rerank_enabled and results:
-        results = rerank.rerank(query, results, top_n=top_n)
+        results = rerank_module.rerank(query, results, top_n=top_n)
 
     return {
         "engine": used_engine,

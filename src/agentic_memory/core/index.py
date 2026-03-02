@@ -516,7 +516,7 @@ def upsert_dense(index_path: Path, entry: dict) -> bool:
         return False
 
     vector_dim = int(vec.shape[0])
-    dense = np.zeros((0, vector_dim), dtype=np.float32)
+    dense_matrix = np.zeros((0, vector_dim), dtype=np.float32)
     paths: list[str] = []
 
     if dense_paths_path.exists():
@@ -536,34 +536,34 @@ def upsert_dense(index_path: Path, entry: dict) -> bool:
                 else:
                     loaded_dense = loaded_dense.reshape(1, -1)
             if loaded_dense.ndim == 2:
-                dense = loaded_dense
+                dense_matrix = loaded_dense
         except Exception:
-            dense = np.zeros((0, vector_dim), dtype=np.float32)
+            dense_matrix = np.zeros((0, vector_dim), dtype=np.float32)
 
-    if dense.shape[0] > 0 and dense.shape[1] != vector_dim:
+    if dense_matrix.shape[0] > 0 and dense_matrix.shape[1] != vector_dim:
         print(
             "[dn_index] Dense vector dimension mismatch. Reinitializing dense index incrementally.",
             file=sys.stderr,
         )
-        dense = np.zeros((0, vector_dim), dtype=np.float32)
+        dense_matrix = np.zeros((0, vector_dim), dtype=np.float32)
         paths = []
 
-    usable = min(len(paths), int(dense.shape[0]))
-    if usable != int(dense.shape[0]):
-        dense = dense[:usable]
+    usable = min(len(paths), int(dense_matrix.shape[0]))
+    if usable != int(dense_matrix.shape[0]):
+        dense_matrix = dense_matrix[:usable]
     if usable != len(paths):
         paths = paths[:usable]
 
     if path in paths:
         idx = paths.index(path)
-        dense[idx] = vec
+        dense_matrix[idx] = vec
     else:
-        dense = np.vstack([dense, vec.reshape(1, -1)])
+        dense_matrix = np.vstack([dense_matrix, vec.reshape(1, -1)])
         paths.append(path)
 
     index_dir.mkdir(parents=True, exist_ok=True)
     try:
-        np.save(dense_path, dense.astype(np.float32, copy=False))
+        np.save(dense_path, dense_matrix.astype(np.float32, copy=False))
         _atomic_write_text(dense_paths_path, json.dumps(paths, ensure_ascii=False))
     except OSError as exc:
         print(f"[dn_index] Failed to save dense upsert artifacts: {exc}", file=sys.stderr)

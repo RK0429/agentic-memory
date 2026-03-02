@@ -72,15 +72,15 @@ def _flatten_value(value: object) -> list[str]:
     if value is None:
         return []
     if isinstance(value, dict):
-        out: list[str] = []
+        dict_out: list[str] = []
         for v in value.values():
-            out.extend(_flatten_value(v))
-        return out
+            dict_out.extend(_flatten_value(v))
+        return dict_out
     if isinstance(value, list):
-        out: list[str] = []
+        list_out: list[str] = []
         for item in value:
-            out.extend(_flatten_value(item))
-        return out
+            list_out.extend(_flatten_value(item))
+        return list_out
     s = str(value).strip()
     return [s] if s else []
 

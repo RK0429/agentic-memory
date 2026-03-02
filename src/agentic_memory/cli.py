@@ -7,7 +7,7 @@ import datetime as _dt
 import inspect
 import json
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -459,6 +459,7 @@ def cmd_evidence(
 def _run_server(
     run_server: Any, memory_dir: Path, transport: str, port: int, verbose: bool
 ) -> None:
+    params: Mapping[str, inspect.Parameter]
     try:
         params = inspect.signature(run_server).parameters
     except (TypeError, ValueError):

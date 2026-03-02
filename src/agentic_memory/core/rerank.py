@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 MODEL_NAME = "hotchpotch/japanese-reranker-tiny-v2"
@@ -78,12 +79,12 @@ def _to_document_text(entry: object, doc_max_chars: int) -> str:
     return text
 
 
-def rerank(
+def rerank[TEntry](
     query: str,
-    candidates: list[tuple[float, object, dict]],
+    candidates: Sequence[tuple[float, TEntry, dict[str, Any]]],
     top_n: int = 20,
     doc_max_chars: int = 2000,
-) -> list[tuple[float, object, dict]]:
+) -> list[tuple[float, TEntry, dict[str, Any]]]:
     """Rerank search candidates with a CrossEncoder and return top results.
 
     Args:
@@ -97,11 +98,12 @@ def rerank(
         dependencies are unavailable, candidates are empty, or any error occurs,
         this function returns `candidates` unchanged.
     """
-    if not candidates:
-        return candidates
+    candidate_list = list(candidates)
+    if not candidate_list:
+        return []
 
     if not is_rerank_available():
-        return candidates
+        return candidate_list
 
     if top_n <= 0:
         return []
@@ -109,22 +111,22 @@ def rerank(
     try:
         reranker = _get_reranker()
         if reranker is None:
-            return candidates
+            return candidate_list
 
         pairs: list[tuple[str, str]] = []
-        for _, entry, _ in candidates:
+        for _, entry, _ in candidate_list:
             doc_text = _to_document_text(entry, doc_max_chars=doc_max_chars)
             pairs.append((query, doc_text))
 
         raw_scores = reranker.predict(pairs)
         scores = [float(score) for score in raw_scores]
 
-        rescored: list[tuple[float, object, dict]] = [
+        rescored: list[tuple[float, TEntry, dict[str, Any]]] = [
             (score, entry, detail)
-            for score, (_, entry, detail) in zip(scores, candidates, strict=False)
+            for score, (_, entry, detail) in zip(scores, candidate_list, strict=False)
         ]
         rescored.sort(key=lambda item: item[0], reverse=True)
         return rescored[:top_n]
     except Exception as exc:
         print(f"[dn_rerank] rerank failed, passthrough: {exc}", file=sys.stderr)
-        return candidates
+        return candidate_list

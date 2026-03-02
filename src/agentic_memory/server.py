@@ -9,7 +9,7 @@ import os
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
 
@@ -19,7 +19,7 @@ try:
     mcp = FastMCP(
         "memory",
         description="Persistent memory system for AI agents",
-    )
+    )  # type: ignore[call-arg]
 except TypeError:
     # Backward compatibility for mcp versions where FastMCP(description=...) is unavailable.
     mcp = FastMCP("memory")
@@ -47,7 +47,7 @@ def _serialize_json(value: Any) -> str:
 
 
 def _to_jsonable(value: Any) -> Any:
-    if dataclasses.is_dataclass(value):
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return _to_jsonable(dataclasses.asdict(value))
     if isinstance(value, Path):
         return str(value)
@@ -322,8 +322,8 @@ def memory_search(
         no_feedback_expand=no_feedback_expand,
         no_fuzzy=no_fuzzy,
         sync_stale_index=sync_stale_index,
-        rerank=rerank,
-        no_rerank=no_rerank,
+        use_rerank=rerank,
+        no_use_rerank=no_rerank,
         prf=prf,
         no_prf=no_prf,
         default_date_range=default_date_range,
@@ -405,4 +405,5 @@ def run_server(
     """Run the MCP server."""
     if memory_dir:
         os.environ["MEMORY_DIR"] = str(memory_dir)
-    mcp.run(transport=transport)
+    transport_value = cast(Literal["stdio", "sse", "streamable-http"], transport)
+    mcp.run(transport=transport_value)

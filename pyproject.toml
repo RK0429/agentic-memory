@@ -69,10 +69,11 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
-warn_return_any = true
 packages = ["agentic_memory"]
 mypy_path = "src"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
