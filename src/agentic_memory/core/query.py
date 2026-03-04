@@ -115,6 +115,9 @@ def parse_query(query: str) -> list[QueryTerm]:
                     )
                     continue
             elif maybe_field in {
+                "task_id",
+                "agent_id",
+                "relay_session_id",
                 "title",
                 "tags",
                 "keywords",

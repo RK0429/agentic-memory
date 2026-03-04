@@ -5,6 +5,11 @@ from pathlib import Path
 
 from agentic_memory.server import (
     _resolve_dir,
+    memory_agent_state_add,
+    memory_agent_state_remove,
+    memory_agent_state_set,
+    memory_agent_state_show,
+    memory_auto_restore,
     memory_evidence,
     memory_index_build,
     memory_index_upsert,
@@ -202,3 +207,107 @@ def test_memory_evidence(tmp_memory_dir: Path, monkeypatch) -> None:
     output = memory_evidence(query="validate", paths=[str(note_path)], memory_dir=str(memory_dir))
     assert "# DailyNote Evidence Pack" in output
     assert str(note_path) in output
+
+
+def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    created_path = Path(
+        memory_note_new(
+            title="Metadata Note",
+            task_id="TASK-111",
+            agent_id="coder",
+            relay_session_id="relay-a",
+            memory_dir=str(memory_dir),
+        )
+    )
+    assert created_path.exists()
+
+    raw = memory_search(
+        query="Metadata",
+        engine="index",
+        task_id="TASK-111",
+        agent_id="coder",
+        relay_session_id="relay-a",
+        memory_dir=str(memory_dir),
+    )
+    payload = json.loads(raw)
+    assert payload["results"]
+
+
+def test_memory_agent_state_show_set_add_remove(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    show = memory_agent_state_show(
+        agent_id="coder",
+        relay_session_id="relay-a",
+        memory_dir=str(memory_dir),
+    )
+    assert "現在のフォーカス" in show
+
+    set_raw = memory_agent_state_set(
+        agent_id="coder",
+        relay_session_id="relay-a",
+        section="focus",
+        items=["TASK-001: work"],
+        sync_to_project=True,
+        memory_dir=str(memory_dir),
+    )
+    set_payload = json.loads(set_raw)
+    assert set_payload["updated_path"].endswith("_state.coder.relay-a.md")
+    assert set_payload["synced"] is True
+
+    add_raw = memory_agent_state_add(
+        agent_id="coder",
+        relay_session_id="relay-a",
+        section="focus",
+        items=["TASK-002: more work"],
+        memory_dir=str(memory_dir),
+    )
+    add_payload = json.loads(add_raw)
+    assert add_payload["warnings"] == []
+
+    remove_raw = memory_agent_state_remove(
+        agent_id="coder",
+        relay_session_id="relay-a",
+        section="focus",
+        pattern="TASK-002",
+        memory_dir=str(memory_dir),
+    )
+    remove_payload = json.loads(remove_raw)
+    assert remove_payload["removed"] == 1
+
+
+def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    created = Path(
+        memory_note_new(
+            title="Auto Restore Source",
+            task_id="TASK-301",
+            agent_id="coder",
+            relay_session_id="relay-r1",
+            memory_dir=str(memory_dir),
+        )
+    )
+    assert created.exists()
+
+    memory_agent_state_set(
+        agent_id="coder",
+        relay_session_id="relay-r1",
+        section="focus",
+        items=["TASK-301: continue task"],
+        memory_dir=str(memory_dir),
+    )
+
+    raw = memory_auto_restore(
+        agent_id="coder",
+        relay_session_id="relay-r1",
+        memory_dir=str(memory_dir),
+    )
+    payload = json.loads(raw)
+    assert payload["restored_task_count"] >= 1
+    assert payload["active_tasks"][0]["task_id"] == "TASK-301"

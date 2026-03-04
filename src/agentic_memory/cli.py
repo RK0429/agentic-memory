@@ -41,6 +41,21 @@ def _state_path(memory_dir: Path) -> Path:
     return memory_dir / "_state.md"
 
 
+def _agent_state_path(
+    memory_dir: Path,
+    agent_id: str,
+    relay_session_id: str | None = None,
+    *,
+    for_write: bool = False,
+) -> Path:
+    return state.resolve_agent_state_path(
+        memory_dir=memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=for_write,
+    )
+
+
 def _index_path(memory_dir: Path) -> Path:
     return memory_dir / "_index.jsonl"
 
@@ -144,6 +159,9 @@ def note_group() -> None:
 @click.option("--tags", default=None, help="Comma-separated tags.")
 @click.option("--keywords", default=None, help="Comma-separated keywords.")
 @click.option("--context", default=None, help="Context (issue/pr/link).")
+@click.option("--task-id", default=None, help="Task identifier (e.g., TASK-001).")
+@click.option("--agent-id", default=None, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
 @click.pass_context
 def cmd_note_new(
     ctx: click.Context,
@@ -151,6 +169,9 @@ def cmd_note_new(
     tags: str | None,
     keywords: str | None,
     context: str | None,
+    task_id: str | None,
+    agent_id: str | None,
+    relay_session_id: str | None,
 ) -> None:
     """Create a new note."""
     app = _get_ctx(ctx)
@@ -161,6 +182,18 @@ def cmd_note_new(
         tags=tags,
         keywords=keywords,
     )
+    try:
+        index.index_note(
+            note_path=out_path,
+            index_path=_index_path(app.memory_dir),
+            dailynote_dir=app.memory_dir,
+            task_id=task_id,
+            agent_id=agent_id,
+            relay_session_id=relay_session_id,
+            no_dense=True,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     click.echo(str(out_path))
 
 
@@ -282,8 +315,209 @@ def cmd_state_from_note(
     sys.exit(return_code)
 
 
+@main.group("agent-state")
+def agent_state_group() -> None:
+    """Agent-specific rolling state operations."""
+
+
+@agent_state_group.command("show")
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
+@click.option("--section", default=None, help="Section key.")
+@click.option("--stale-days", type=int, default=0, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+@click.pass_context
+def cmd_agent_state_show(
+    ctx: click.Context,
+    agent_id: str,
+    relay_session_id: str | None,
+    section: str | None,
+    stale_days: int,
+    as_json: bool,
+) -> None:
+    """Show agent-specific state."""
+    app = _get_ctx(ctx)
+    target = _agent_state_path(
+        app.memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=False,
+    )
+    state.ensure_state_file(target)
+    return_code = state.cmd_show(
+        state_path=target,
+        section=section,
+        stale_days=stale_days,
+        as_json=as_json,
+    )
+    sys.exit(return_code)
+
+
+@agent_state_group.command("set")
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
+@click.option("--section", required=True, help="Section key.")
+@click.option("--item", "items", multiple=True, required=True, help="Item text.")
+@click.option("--sync-to-project", is_flag=True, help="Apply the same change to project state.")
+@click.pass_context
+def cmd_agent_state_set(
+    ctx: click.Context,
+    agent_id: str,
+    relay_session_id: str | None,
+    section: str,
+    items: tuple[str, ...],
+    sync_to_project: bool,
+) -> None:
+    """Replace a section in agent-specific state."""
+    app = _get_ctx(ctx)
+    target = _agent_state_path(
+        app.memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=True,
+    )
+    state.ensure_state_file(target)
+    return_code = state.cmd_set(state_path=target, section=section, items=list(items))
+    if return_code == 0 and sync_to_project:
+        return_code = state.cmd_set(
+            state_path=_state_path(app.memory_dir),
+            section=section,
+            items=list(items),
+        )
+    sys.exit(return_code)
+
+
+@agent_state_group.command("add")
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
+@click.option("--section", required=True, help="Section key.")
+@click.option("--item", "items", multiple=True, required=True, help="Item text.")
+@click.option("--sync-to-project", is_flag=True, help="Apply the same change to project state.")
+@click.pass_context
+def cmd_agent_state_add(
+    ctx: click.Context,
+    agent_id: str,
+    relay_session_id: str | None,
+    section: str,
+    items: tuple[str, ...],
+    sync_to_project: bool,
+) -> None:
+    """Add items to a section in agent-specific state."""
+    app = _get_ctx(ctx)
+    target = _agent_state_path(
+        app.memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=True,
+    )
+    state.ensure_state_file(target)
+    return_code = state.cmd_add(state_path=target, section=section, items=list(items))
+    if return_code == 0 and sync_to_project:
+        return_code = state.cmd_add(
+            state_path=_state_path(app.memory_dir),
+            section=section,
+            items=list(items),
+        )
+    sys.exit(return_code)
+
+
+@agent_state_group.command("remove")
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
+@click.option("--section", required=True, help="Section key.")
+@click.option("--pattern", required=True, help="String or regex pattern.")
+@click.option("--regex", is_flag=True, help="Treat pattern as regex.")
+@click.option("--sync-to-project", is_flag=True, help="Apply the same change to project state.")
+@click.pass_context
+def cmd_agent_state_remove(
+    ctx: click.Context,
+    agent_id: str,
+    relay_session_id: str | None,
+    section: str,
+    pattern: str,
+    regex: bool,
+    sync_to_project: bool,
+) -> None:
+    """Remove items from a section in agent-specific state."""
+    app = _get_ctx(ctx)
+    target = _agent_state_path(
+        app.memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=True,
+    )
+    state.ensure_state_file(target)
+    return_code = state.cmd_remove(
+        state_path=target,
+        section=section,
+        pattern=pattern,
+        regex=regex,
+    )
+    if return_code == 0 and sync_to_project:
+        return_code = state.cmd_remove(
+            state_path=_state_path(app.memory_dir),
+            section=section,
+            pattern=pattern,
+            regex=regex,
+        )
+    sys.exit(return_code)
+
+
+@main.command("auto-restore")
+@click.option("--agent-id", default=None, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
+@click.option("--max-evidence-notes", type=int, default=3, show_default=True)
+@click.option("--max-lines", type=int, default=6, show_default=True)
+@click.option(
+    "--include-project-state/--no-include-project-state",
+    default=True,
+    show_default=True,
+)
+@click.option(
+    "--include-agent-state/--no-include-agent-state",
+    default=True,
+    show_default=True,
+)
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+@click.pass_context
+def cmd_auto_restore(
+    ctx: click.Context,
+    agent_id: str | None,
+    relay_session_id: str | None,
+    max_evidence_notes: int,
+    max_lines: int,
+    include_project_state: bool,
+    include_agent_state: bool,
+    as_json: bool,
+) -> None:
+    """Restore active context from state and related notes."""
+    app = _get_ctx(ctx)
+    payload = state.auto_restore(
+        memory_dir=app.memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        max_evidence_notes=max_evidence_notes,
+        max_lines=max_lines,
+        include_project_state=include_project_state,
+        include_agent_state=include_agent_state,
+    )
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    click.echo(f"restored_task_count: {payload.get('restored_task_count', 0)}")
+    click.echo(f"total_notes_referenced: {payload.get('total_notes_referenced', 0)}")
+    warnings = payload.get("warnings", [])
+    if isinstance(warnings, list):
+        for warning in warnings:
+            click.echo(f"Warning: {warning}", err=True)
+
+
 @main.command("search")
 @click.option("--query", required=True, help="Search query.")
+@click.option("--task-id", default=None, help="Filter by task ID.")
+@click.option("--agent-id", default=None, help="Filter by agent ID.")
+@click.option("--relay-session-id", default=None, help="Filter by relay session ID.")
 @click.option("--top", type=int, default=None, help="Number of results.")
 @click.option("--snippets", type=int, default=None, help="Snippets per result.")
 @click.option(
@@ -299,6 +533,9 @@ def cmd_state_from_note(
 def cmd_search(
     ctx: click.Context,
     query: str,
+    task_id: str | None,
+    agent_id: str | None,
+    relay_session_id: str | None,
     top: int | None,
     snippets: int | None,
     engine: str,
@@ -313,6 +550,9 @@ def cmd_search(
         payload = search.search(
             query=query,
             memory_dir=app.memory_dir,
+            task_id=task_id,
+            agent_id=agent_id,
+            relay_session_id=relay_session_id,
             engine=engine,
             top=top,
             snippets=snippets,
@@ -408,9 +648,19 @@ def cmd_index_build(
 @click.option(
     "--note", "note_path", required=True, type=click.Path(path_type=Path), help="Note path."
 )
+@click.option("--task-id", default=None, help="Task identifier.")
+@click.option("--agent-id", default=None, help="Agent identifier.")
+@click.option("--relay-session-id", default=None, help="Relay session identifier.")
 @click.option("--no-dense", is_flag=True, help="Skip dense embedding generation.")
 @click.pass_context
-def cmd_index_upsert(ctx: click.Context, note_path: Path, no_dense: bool) -> None:
+def cmd_index_upsert(
+    ctx: click.Context,
+    note_path: Path,
+    task_id: str | None,
+    agent_id: str | None,
+    relay_session_id: str | None,
+    no_dense: bool,
+) -> None:
     """Upsert one note into index."""
     app = _get_ctx(ctx)
 
@@ -419,6 +669,9 @@ def cmd_index_upsert(ctx: click.Context, note_path: Path, no_dense: bool) -> Non
             note_path=note_path,
             index_path=_index_path(app.memory_dir),
             dailynote_dir=app.memory_dir,
+            task_id=task_id,
+            agent_id=agent_id,
+            relay_session_id=relay_session_id,
             no_dense=no_dense,
         )
     except FileNotFoundError as exc:

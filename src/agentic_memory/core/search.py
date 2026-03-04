@@ -47,8 +47,14 @@ from agentic_memory.core.scorer import (
 )
 
 CJK_CHUNK_RE = tokenizer.CJK_CHUNK_RE
+TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
+TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
+METADATA_FIELD_NAMES = {"task_id", "agent_id", "relay_session_id"}
 
 DEFAULT_WEIGHTS = {
+    "task_id": 8.0,
+    "agent_id": 2.0,
+    "relay_session_id": 1.5,
     "title": 6.0,
     "tags": 5.0,
     "keywords": 4.0,
@@ -79,6 +85,88 @@ _normalize_text = tokenizer._normalize_text
 
 def _safe_lower(s: str) -> str:
     return _normalize_text(s).lower()
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = _normalize_text(value).strip()
+    return normalized or None
+
+
+def _normalize_task_id(value: str | None) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if not normalized:
+        return None
+    upper = normalized.upper()
+    if TASK_ID_PATTERN.fullmatch(upper):
+        return upper
+    match = TASK_ID_EXTRACT_PATTERN.search(upper)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _normalize_metadata_filter(field: str, value: str | None) -> str | None:
+    if field == "task_id":
+        return _normalize_task_id(value)
+    return _normalize_optional_text(value)
+
+
+def _extract_query_metadata_filters(
+    qterms: list[QueryTerm],
+) -> tuple[list[QueryTerm], dict[str, str | None]]:
+    remaining: list[QueryTerm] = []
+    extracted: dict[str, str | None] = {
+        "task_id": None,
+        "agent_id": None,
+        "relay_session_id": None,
+    }
+
+    for qt in qterms:
+        if qt.field in METADATA_FIELD_NAMES and qt.term and not qt.exclude:
+            extracted[qt.field] = _normalize_metadata_filter(qt.field, qt.term)
+            continue
+        remaining.append(qt)
+    return remaining, extracted
+
+
+def _resolve_metadata_filter(
+    *,
+    field: str,
+    explicit: str | None,
+    query_value: str | None,
+    warnings: list[str],
+) -> str | None:
+    if explicit is not None:
+        normalized = _normalize_metadata_filter(field, explicit)
+        if normalized is None:
+            raise ValueError(f"Invalid {field}: {explicit!r}")
+        if query_value is not None and query_value != normalized:
+            warnings.append(f"Query {field} filter is ignored because explicit {field} is provided.")
+        return normalized
+    return query_value
+
+
+def _entry_matches_metadata(
+    entry: IndexEntry,
+    *,
+    task_id: str | None,
+    agent_id: str | None,
+    relay_session_id: str | None,
+) -> bool:
+    if task_id is not None:
+        if _normalize_task_id(entry.task_id) != task_id:
+            return False
+    if agent_id is not None:
+        entry_agent = _normalize_optional_text(entry.agent_id)
+        if entry_agent is None or entry_agent.casefold() != agent_id.casefold():
+            return False
+    if relay_session_id is not None:
+        entry_session = _normalize_optional_text(entry.relay_session_id)
+        if entry_session is None or entry_session.casefold() != relay_session_id.casefold():
+            return False
+    return True
 
 
 def _split_camel(s: str) -> list[str]:
@@ -408,6 +496,9 @@ def search(
     *,
     query: str,
     memory_dir: Path,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
     engine: str = "auto",
     top: int | None = None,
     snippets: int | None = None,
@@ -461,6 +552,25 @@ def search(
     )
 
     qterms = parse_query(query)
+    qterms, query_filters = _extract_query_metadata_filters(qterms)
+    resolved_task_id = _resolve_metadata_filter(
+        field="task_id",
+        explicit=task_id,
+        query_value=query_filters["task_id"],
+        warnings=warnings,
+    )
+    resolved_agent_id = _resolve_metadata_filter(
+        field="agent_id",
+        explicit=agent_id,
+        query_value=query_filters["agent_id"],
+        warnings=warnings,
+    )
+    resolved_relay_session_id = _resolve_metadata_filter(
+        field="relay_session_id",
+        explicit=relay_session_id,
+        query_value=query_filters["relay_session_id"],
+        warnings=warnings,
+    )
 
     # Apply default date range if no explicit date filter
     default_range = default_date_range
@@ -536,7 +646,17 @@ def search(
             "feedback_expand": feedback_expand,
             "top": top_n,
             "snippets": snippets_n,
+            "filters": {
+                "task_id": resolved_task_id,
+                "agent_id": resolved_agent_id,
+                "relay_session_id": resolved_relay_session_id,
+            },
         }
+
+    has_metadata_filters = any(
+        value is not None
+        for value in (resolved_task_id, resolved_agent_id, resolved_relay_session_id)
+    )
 
     # Engine selection
     entries: list[IndexEntry] = []
@@ -585,9 +705,37 @@ def search(
     else:
         used_engine = "python"
 
-    results: list[tuple[float, IndexEntry, dict]] = []
+    if has_metadata_filters:
+        if index_exists:
+            if used_engine != "index":
+                warnings.append(
+                    "Metadata filters require index metadata. Switching engine to index."
+                )
+                used_engine = "index"
+            if not entries:
+                entries = load_index(index_path)
+        else:
+            warnings.append("Metadata filters were requested but _index.jsonl was not found.")
 
-    if used_engine == "index" and engine == "hybrid":
+    if used_engine == "index" and has_metadata_filters:
+        entries = [
+            entry
+            for entry in entries
+            if _entry_matches_metadata(
+                entry,
+                task_id=resolved_task_id,
+                agent_id=resolved_agent_id,
+                relay_session_id=resolved_relay_session_id,
+            )
+        ]
+
+    results: list[tuple[float, IndexEntry, dict]] = []
+    has_scoring_terms = any(qt.term and not qt.exclude for qt in expanded)
+
+    if used_engine == "index" and not has_scoring_terms:
+        results = [(1.0, entry, {}) for entry in entries[:top_n]]
+
+    elif used_engine == "index" and engine == "hybrid":
         docs_field_texts = [entry.field_text() for entry in entries]
         idf_cache = build_idf_cache(expanded, docs_field_texts)
         avg_fl = _compute_avg_field_lengths(entries)
@@ -686,10 +834,17 @@ def search(
 
         results = results[:top_n]
 
+    elif has_metadata_filters and not index_exists:
+        results = []
     else:
         results = _search_with_engine(used_engine, expanded, dn_dir, top_n, explain, has_rg)
 
-    if engine == "auto" and used_engine == "index" and not results:
+    if (
+        engine == "auto"
+        and used_engine == "index"
+        and not results
+        and not has_metadata_filters
+    ):
         fallback_engine = "rg" if has_rg else "python"
         warnings.append(f"Index returned 0 results. Retrying with {fallback_engine} engine.")
         used_engine = fallback_engine
@@ -730,4 +885,9 @@ def search(
         "snippets": snippets_n,
         "rerank_enabled": rerank_enabled,
         "rerank_auto_enabled": rerank_auto_enabled,
+        "filters": {
+            "task_id": resolved_task_id,
+            "agent_id": resolved_agent_id,
+            "relay_session_id": resolved_relay_session_id,
+        },
     }

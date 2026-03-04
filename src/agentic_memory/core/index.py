@@ -11,13 +11,16 @@ Why this exists:
 from __future__ import annotations
 
 import datetime as _dt
+import fcntl
 import json
 import os
 import re
 import sys
 import tempfile
+import time
 from contextlib import suppress
 from pathlib import Path
+from typing import TextIO
 
 from agentic_memory.core import dense, sections, signals, tokenizer
 
@@ -56,6 +59,8 @@ STOPWORDS = set(
     ]
 )
 CJK_CHUNK_RE = tokenizer.CJK_CHUNK_RE
+TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
+TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
 
 
 def now_iso() -> str:
@@ -106,6 +111,41 @@ def header_field(md: str, label: str) -> str:
     if not m:
         return ""
     return m.group(1).strip()
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = normalize_text(value).strip()
+    return normalized or None
+
+
+def _normalize_task_id(value: str | None) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if not normalized:
+        return None
+    upper = normalized.upper()
+    if TASK_ID_PATTERN.fullmatch(upper):
+        return upper
+    match = TASK_ID_EXTRACT_PATTERN.search(upper)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _resolve_task_id(task_id: str | None, md: str) -> str | None:
+    explicit = _normalize_optional_text(task_id)
+    if explicit is not None:
+        resolved = _normalize_task_id(explicit)
+        if resolved is None:
+            raise ValueError(f"Invalid task_id: {task_id!r}")
+        return resolved
+
+    header = _normalize_task_id(header_field(md, "Task-ID"))
+    if header:
+        return header
+
+    return _normalize_task_id(md)
 
 
 def parse_list_field(v: str) -> list[str]:
@@ -453,26 +493,86 @@ def dedupe(xs: list[str]) -> list[str]:
     return out
 
 
+def _index_lock_path(index_path: Path) -> Path:
+    return Path(f"{index_path}.lock")
+
+
+def _acquire_index_lock(index_path: Path, timeout_seconds: float = 5.0) -> TextIO:
+    lock_path = _index_lock_path(index_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(lock_path, "w", encoding="utf-8")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock_file
+        except BlockingIOError as exc:
+            if time.monotonic() >= deadline:
+                lock_file.close()
+                raise TimeoutError("Could not acquire index lock within 5s") from exc
+            time.sleep(0.1)
+
+
+def _read_index_rows(index_path: Path) -> list[dict]:
+    rows: list[dict] = []
+    if not index_path.exists():
+        return rows
+    for line in index_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    return rows
+
+
+def _write_index_rows(index_path: Path, rows: list[dict]) -> None:
+    payload = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows)
+    if payload:
+        payload += "\n"
+    _atomic_write_text(index_path, payload)
+
+
 def upsert(index_path: Path, entry: dict):
-    rows = []
-    if index_path.exists():
-        rows = [
-            json.loads(line)
-            for line in index_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-            if line.strip()
-        ]
-    out = []
-    replaced = False
-    for r in rows:
-        if r.get("path") == entry["path"]:
-            out.append(entry)
-            replaced = True
-        else:
-            out.append(r)
-    if not replaced:
-        out.append(entry)
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(index_path, "\n".join(json.dumps(r, ensure_ascii=False) for r in out) + "\n")
+    lock_file = _acquire_index_lock(index_path)
+    try:
+        rows = _read_index_rows(index_path)
+        out = []
+        replaced = False
+        for r in rows:
+            if r.get("path") == entry["path"]:
+                out.append(entry)
+                replaced = True
+            else:
+                out.append(r)
+        if not replaced:
+            out.append(entry)
+        _write_index_rows(index_path, out)
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def _replace_all(index_path: Path, rows: list[dict]) -> None:
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = _acquire_index_lock(index_path)
+    try:
+        _write_index_rows(index_path, rows)
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def _normalize_agent_id(value: str | None) -> str | None:
+    return _normalize_optional_text(value)
+
+
+def _normalize_relay_session_id(value: str | None) -> str | None:
+    return _normalize_optional_text(value)
 
 
 def upsert_dense(index_path: Path, entry: dict) -> bool:
@@ -593,12 +693,30 @@ def detect_sigfb_status(sigfb_lines: list[str]) -> str:
     return "recorded" if has_content else "missing"
 
 
-def build_entry(note_path: Path, max_summary_chars: int, dailynote_dir: Path) -> dict:
+def build_entry(
+    note_path: Path,
+    max_summary_chars: int,
+    dailynote_dir: Path,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
+) -> dict:
     md = read_text(note_path)
     title = first_h1(md)
     date = header_field(md, "Date")
     time = header_field(md, "Time")
     context = header_field(md, "Context")
+    resolved_task_id = _resolve_task_id(task_id, md)
+    resolved_agent_id = (
+        _normalize_agent_id(agent_id)
+        if agent_id is not None
+        else _normalize_agent_id(header_field(md, "Agent-ID"))
+    )
+    resolved_relay_session_id = (
+        _normalize_relay_session_id(relay_session_id)
+        if relay_session_id is not None
+        else _normalize_relay_session_id(header_field(md, "Relay-Session-ID"))
+    )
     tags = parse_list_field(header_field(md, "Tags"))
     keywords = parse_list_field(header_field(md, "Keywords"))
 
@@ -628,6 +746,9 @@ def build_entry(note_path: Path, max_summary_chars: int, dailynote_dir: Path) ->
 
     return {
         "path": _normalize_note_path(note_path, dailynote_dir),
+        "task_id": resolved_task_id,
+        "agent_id": resolved_agent_id,
+        "relay_session_id": resolved_relay_session_id,
         "title": title,
         "date": date,
         "time": time,
@@ -768,12 +889,7 @@ def rebuild_index(
                 pass  # Non-date directory, include anyway
         entries.append(build_entry(note_path, max_summary_chars, dailynote_dir=dailynote_dir))
 
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(
-        index_path,
-        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries)
-        + ("\n" if entries else ""),
-    )
+    _replace_all(index_path, entries)
 
     vocab_path = index_path.parent / "_vocab.json"
     build_vocab_cache(entries, vocab_path)
@@ -790,6 +906,9 @@ def index_note(
     note_path: Path,
     index_path: Path,
     dailynote_dir: Path,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
     max_summary_chars: int = 280,
     no_dense: bool = False,
 ) -> dict:
@@ -797,7 +916,14 @@ def index_note(
     if not note_path.exists():
         raise FileNotFoundError(f"Note not found: {note_path}")
 
-    entry = build_entry(note_path, max_summary_chars, dailynote_dir=dailynote_dir)
+    entry = build_entry(
+        note_path,
+        max_summary_chars,
+        dailynote_dir=dailynote_dir,
+        task_id=task_id,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+    )
     upsert(index_path, entry)
 
     vocab_path = index_path.parent / "_vocab.json"

@@ -24,6 +24,9 @@ FALLBACK_TEMPLATE = (
 
 DEFAULT_CONFIG = {
     "weights": {
+        "task_id": 8.0,
+        "agent_id": 2.0,
+        "relay_session_id": 1.5,
         "title": 6.0,
         "tags": 5.0,
         "keywords": 4.0,

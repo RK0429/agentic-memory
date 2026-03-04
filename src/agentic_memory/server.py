@@ -38,6 +38,21 @@ def _state_path(memory_dir: Path) -> Path:
     return memory_dir / "_state.md"
 
 
+def _agent_state_path(
+    memory_dir: Path,
+    agent_id: str,
+    relay_session_id: str | None = None,
+    *,
+    for_write: bool = False,
+) -> Path:
+    return state.resolve_agent_state_path(
+        memory_dir=memory_dir,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=for_write,
+    )
+
+
 def _index_path(memory_dir: Path) -> Path:
     return memory_dir / "_index.jsonl"
 
@@ -81,8 +96,13 @@ def _capture_state_cmd(func: Callable[..., int], *args: Any, **kwargs: Any) -> s
 
 def _resolve_note_path(note_path: str, memory_dir: Path) -> Path:
     p = Path(note_path)
-    if p.is_absolute() or p.exists():
+    if p.is_absolute():
         return p
+    if p.exists():
+        return p
+    parent_relative = memory_dir.parent / p
+    if parent_relative.exists():
+        return parent_relative
     return memory_dir / p
 
 
@@ -92,6 +112,8 @@ def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
         p = Path(raw)
         if p.is_absolute() or p.exists():
             resolved.append(p)
+        elif (memory_dir.parent / p).exists():
+            resolved.append(memory_dir.parent / p)
         else:
             resolved.append(memory_dir / p)
     return resolved
@@ -116,11 +138,15 @@ def memory_note_new(
     context: str | None = None,
     tags: str | None = None,
     keywords: str | None = None,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Create a new session note from template.
 
     `title` is required. Optional `context`, `tags`, and `keywords` fill metadata fields.
+    `task_id`, `agent_id`, and `relay_session_id` are stored in index metadata.
     `memory_dir` sets the note root directory.
     Returns the created note file path.
     """
@@ -131,6 +157,15 @@ def memory_note_new(
         context=context,
         tags=tags,
         keywords=keywords,
+    )
+    index.index_note(
+        note_path=created,
+        index_path=_index_path(resolved),
+        dailynote_dir=resolved,
+        task_id=task_id,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        no_dense=True,
     )
     return str(created)
 
@@ -281,8 +316,254 @@ def memory_state_from_note(
 
 
 @mcp.tool()
+def memory_agent_state_show(
+    agent_id: str,
+    relay_session_id: str | None = None,
+    section: str | None = None,
+    stale_days: int = 0,
+    as_json: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Show agent-specific rolling state.
+
+    Creates `_state.{agent_id}[.{relay_session_id}].md` when missing.
+    Returns formatted state text, or JSON when `as_json=True`.
+    """
+    resolved = _resolve_dir(memory_dir)
+    target_path = _agent_state_path(
+        resolved,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=False,
+    )
+    state.ensure_state_file(target_path)
+    output = _capture_state_cmd(
+        state.cmd_show,
+        target_path,
+        section=section,
+        stale_days=stale_days,
+        as_json=as_json,
+    )
+    if as_json:
+        try:
+            return _serialize_json(json.loads(output))
+        except json.JSONDecodeError:
+            return output
+    return output
+
+
+def _sync_agent_state_to_project(
+    *,
+    action: Callable[..., int],
+    memory_dir: Path,
+    section: str,
+    items: list[str] | None = None,
+    pattern: str | None = None,
+    regex: bool = False,
+) -> tuple[bool, str]:
+    kwargs: dict[str, Any] = {
+        "state_path": _state_path(memory_dir),
+        "section": section,
+    }
+    if items is not None:
+        kwargs["items"] = items
+    if pattern is not None:
+        kwargs["pattern"] = pattern
+        kwargs["regex"] = regex
+
+    result = _capture_state_cmd(action, **kwargs)
+    return ("exit_code=" not in result, result)
+
+
+@mcp.tool()
+def memory_agent_state_set(
+    agent_id: str,
+    section: str,
+    items: list[str],
+    relay_session_id: str | None = None,
+    sync_to_project: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Set agent-specific state section items."""
+    resolved = _resolve_dir(memory_dir)
+    target_path = _agent_state_path(
+        resolved,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=True,
+    )
+    state.ensure_state_file(target_path)
+    output = _capture_state_cmd(
+        state.cmd_set,
+        target_path,
+        section=section,
+        items=items,
+    )
+
+    warnings: list[str] = []
+    synced = False
+    if "exit_code=" in output:
+        warnings.append(output)
+    elif sync_to_project:
+        ok, sync_output = _sync_agent_state_to_project(
+            action=state.cmd_set,
+            memory_dir=resolved,
+            section=section,
+            items=items,
+        )
+        synced = ok
+        if not ok:
+            warnings.append(sync_output)
+
+    return _serialize_json(
+        {
+            "updated_path": str(target_path),
+            "synced": synced,
+            "warnings": warnings,
+        }
+    )
+
+
+@mcp.tool()
+def memory_agent_state_add(
+    agent_id: str,
+    section: str,
+    items: list[str],
+    relay_session_id: str | None = None,
+    sync_to_project: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Add items to an agent-specific state section."""
+    resolved = _resolve_dir(memory_dir)
+    target_path = _agent_state_path(
+        resolved,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=True,
+    )
+    state.ensure_state_file(target_path)
+    output = _capture_state_cmd(
+        state.cmd_add,
+        target_path,
+        section=section,
+        items=items,
+    )
+
+    warnings: list[str] = []
+    synced = False
+    if "exit_code=" in output:
+        warnings.append(output)
+    elif sync_to_project:
+        ok, sync_output = _sync_agent_state_to_project(
+            action=state.cmd_add,
+            memory_dir=resolved,
+            section=section,
+            items=items,
+        )
+        synced = ok
+        if not ok:
+            warnings.append(sync_output)
+
+    return _serialize_json(
+        {
+            "updated_path": str(target_path),
+            "synced": synced,
+            "warnings": warnings,
+        }
+    )
+
+
+@mcp.tool()
+def memory_agent_state_remove(
+    agent_id: str,
+    section: str,
+    pattern: str,
+    relay_session_id: str | None = None,
+    regex: bool = False,
+    sync_to_project: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Remove matching items from an agent-specific state section."""
+    resolved = _resolve_dir(memory_dir)
+    target_path = _agent_state_path(
+        resolved,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        for_write=True,
+    )
+    state.ensure_state_file(target_path)
+    output = _capture_state_cmd(
+        state.cmd_remove,
+        target_path,
+        section=section,
+        pattern=pattern,
+        regex=regex,
+    )
+
+    warnings: list[str] = []
+    synced = False
+    removed = 0
+    if "exit_code=" in output:
+        warnings.append(output)
+    else:
+        first = output.splitlines()[0] if output.splitlines() else "0"
+        try:
+            removed = int(first.strip())
+        except ValueError:
+            removed = 0
+
+        if sync_to_project:
+            ok, sync_output = _sync_agent_state_to_project(
+                action=state.cmd_remove,
+                memory_dir=resolved,
+                section=section,
+                pattern=pattern,
+                regex=regex,
+            )
+            synced = ok
+            if not ok:
+                warnings.append(sync_output)
+
+    return _serialize_json(
+        {
+            "updated_path": str(target_path),
+            "removed": removed,
+            "synced": synced,
+            "warnings": warnings,
+        }
+    )
+
+
+@mcp.tool()
+def memory_auto_restore(
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
+    max_evidence_notes: int = 3,
+    max_lines: int = 6,
+    include_project_state: bool = True,
+    include_agent_state: bool = True,
+    memory_dir: str | None = None,
+) -> str:
+    """Restore active task context from rolling state and evidence."""
+    resolved = _resolve_dir(memory_dir)
+    payload = state.auto_restore(
+        memory_dir=resolved,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        max_evidence_notes=max_evidence_notes,
+        max_lines=max_lines,
+        include_project_state=include_project_state,
+        include_agent_state=include_agent_state,
+    )
+    return _serialize_json(payload)
+
+
+@mcp.tool()
 def memory_search(
     query: str,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
     top: int | None = None,
     snippets: int | None = None,
     engine: str = "auto",
@@ -311,6 +592,9 @@ def memory_search(
     result = search.search(
         query=query,
         memory_dir=resolved,
+        task_id=task_id,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
         engine=engine,
         top=top,
         snippets=snippets,
@@ -358,6 +642,9 @@ def memory_index_build(
 @mcp.tool()
 def memory_index_upsert(
     note_path: str,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
     max_summary_chars: int = 280,
     no_dense: bool = False,
     memory_dir: str | None = None,
@@ -374,6 +661,9 @@ def memory_index_upsert(
         note_path=resolved_note,
         index_path=_index_path(resolved),
         dailynote_dir=resolved,
+        task_id=task_id,
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
         max_summary_chars=max_summary_chars,
         no_dense=no_dense,
     )

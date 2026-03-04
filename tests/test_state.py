@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-from agentic_memory.core import state
+from agentic_memory.core import index, note, state
 
 
 def _empty_sections() -> dict[str, list[state.StateItem]]:
@@ -221,3 +221,56 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
         item.text == "Monitor 401 spikes after deploy."
         for item in loaded[state.STATE_SHORT_KEYS["pitfalls"]]
     )
+
+
+def test_resolve_agent_state_path_priority(tmp_memory_dir: Path) -> None:
+    shared = tmp_memory_dir / "_state.coder.md"
+    session_specific = tmp_memory_dir / "_state.coder.relay-x.md"
+    state.ensure_state_file(shared)
+
+    resolved_from_shared = state.resolve_agent_state_path(
+        tmp_memory_dir,
+        agent_id="coder",
+        relay_session_id="relay-x",
+        for_write=False,
+    )
+    assert resolved_from_shared == shared
+
+    state.ensure_state_file(session_specific)
+    resolved_from_specific = state.resolve_agent_state_path(
+        tmp_memory_dir,
+        agent_id="coder",
+        relay_session_id="relay-x",
+        for_write=False,
+    )
+    assert resolved_from_specific == session_specific
+
+
+def test_auto_restore_uses_task_id_from_focus(tmp_memory_dir: Path) -> None:
+    created = note.create_note(tmp_memory_dir, title="Restore Target")
+    index.index_note(
+        note_path=created,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+        task_id="TASK-456",
+        agent_id="coder",
+        relay_session_id="relay-r",
+        no_dense=True,
+    )
+
+    state.cmd_set(
+        tmp_memory_dir / "_state.md",
+        "focus",
+        ["TASK-456: continue"],
+    )
+
+    payload = state.auto_restore(
+        memory_dir=tmp_memory_dir,
+        agent_id="coder",
+        relay_session_id="relay-r",
+        include_agent_state=False,
+    )
+    assert payload["restored_task_count"] >= 1
+    active_tasks = payload["active_tasks"]
+    assert isinstance(active_tasks, list)
+    assert active_tasks[0]["task_id"] == "TASK-456"

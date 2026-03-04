@@ -147,3 +147,52 @@ def test_extract_errors() -> None:
     assert "ECONNRESET" in errors
     assert "HTTP 500" in errors
     assert "ValueError" in errors
+
+
+def test_build_entry_with_identifier_fields(tmp_memory_dir: Path) -> None:
+    note_dir = tmp_memory_dir / "2026-01-10"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1000_identifiers.md"
+    note_path.write_text(
+        (
+            "# Identifier Note\n\n"
+            "- Date: 2026-01-10\n"
+            "- Task-ID: TASK-999\n"
+            "- Agent-ID: coder\n"
+            "- Relay-Session-ID: relay-abc\n\n"
+            "## 目標\n- verify metadata\n"
+        ),
+        encoding="utf-8",
+    )
+
+    entry = index.build_entry(note_path, max_summary_chars=280, dailynote_dir=tmp_memory_dir)
+    assert entry["task_id"] == "TASK-999"
+    assert entry["agent_id"] == "coder"
+    assert entry["relay_session_id"] == "relay-abc"
+
+
+def test_index_note_overrides_identifier_fields(tmp_memory_dir: Path) -> None:
+    note_dir = tmp_memory_dir / "2026-01-11"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1100_override.md"
+    note_path.write_text(
+        (
+            "# Override Note\n\n"
+            "- Date: 2026-01-11\n\n"
+            "## 目標\n- verify overrides\n"
+        ),
+        encoding="utf-8",
+    )
+
+    entry = index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+        task_id="TASK-123",
+        agent_id="researcher",
+        relay_session_id="relay-xyz",
+        no_dense=True,
+    )
+    assert entry["task_id"] == "TASK-123"
+    assert entry["agent_id"] == "researcher"
+    assert entry["relay_session_id"] == "relay-xyz"

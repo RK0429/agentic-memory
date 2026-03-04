@@ -38,6 +38,12 @@ def test_parse_field() -> None:
     assert terms[0].term == "auth"
 
 
+def test_parse_metadata_field() -> None:
+    terms = query.parse_query("task_id:TASK-001")
+    assert terms[0].field == "task_id"
+    assert terms[0].term == "TASK-001"
+
+
 def test_parse_date_range() -> None:
     terms = query.parse_query("date:2026-01-01..2026-01-31")
     assert len(terms) == 1

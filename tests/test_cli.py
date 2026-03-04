@@ -61,7 +61,18 @@ def test_cli_help() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
-    for command in ["init", "note", "state", "search", "index", "evidence", "serve", "version"]:
+    for command in [
+        "init",
+        "note",
+        "state",
+        "agent-state",
+        "auto-restore",
+        "search",
+        "index",
+        "evidence",
+        "serve",
+        "version",
+    ]:
         assert command in result.output
 
 
@@ -220,11 +231,12 @@ def test_cli_index_build_dry_run(tmp_memory_dir: Path) -> None:
     note_result = _run(runner, memory_dir, ["note", "new", "--title", "Dry Run"])
     assert note_result.exit_code == 0
     note_path = Path(note_result.output.strip())
+    before = (memory_dir / "_index.jsonl").read_text(encoding="utf-8")
 
     result = _run(runner, memory_dir, ["index", "build", "--dry-run"])
     assert result.exit_code == 0
     assert str(note_path) in result.output
-    assert (memory_dir / "_index.jsonl").read_text(encoding="utf-8") == ""
+    assert (memory_dir / "_index.jsonl").read_text(encoding="utf-8") == before
 
 
 def test_cli_index_upsert(tmp_memory_dir: Path) -> None:
@@ -246,6 +258,118 @@ def test_cli_index_upsert(tmp_memory_dir: Path) -> None:
     assert note_path.name in index_text
 
 
+def test_cli_agent_state_show_set_add_remove(tmp_memory_dir: Path) -> None:
+    runner = CliRunner()
+    memory_dir = tmp_memory_dir
+
+    show = _run(
+        runner,
+        memory_dir,
+        ["agent-state", "show", "--agent-id", "coder", "--relay-session-id", "relay-a"],
+    )
+    assert show.exit_code == 0
+    assert "現在のフォーカス" in show.output
+
+    set_result = _run(
+        runner,
+        memory_dir,
+        [
+            "agent-state",
+            "set",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-a",
+            "--section",
+            "focus",
+            "--item",
+            "TASK-123: investigate",
+        ],
+    )
+    assert set_result.exit_code == 0
+
+    add_result = _run(
+        runner,
+        memory_dir,
+        [
+            "agent-state",
+            "add",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-a",
+            "--section",
+            "focus",
+            "--item",
+            "TASK-124: follow-up",
+        ],
+    )
+    assert add_result.exit_code == 0
+
+    remove_result = _run(
+        runner,
+        memory_dir,
+        [
+            "agent-state",
+            "remove",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-a",
+            "--section",
+            "focus",
+            "--pattern",
+            "TASK-124",
+        ],
+    )
+    assert remove_result.exit_code == 0
+    assert remove_result.output.splitlines()[0].strip() == "1"
+
+
+def test_cli_search_with_metadata_filters(tmp_memory_dir: Path) -> None:
+    runner = CliRunner()
+    memory_dir = tmp_memory_dir
+    note = _run(
+        runner,
+        memory_dir,
+        [
+            "note",
+            "new",
+            "--title",
+            "Metadata Search",
+            "--task-id",
+            "TASK-222",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-z",
+        ],
+    )
+    assert note.exit_code == 0
+
+    result = _run(
+        runner,
+        memory_dir,
+        [
+            "search",
+            "--query",
+            "Metadata",
+            "--engine",
+            "index",
+            "--task-id",
+            "TASK-222",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-z",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["results"]
+
+
 def test_cli_evidence(tmp_memory_dir: Path) -> None:
     runner = CliRunner()
     memory_dir = tmp_memory_dir
@@ -259,3 +383,59 @@ def test_cli_evidence(tmp_memory_dir: Path) -> None:
     assert result.exit_code == 0
     assert "# DailyNote Evidence Pack" in result.output
     assert str(note_path) in result.output
+
+
+def test_cli_auto_restore_json(tmp_memory_dir: Path) -> None:
+    runner = CliRunner()
+    memory_dir = tmp_memory_dir
+
+    created = _run(
+        runner,
+        memory_dir,
+        [
+            "note",
+            "new",
+            "--title",
+            "Auto Restore CLI",
+            "--task-id",
+            "TASK-333",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-cli",
+        ],
+    )
+    assert created.exit_code == 0
+
+    _run(
+        runner,
+        memory_dir,
+        [
+            "agent-state",
+            "set",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-cli",
+            "--section",
+            "focus",
+            "--item",
+            "TASK-333: continue",
+        ],
+    )
+
+    restored = _run(
+        runner,
+        memory_dir,
+        [
+            "auto-restore",
+            "--agent-id",
+            "coder",
+            "--relay-session-id",
+            "relay-cli",
+            "--json",
+        ],
+    )
+    assert restored.exit_code == 0
+    payload = json.loads(restored.output)
+    assert payload["restored_task_count"] >= 1

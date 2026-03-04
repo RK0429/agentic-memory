@@ -37,9 +37,19 @@ def _safe_lower(s: str) -> str:
     return _normalize_text(s).lower()
 
 
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @dataclasses.dataclass
 class IndexEntry:
     path: str
+    task_id: str | None = None
+    agent_id: str | None = None
+    relay_session_id: str | None = None
     title: str = ""
     date: str = ""
     time: str = ""
@@ -59,6 +69,9 @@ class IndexEntry:
 
     def field_text(self) -> dict[str, str]:
         return {
+            "task_id": self.task_id or "",
+            "agent_id": self.agent_id or "",
+            "relay_session_id": self.relay_session_id or "",
             "title": self.title or "",
             "context": self.context or "",
             "tags": " ".join(self.tags or []),
@@ -92,6 +105,9 @@ def load_index(path: Path) -> list[IndexEntry]:
         entries.append(
             IndexEntry(
                 path=str(obj.get("path", "")),
+                task_id=_optional_str(obj.get("task_id")),
+                agent_id=_optional_str(obj.get("agent_id")),
+                relay_session_id=_optional_str(obj.get("relay_session_id")),
                 title=str(obj.get("title", "") or ""),
                 date=str(obj.get("date", "") or ""),
                 time=str(obj.get("time", "") or ""),

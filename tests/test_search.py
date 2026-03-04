@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from agentic_memory.core import index, query, search
+from agentic_memory.core import index, note, query, search
 
 
 def test_search_no_index(
@@ -60,3 +61,64 @@ def test_extract_snippets(sample_note_path: Path) -> None:
     assert snippets
     assert snippets[0].startswith("L")
     assert any("refresh" in snippet.lower() for snippet in snippets)
+
+
+def test_search_filters_by_metadata(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    note_a = note.create_note(tmp_memory_dir, title="Alpha")
+    note_b = note.create_note(tmp_memory_dir, title="Beta")
+
+    index.index_note(
+        note_path=note_a,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+        task_id="TASK-010",
+        agent_id="coder",
+        relay_session_id="relay-x",
+        no_dense=True,
+    )
+    index.index_note(
+        note_path=note_b,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+        task_id="TASK-011",
+        agent_id="researcher",
+        relay_session_id="relay-y",
+        no_dense=True,
+    )
+
+    result = search.search(
+        query="Alpha",
+        memory_dir=tmp_memory_dir,
+        engine="index",
+        task_id="TASK-010",
+        agent_id="coder",
+        relay_session_id="relay-x",
+    )
+    assert result["results"]
+    assert len(result["results"]) == 1
+
+
+def test_search_backward_compatible_without_new_fields(tmp_memory_dir: Path) -> None:
+    index_path = tmp_memory_dir / "_index.jsonl"
+    legacy_entry = {
+        "path": "memory/2026-01-01/legacy.md",
+        "title": "legacy",
+        "date": "2026-01-01",
+    }
+    index_path.write_text(json.dumps(legacy_entry, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    result = search.search(
+        query="legacy",
+        memory_dir=tmp_memory_dir,
+        engine="index",
+    )
+    assert result["results"]
+
+    filtered = search.search(
+        query="legacy",
+        memory_dir=tmp_memory_dir,
+        engine="index",
+        task_id="TASK-999",
+    )
+    assert filtered["results"] == []

@@ -13,6 +13,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from agentic_memory.core import sections, signals
 
@@ -32,6 +33,8 @@ _HEADING_RE = re.compile(r"^##\s+(.*)\s*$")
 _SPACE_RE = re.compile(r"\s+")
 _NONE_SKILL_RE = re.compile(r"^\s*(?:skill|skil)\s*:\s*none\s*$", flags=re.IGNORECASE)
 _PLACEHOLDER_TEXTS = {"", "(empty)", "なし"}
+TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def now_stamp() -> str:
@@ -172,13 +175,116 @@ def load_state(path: Path) -> dict[str, list[StateItem]]:
     return out
 
 
+def _empty_sections() -> dict[str, list[StateItem]]:
+    return {sec: [] for sec in SECTION_ORDER}
+
+
+def ensure_state_file(path: Path) -> Path:
+    if path.exists():
+        return path
+    save_state(path, _empty_sections())
+    return path
+
+
+def _normalize_identifier(name: str, value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{name} is required")
+    if not _IDENTIFIER_RE.fullmatch(normalized):
+        raise ValueError(
+            f"Invalid {name}: {value!r} (allowed characters: letters, digits, '_' and '-')"
+        )
+    return normalized
+
+
+def resolve_agent_state_path(
+    memory_dir: Path,
+    agent_id: str,
+    relay_session_id: str | None = None,
+    *,
+    for_write: bool = False,
+) -> Path:
+    normalized_agent_id = _normalize_identifier("agent_id", agent_id)
+    if relay_session_id is None:
+        return memory_dir / f"_state.{normalized_agent_id}.md"
+
+    normalized_session = _normalize_identifier("relay_session_id", relay_session_id)
+    session_specific = memory_dir / f"_state.{normalized_agent_id}.{normalized_session}.md"
+    if for_write:
+        return session_specific
+
+    if session_specific.exists():
+        return session_specific
+
+    shared = memory_dir / f"_state.{normalized_agent_id}.md"
+    if shared.exists():
+        return shared
+    return session_specific
+
+
+def state_sections_to_payload(
+    sections_data: dict[str, list[StateItem]],
+    *,
+    section: str | None = None,
+    stale_days: int = 0,
+) -> dict[str, list[dict[str, object]]]:
+    targets = _target_sections(section)
+    payload: dict[str, list[dict[str, object]]] = {}
+    for sec in targets:
+        rows: list[dict[str, object]] = []
+        for item in sections_data.get(sec, []):
+            stale = bool(stale_days and is_stale(item, stale_days))
+            rows.append({"date": item.date, "text": item.text, "stale": stale})
+        payload[sec] = rows
+    return payload
+
+
+def state_sections_to_rendered(
+    sections_data: dict[str, list[StateItem]],
+) -> dict[str, list[str]]:
+    rendered: dict[str, list[str]] = {}
+    for short_key, section_name in STATE_SHORT_KEYS.items():
+        rendered[short_key] = [item.render() for item in sections_data.get(section_name, [])]
+    return rendered
+
+
+def extract_task_ids_from_focus(sections_data: dict[str, list[StateItem]]) -> list[str]:
+    focus_section = STATE_SHORT_KEYS["focus"]
+    task_ids: list[str] = []
+    seen: set[str] = set()
+    for item in sections_data.get(focus_section, []):
+        for match in TASK_ID_EXTRACT_PATTERN.finditer(item.text):
+            task_id = match.group(1).upper()
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            task_ids.append(task_id)
+    return task_ids
+
+
+def _resolve_note_path_for_evidence(raw_path: str, memory_dir: Path) -> Path:
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        return candidate
+
+    memory_prefixed = memory_dir.parent / candidate
+    if memory_prefixed.exists():
+        return memory_prefixed
+
+    direct = memory_dir / candidate
+    if direct.exists():
+        return direct
+
+    return memory_prefixed
+
+
 def save_state(path: Path, sections: dict[str, list[StateItem]]) -> None:
     """セクション辞書をステートファイルに書き込む。
     ヘッダー: '# 作業状態（ローリング）\n\nLast updated: {now_stamp()}'
     各セクション: '## {見出し名}\n\n' + アイテムのrender()結果（空なら見出しのみ）
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(".lock")
+    lock_path = Path(f"{path}.lock")
     with open(lock_path, "w") as lock_file:
         try:
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -320,13 +426,13 @@ def cmd_show(
     sections_data = load_state(state_path)
 
     if as_json:
-        payload: dict[str, dict[str, list[dict[str, object]]]] = {"sections": {}}
-        for sec in targets:
-            rows: list[dict[str, object]] = []
-            for item in sections_data.get(sec, []):
-                stale = bool(stale_days and is_stale(item, stale_days))
-                rows.append({"date": item.date, "text": item.text, "stale": stale})
-            payload["sections"][sec] = rows
+        payload: dict[str, dict[str, list[dict[str, object]]]] = {
+            "sections": state_sections_to_payload(
+                sections_data,
+                section=section,
+                stale_days=stale_days,
+            )
+        }
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
@@ -711,3 +817,124 @@ def cmd_from_note(
 
     print(str(state_path))
     return 0
+
+
+def auto_restore(
+    *,
+    memory_dir: Path,
+    agent_id: str | None = None,
+    relay_session_id: str | None = None,
+    max_evidence_notes: int = 3,
+    max_lines: int = 6,
+    include_project_state: bool = True,
+    include_agent_state: bool = True,
+) -> dict[str, Any]:
+    from agentic_memory.core import evidence, search
+    from agentic_memory.core.scorer import IndexEntry
+
+    project_state_path = memory_dir / "_state.md"
+    project_sections = load_state(project_state_path)
+
+    warnings: list[str] = []
+    agent_sections: dict[str, list[StateItem]] | None = None
+    resolved_agent_state_path: Path | None = None
+
+    if include_agent_state:
+        if agent_id is None:
+            warnings.append("include_agent_state=true requires agent_id.")
+        else:
+            resolved_agent_state_path = resolve_agent_state_path(
+                memory_dir,
+                agent_id,
+                relay_session_id,
+                for_write=False,
+            )
+            ensure_state_file(resolved_agent_state_path)
+            agent_sections = load_state(resolved_agent_state_path)
+
+    task_ids = extract_task_ids_from_focus(project_sections)
+    if agent_sections is not None:
+        for task_id in extract_task_ids_from_focus(agent_sections):
+            if task_id not in task_ids:
+                task_ids.append(task_id)
+
+    active_tasks: list[dict[str, object]] = []
+    referenced_paths: set[str] = set()
+
+    for task_id in task_ids:
+        try:
+            search_result = search.search(
+                query=task_id,
+                memory_dir=memory_dir,
+                task_id=task_id,
+                agent_id=agent_id,
+                relay_session_id=relay_session_id,
+                top=max_evidence_notes,
+                engine="auto",
+            )
+        except Exception as exc:
+            warnings.append(f"{task_id}: search failed ({exc})")
+            continue
+
+        rows = search_result.get("results", [])
+        resolved_paths: list[Path] = []
+        related_notes: list[str] = []
+
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, tuple) or len(row) < 2:
+                    continue
+                maybe_entry = row[1]
+                if not isinstance(maybe_entry, IndexEntry):
+                    continue
+                note_path = _resolve_note_path_for_evidence(maybe_entry.path, memory_dir)
+                if note_path in resolved_paths:
+                    continue
+                resolved_paths.append(note_path)
+                related_notes.append(maybe_entry.path)
+                referenced_paths.add(maybe_entry.path)
+                if len(resolved_paths) >= max_evidence_notes:
+                    break
+
+        if not resolved_paths:
+            warnings.append(f"{task_id}: no related notes found.")
+            continue
+
+        evidence_pack = ""
+        try:
+            evidence_pack = evidence.generate_evidence_pack(
+                query=task_id,
+                paths=resolved_paths,
+                max_lines=max_lines,
+            )
+        except Exception as exc:
+            warnings.append(f"{task_id}: evidence generation failed ({exc})")
+
+        active_tasks.append(
+            {
+                "task_id": task_id,
+                "related_notes": related_notes,
+                "evidence_pack": evidence_pack,
+            }
+        )
+
+    return {
+        "agent_id": agent_id,
+        "relay_session_id": relay_session_id,
+        "project_state": (
+            state_sections_to_rendered(project_sections)
+            if include_project_state
+            else None
+        ),
+        "agent_state": (
+            state_sections_to_rendered(agent_sections)
+            if (include_agent_state and agent_sections is not None)
+            else None
+        ),
+        "agent_state_path": str(resolved_agent_state_path) if resolved_agent_state_path else None,
+        "active_tasks": active_tasks,
+        "restored_task_count": len(active_tasks),
+        "total_notes_referenced": len(referenced_paths),
+        "warnings": warnings,
+        "restored_at": _dt.datetime.now().isoformat(timespec="seconds"),
+    }
