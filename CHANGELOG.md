@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-05
+
+### Added
+
+- `memory_cleanup` MCP tool for agent state file TTL/generation cleanup with dry-run support
+
 ## [0.1.1] - 2026-03-02
 
 ### Fixed
