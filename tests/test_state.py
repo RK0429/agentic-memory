@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 from pathlib import Path
 
 from agentic_memory.core import index, note, state
@@ -198,6 +199,57 @@ def test_cmd_prune(sample_state_path: Path, capsys) -> None:
     assert rc == 0
     assert captured.out.strip() == "1"
     assert [item.text for item in loaded[state.STATE_SHORT_KEYS["focus"]]] == ["fresh"]
+
+
+def test_cmd_cleanup_removes_ttl_and_generation(tmp_memory_dir: Path, capsys) -> None:
+    now = dt.datetime.now()
+    ttl_target = tmp_memory_dir / "_state.coder.relay-old.md"
+    generation_target = tmp_memory_dir / "_state.coder.md"
+    keep_latest = tmp_memory_dir / "_state.coder.relay-new.md"
+    keep_other_agent = tmp_memory_dir / "_state.researcher.relay-a.md"
+
+    for path, ts in (
+        (ttl_target, (now - dt.timedelta(days=9)).timestamp()),
+        (generation_target, (now - dt.timedelta(days=2)).timestamp()),
+        (keep_latest, (now - dt.timedelta(days=1)).timestamp()),
+        (keep_other_agent, (now - dt.timedelta(days=1)).timestamp()),
+    ):
+        path.write_text("# agent state\n", encoding="utf-8")
+        os.utime(path, (ts, ts))
+
+    rc = state.cmd_cleanup(
+        tmp_memory_dir,
+        state_ttl_days=7,
+        state_max_generations=1,
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert captured.out.strip() == "2"
+    assert not ttl_target.exists()
+    assert not generation_target.exists()
+    assert keep_latest.exists()
+    assert keep_other_agent.exists()
+    assert (tmp_memory_dir / "_state.md").exists()
+
+
+def test_cmd_cleanup_dry_run_keeps_files(tmp_memory_dir: Path, capsys) -> None:
+    stale = tmp_memory_dir / "_state.coder.relay-stale.md"
+    stale.write_text("# stale\n", encoding="utf-8")
+    ts = (dt.datetime.now() - dt.timedelta(days=10)).timestamp()
+    os.utime(stale, (ts, ts))
+
+    rc = state.cmd_cleanup(
+        tmp_memory_dir,
+        state_ttl_days=7,
+        state_max_generations=20,
+        dry_run=True,
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert captured.out.strip() == "1"
+    assert stale.exists()
 
 
 def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:

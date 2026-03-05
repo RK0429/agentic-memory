@@ -35,6 +35,9 @@ _NONE_SKILL_RE = re.compile(r"^\s*(?:skill|skil)\s*:\s*none\s*$", flags=re.IGNOR
 _PLACEHOLDER_TEXTS = {"", "(empty)", "なし"}
 TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_AGENT_STATE_FILE_RE = re.compile(
+    r"^_state\.(?P<agent_id>[A-Za-z0-9_-]+)(?:\.[A-Za-z0-9_-]+)?\.md$"
+)
 
 
 def now_stamp() -> str:
@@ -137,6 +140,13 @@ class StateItem:
         if _is_placeholder(raw):
             raise ValueError("item text is empty")
         return cls(date=(date or now_stamp()), text=raw)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStateFile:
+    path: Path
+    agent_id: str
+    mtime: float
 
 
 def parse_sections(md: str) -> dict[str, list[str]]:
@@ -549,6 +559,108 @@ def cmd_prune(
     if not dry_run and removed > 0:
         save_state(state_path, sections)
     print(str(removed))
+    return 0
+
+
+def _collect_agent_state_files(memory_dir: Path) -> list[AgentStateFile]:
+    files: list[AgentStateFile] = []
+    for path in memory_dir.glob("_state.*.md"):
+        match = _AGENT_STATE_FILE_RE.fullmatch(path.name)
+        if match is None:
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        files.append(
+            AgentStateFile(
+                path=path,
+                agent_id=match.group("agent_id"),
+                mtime=mtime,
+            )
+        )
+    return files
+
+
+def _plan_cleanup_targets(
+    files: list[AgentStateFile],
+    *,
+    state_ttl_days: int,
+    state_max_generations: int,
+) -> list[tuple[AgentStateFile, tuple[str, ...]]]:
+    reasons_by_path: dict[Path, set[str]] = {}
+
+    ttl_cutoff = time.time() - (state_ttl_days * 24 * 60 * 60)
+    stale_paths: set[Path] = set()
+    for info in files:
+        if info.mtime <= ttl_cutoff:
+            stale_paths.add(info.path)
+            reasons_by_path.setdefault(info.path, set()).add("ttl")
+
+    grouped: dict[str, list[AgentStateFile]] = {}
+    for info in files:
+        if info.path in stale_paths:
+            continue
+        grouped.setdefault(info.agent_id, []).append(info)
+
+    for grouped_files in grouped.values():
+        newest_first = sorted(
+            grouped_files,
+            key=lambda row: (row.mtime, row.path.name),
+            reverse=True,
+        )
+        overflow = newest_first[state_max_generations:]
+        for info in overflow:
+            reasons_by_path.setdefault(info.path, set()).add("generation")
+
+    oldest_first = sorted(files, key=lambda row: (row.mtime, str(row.path)))
+    return [
+        (info, tuple(sorted(reasons_by_path[info.path])))
+        for info in oldest_first
+        if info.path in reasons_by_path
+    ]
+
+
+def cmd_cleanup(
+    memory_dir: Path,
+    state_ttl_days: int = 7,
+    state_max_generations: int = 20,
+    dry_run: bool = False,
+) -> int:
+    try:
+        _validate_non_negative("state-ttl-days", state_ttl_days)
+        _validate_non_negative("state-max-generations", state_max_generations)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    files = _collect_agent_state_files(memory_dir)
+    targets = _plan_cleanup_targets(
+        files,
+        state_ttl_days=state_ttl_days,
+        state_max_generations=state_max_generations,
+    )
+
+    removed = 0
+    for info, reasons in targets:
+        reason_text = "+".join(reasons)
+        if dry_run:
+            print(f"Cleanup target ({reason_text}): {info.path}", file=sys.stderr)
+            continue
+        try:
+            info.path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            print(
+                f"Failed to remove ({reason_text}): {info.path} ({exc})",
+                file=sys.stderr,
+            )
+            return 1
+        removed += 1
+        print(f"Removed ({reason_text}): {info.path}", file=sys.stderr)
+
+    print(str(len(targets) if dry_run else removed))
     return 0
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
+import os
 from pathlib import Path
 
 from agentic_memory.server import (
@@ -10,6 +12,7 @@ from agentic_memory.server import (
     memory_agent_state_set,
     memory_agent_state_show,
     memory_auto_restore,
+    memory_cleanup,
     memory_evidence,
     memory_index_build,
     memory_index_upsert,
@@ -42,6 +45,13 @@ def _write_note(memory_dir: Path, name: str = "source.md") -> Path:
         encoding="utf-8",
     )
     return note_path
+
+
+def _write_agent_state(memory_dir: Path, filename: str, *, mtime: float) -> Path:
+    target = memory_dir / filename
+    target.write_text("# Agent State\n", encoding="utf-8")
+    os.utime(target, (mtime, mtime))
+    return target
 
 
 def test_resolve_dir_explicit(tmp_path: Path, monkeypatch) -> None:
@@ -311,3 +321,35 @@ def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert payload["restored_task_count"] >= 1
     assert payload["active_tasks"][0]["task_id"] == "TASK-301"
+
+
+def test_memory_cleanup(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+    now = dt.datetime.now()
+
+    ttl_target = _write_agent_state(
+        memory_dir,
+        "_state.coder.relay-old.md",
+        mtime=(now - dt.timedelta(days=9)).timestamp(),
+    )
+    generation_target = _write_agent_state(
+        memory_dir,
+        "_state.coder.md",
+        mtime=(now - dt.timedelta(days=2)).timestamp(),
+    )
+    keep_latest = _write_agent_state(
+        memory_dir,
+        "_state.coder.relay-new.md",
+        mtime=(now - dt.timedelta(days=1)).timestamp(),
+    )
+
+    raw = memory_cleanup(
+        state_ttl_days=7,
+        state_max_generations=1,
+        memory_dir=str(memory_dir),
+    )
+    assert raw.splitlines()[0].strip() == "2"
+    assert not ttl_target.exists()
+    assert not generation_target.exists()
+    assert keep_latest.exists()

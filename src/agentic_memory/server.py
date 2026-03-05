@@ -535,6 +535,30 @@ def memory_agent_state_remove(
 
 
 @mcp.tool()
+def memory_cleanup(
+    state_ttl_days: int = 7,
+    state_max_generations: int = 20,
+    dry_run: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Clean up expired or excess agent-specific state files.
+
+    Targets files matching `_state.{agent_id}[.{relay_session_id}].md`.
+    `state_ttl_days` removes stale files by mtime, and `state_max_generations`
+    keeps latest N files per `agent_id`.
+    Returns command output including number of affected files.
+    """
+    resolved = _resolve_dir(memory_dir)
+    return _capture_state_cmd(
+        state.cmd_cleanup,
+        resolved,
+        state_ttl_days=state_ttl_days,
+        state_max_generations=state_max_generations,
+        dry_run=dry_run,
+    )
+
+
+@mcp.tool()
 def memory_auto_restore(
     agent_id: str | None = None,
     relay_session_id: str | None = None,
