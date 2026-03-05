@@ -1,27 +1,18 @@
 from __future__ import annotations
 
-import datetime as dt
 import json
-import os
 from pathlib import Path
 
 from agentic_memory.server import (
     _resolve_dir,
-    memory_agent_state_add,
-    memory_agent_state_remove,
-    memory_agent_state_set,
-    memory_agent_state_show,
     memory_auto_restore,
-    memory_cleanup,
     memory_evidence,
-    memory_index_build,
     memory_index_upsert,
     memory_init,
     memory_note_new,
     memory_search,
     memory_state_add,
     memory_state_from_note,
-    memory_state_prune,
     memory_state_remove,
     memory_state_set,
     memory_state_show,
@@ -45,13 +36,6 @@ def _write_note(memory_dir: Path, name: str = "source.md") -> Path:
         encoding="utf-8",
     )
     return note_path
-
-
-def _write_agent_state(memory_dir: Path, filename: str, *, mtime: float) -> Path:
-    target = memory_dir / filename
-    target.write_text("# Agent State\n", encoding="utf-8")
-    os.utime(target, (mtime, mtime))
-    return target
 
 
 def test_resolve_dir_explicit(tmp_path: Path, monkeypatch) -> None:
@@ -138,23 +122,6 @@ def test_memory_state_remove(tmp_memory_dir: Path, monkeypatch) -> None:
     assert "Drop" not in output
 
 
-def test_memory_state_prune(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_dir = tmp_memory_dir
-
-    memory_state_add(
-        section="focus",
-        items=["[2000-01-01 00:00] stale entry", "fresh entry"],
-        memory_dir=str(memory_dir),
-    )
-    pruned = memory_state_prune(stale_days=7, section="focus", memory_dir=str(memory_dir))
-    assert pruned.splitlines()[0].strip() == "1"
-
-    output = memory_state_show(section="focus", memory_dir=str(memory_dir))
-    assert "fresh entry" in output
-    assert "stale entry" not in output
-
-
 def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
@@ -179,35 +146,6 @@ def test_memory_search(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert payload["query"] == "__no_result_expected__"
     assert isinstance(payload["results"], list)
-
-
-def test_memory_index_build(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_dir = tmp_memory_dir
-
-    created_path = Path(memory_note_new(title="Index Build", memory_dir=str(memory_dir)))
-    assert created_path.exists()
-
-    raw = memory_index_build(no_dense=True, memory_dir=str(memory_dir))
-    payload = json.loads(raw)
-    assert isinstance(payload, list)
-    assert len(payload) >= 1
-    assert (memory_dir / "_index.jsonl").exists()
-
-
-def test_memory_index_build_dry_run(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_dir = tmp_memory_dir
-
-    created_path = Path(memory_note_new(title="Index Dry Run", memory_dir=str(memory_dir)))
-    assert created_path.exists()
-    before = (memory_dir / "_index.jsonl").read_text(encoding="utf-8")
-
-    raw = memory_index_build(dry_run=True, no_dense=True, memory_dir=str(memory_dir))
-    payload = json.loads(raw)
-    assert isinstance(payload, list)
-    assert str(created_path) in payload
-    assert (memory_dir / "_index.jsonl").read_text(encoding="utf-8") == before
 
 
 def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -287,50 +225,6 @@ def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) 
     assert payload["results"]
 
 
-def test_memory_agent_state_show_set_add_remove(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_dir = tmp_memory_dir
-
-    show = memory_agent_state_show(
-        agent_id="coder",
-        relay_session_id="relay-a",
-        memory_dir=str(memory_dir),
-    )
-    assert "現在のフォーカス" in show
-
-    set_raw = memory_agent_state_set(
-        agent_id="coder",
-        relay_session_id="relay-a",
-        section="focus",
-        items=["TASK-001: work"],
-        sync_to_project=True,
-        memory_dir=str(memory_dir),
-    )
-    set_payload = json.loads(set_raw)
-    assert set_payload["updated_path"].endswith("_state.coder.relay-a.md")
-    assert set_payload["synced"] is True
-
-    add_raw = memory_agent_state_add(
-        agent_id="coder",
-        relay_session_id="relay-a",
-        section="focus",
-        items=["TASK-002: more work"],
-        memory_dir=str(memory_dir),
-    )
-    add_payload = json.loads(add_raw)
-    assert add_payload["warnings"] == []
-
-    remove_raw = memory_agent_state_remove(
-        agent_id="coder",
-        relay_session_id="relay-a",
-        section="focus",
-        pattern="TASK-002",
-        memory_dir=str(memory_dir),
-    )
-    remove_payload = json.loads(remove_raw)
-    assert remove_payload["removed"] == 1
-
-
 def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
@@ -346,13 +240,17 @@ def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     )
     assert created.exists()
 
-    memory_agent_state_set(
+    # Set agent state directly via core module (agent_state tools are not exposed via MCP)
+    from agentic_memory.core import state as _state
+
+    agent_state_path = _state.resolve_agent_state_path(
+        memory_dir=memory_dir,
         agent_id="coder",
         relay_session_id="relay-r1",
-        section="focus",
-        items=["TASK-301: continue task"],
-        memory_dir=str(memory_dir),
+        for_write=True,
     )
+    _state.ensure_state_file(agent_state_path)
+    _state.cmd_set(agent_state_path, section="focus", items=["TASK-301: continue task"])
 
     raw = memory_auto_restore(
         agent_id="coder",
@@ -364,33 +262,3 @@ def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     assert payload["active_tasks"][0]["task_id"] == "TASK-301"
 
 
-def test_memory_cleanup(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_dir = tmp_memory_dir
-    now = dt.datetime.now()
-
-    ttl_target = _write_agent_state(
-        memory_dir,
-        "_state.coder.relay-old.md",
-        mtime=(now - dt.timedelta(days=9)).timestamp(),
-    )
-    generation_target = _write_agent_state(
-        memory_dir,
-        "_state.coder.md",
-        mtime=(now - dt.timedelta(days=2)).timestamp(),
-    )
-    keep_latest = _write_agent_state(
-        memory_dir,
-        "_state.coder.relay-new.md",
-        mtime=(now - dt.timedelta(days=1)).timestamp(),
-    )
-
-    raw = memory_cleanup(
-        state_ttl_days=7,
-        state_max_generations=1,
-        memory_dir=str(memory_dir),
-    )
-    assert raw.splitlines()[0].strip() == "2"
-    assert not ttl_target.exists()
-    assert not generation_target.exists()
-    assert keep_latest.exists()

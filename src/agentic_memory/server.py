@@ -41,21 +41,6 @@ def _state_path(memory_dir: Path) -> Path:
     return memory_dir / "_state.md"
 
 
-def _agent_state_path(
-    memory_dir: Path,
-    agent_id: str,
-    relay_session_id: str | None = None,
-    *,
-    for_write: bool = False,
-) -> Path:
-    return state.resolve_agent_state_path(
-        memory_dir=memory_dir,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        for_write=for_write,
-    )
-
-
 def _index_path(memory_dir: Path) -> Path:
     return memory_dir / "_index.jsonl"
 
@@ -267,7 +252,7 @@ def memory_state_add(
     items: list[str],
     memory_dir: str | None = None,
 ) -> str:
-    """Add one or more items to a rolling state section.
+    """Low-level: add items to a state section directly. Prefer memory_state_from_note for note-driven updates.
 
     `section` is the target state section key/name.
     `items` is a list of new bullet items to prepend and de-duplicate.
@@ -288,7 +273,7 @@ def memory_state_set(
     items: list[str],
     memory_dir: str | None = None,
 ) -> str:
-    """Replace a rolling state section with provided items.
+    """Low-level: replace a state section directly. Prefer memory_state_from_note for note-driven updates.
 
     `section` is the target state section key/name.
     `items` fully replace existing entries in that section.
@@ -310,7 +295,7 @@ def memory_state_remove(
     regex: bool = False,
     memory_dir: str | None = None,
 ) -> str:
-    """Remove items matching a pattern from a state section.
+    """Low-level: remove items from a state section directly. Prefer memory_state_from_note for note-driven updates.
 
     `section` is the target section.
     `pattern` is a substring by default, or regular expression when `regex=True`.
@@ -323,29 +308,6 @@ def memory_state_remove(
         section=section,
         pattern=pattern,
         regex=regex,
-    )
-
-
-@mcp.tool()
-def memory_state_prune(
-    stale_days: int = 7,
-    section: str | None = None,
-    dry_run: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Prune stale items from state sections.
-
-    `stale_days` defines the staleness threshold.
-    `section` can limit pruning to one section, and `dry_run` reports only.
-    Returns command output including number of pruned items.
-    """
-    resolved = _resolve_dir(memory_dir)
-    return _capture_state_cmd(
-        state.cmd_prune,
-        _state_path(resolved),
-        stale_days=stale_days,
-        section=section,
-        dry_run=dry_run,
     )
 
 
@@ -377,249 +339,6 @@ def memory_state_from_note(
 
 
 @mcp.tool()
-def memory_agent_state_show(
-    agent_id: str,
-    relay_session_id: str | None = None,
-    section: str | None = None,
-    stale_days: int = 0,
-    as_json: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Show agent-specific rolling state.
-
-    Creates `_state.{agent_id}[.{relay_session_id}].md` when missing.
-    Returns formatted state text, or JSON when `as_json=True`.
-    """
-    resolved = _resolve_dir(memory_dir)
-    target_path = _agent_state_path(
-        resolved,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        for_write=False,
-    )
-    state.ensure_state_file(target_path)
-    output = _capture_state_cmd(
-        state.cmd_show,
-        target_path,
-        section=section,
-        stale_days=stale_days,
-        as_json=as_json,
-    )
-    if as_json:
-        try:
-            return _serialize_json(json.loads(output))
-        except json.JSONDecodeError:
-            return output
-    return output
-
-
-def _sync_agent_state_to_project(
-    *,
-    action: Callable[..., int],
-    memory_dir: Path,
-    section: str,
-    items: list[str] | None = None,
-    pattern: str | None = None,
-    regex: bool = False,
-) -> tuple[bool, str]:
-    kwargs: dict[str, Any] = {
-        "state_path": _state_path(memory_dir),
-        "section": section,
-    }
-    if items is not None:
-        kwargs["items"] = items
-    if pattern is not None:
-        kwargs["pattern"] = pattern
-        kwargs["regex"] = regex
-
-    result = _capture_state_cmd(action, **kwargs)
-    return ("exit_code=" not in result, result)
-
-
-@mcp.tool()
-def memory_agent_state_set(
-    agent_id: str,
-    section: str,
-    items: list[str],
-    relay_session_id: str | None = None,
-    sync_to_project: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Set agent-specific state section items."""
-    resolved = _resolve_dir(memory_dir)
-    target_path = _agent_state_path(
-        resolved,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        for_write=True,
-    )
-    state.ensure_state_file(target_path)
-    output = _capture_state_cmd(
-        state.cmd_set,
-        target_path,
-        section=section,
-        items=items,
-    )
-
-    warnings: list[str] = []
-    synced = False
-    if "exit_code=" in output:
-        warnings.append(output)
-    elif sync_to_project:
-        ok, sync_output = _sync_agent_state_to_project(
-            action=state.cmd_set,
-            memory_dir=resolved,
-            section=section,
-            items=items,
-        )
-        synced = ok
-        if not ok:
-            warnings.append(sync_output)
-
-    return _serialize_json(
-        {
-            "updated_path": str(target_path),
-            "synced": synced,
-            "warnings": warnings,
-        }
-    )
-
-
-@mcp.tool()
-def memory_agent_state_add(
-    agent_id: str,
-    section: str,
-    items: list[str],
-    relay_session_id: str | None = None,
-    sync_to_project: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Add items to an agent-specific state section."""
-    resolved = _resolve_dir(memory_dir)
-    target_path = _agent_state_path(
-        resolved,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        for_write=True,
-    )
-    state.ensure_state_file(target_path)
-    output = _capture_state_cmd(
-        state.cmd_add,
-        target_path,
-        section=section,
-        items=items,
-    )
-
-    warnings: list[str] = []
-    synced = False
-    if "exit_code=" in output:
-        warnings.append(output)
-    elif sync_to_project:
-        ok, sync_output = _sync_agent_state_to_project(
-            action=state.cmd_add,
-            memory_dir=resolved,
-            section=section,
-            items=items,
-        )
-        synced = ok
-        if not ok:
-            warnings.append(sync_output)
-
-    return _serialize_json(
-        {
-            "updated_path": str(target_path),
-            "synced": synced,
-            "warnings": warnings,
-        }
-    )
-
-
-@mcp.tool()
-def memory_agent_state_remove(
-    agent_id: str,
-    section: str,
-    pattern: str,
-    relay_session_id: str | None = None,
-    regex: bool = False,
-    sync_to_project: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Remove matching items from an agent-specific state section."""
-    resolved = _resolve_dir(memory_dir)
-    target_path = _agent_state_path(
-        resolved,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        for_write=True,
-    )
-    state.ensure_state_file(target_path)
-    output = _capture_state_cmd(
-        state.cmd_remove,
-        target_path,
-        section=section,
-        pattern=pattern,
-        regex=regex,
-    )
-
-    warnings: list[str] = []
-    synced = False
-    removed = 0
-    if "exit_code=" in output:
-        warnings.append(output)
-    else:
-        first = output.splitlines()[0] if output.splitlines() else "0"
-        try:
-            removed = int(first.strip())
-        except ValueError:
-            removed = 0
-
-        if sync_to_project:
-            ok, sync_output = _sync_agent_state_to_project(
-                action=state.cmd_remove,
-                memory_dir=resolved,
-                section=section,
-                pattern=pattern,
-                regex=regex,
-            )
-            synced = ok
-            if not ok:
-                warnings.append(sync_output)
-
-    return _serialize_json(
-        {
-            "updated_path": str(target_path),
-            "removed": removed,
-            "synced": synced,
-            "warnings": warnings,
-        }
-    )
-
-
-@mcp.tool()
-def memory_cleanup(
-    state_ttl_days: int = 7,
-    state_max_generations: int = 20,
-    dry_run: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Clean up expired or excess agent-specific state files.
-
-    Targets files matching `_state.{agent_id}[.{relay_session_id}].md`.
-    `state_ttl_days` removes stale files by mtime, and `state_max_generations`
-    keeps latest N files per `agent_id`.
-    Returns command output including number of affected files.
-    """
-    resolved = _resolve_dir(memory_dir)
-    return _capture_state_cmd(
-        state.cmd_cleanup,
-        resolved,
-        state_ttl_days=state_ttl_days,
-        state_max_generations=state_max_generations,
-        dry_run=dry_run,
-    )
-
-
-@mcp.tool()
 def memory_auto_restore(
     agent_id: str | None = None,
     relay_session_id: str | None = None,
@@ -629,7 +348,7 @@ def memory_auto_restore(
     include_agent_state: bool = True,
     memory_dir: str | None = None,
 ) -> str:
-    """Restore active task context from rolling state and evidence."""
+    """Restore active context by combining state_show + related note evidence in one call. Convenience wrapper for session recovery."""
     resolved = _resolve_dir(memory_dir)
     payload = state.auto_restore(
         memory_dir=resolved,
@@ -696,37 +415,6 @@ def memory_search(
         prf=prf,
         no_prf=no_prf,
         default_date_range=default_date_range,
-    )
-    return _serialize_json(result)
-
-
-@mcp.tool()
-def memory_index_build(
-    max_summary_chars: int = 280,
-    no_dense: bool = False,
-    since: str | None = None,
-    dry_run: bool = False,
-    memory_dir: str | None = None,
-) -> str:
-    """Rebuild memory index from all notes.
-
-    `max_summary_chars` truncates extracted summary text.
-    `no_dense` skips dense embedding index build, and `since` filters by date (YYYY-MM-DD).
-    `dry_run` returns paths that would be indexed, without mutating `_index.jsonl`.
-    Returns full rebuilt index entries as JSON.
-    """
-    resolved = _resolve_dir(memory_dir)
-    if dry_run:
-        notes = index.list_notes(resolved)
-        filtered = _filter_notes_by_since(notes, since)
-        return _serialize_json([str(path) for path in filtered])
-
-    result = index.rebuild_index(
-        index_path=_index_path(resolved),
-        dailynote_dir=resolved,
-        max_summary_chars=max_summary_chars,
-        no_dense=no_dense,
-        since=since,
     )
     return _serialize_json(result)
 
