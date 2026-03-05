@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 import io
 import json
 import os
+import re
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -14,6 +16,7 @@ from typing import Any, Literal, cast
 from mcp.server.fastmcp import FastMCP
 
 from agentic_memory.core import config, evidence, index, note, search, state
+from agentic_memory.core.scorer import load_index
 
 try:
     mcp = FastMCP(
@@ -117,6 +120,64 @@ def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
         else:
             resolved.append(memory_dir / p)
     return resolved
+
+
+TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
+TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
+
+
+def _normalize_task_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if TASK_ID_PATTERN.fullmatch(normalized):
+        return normalized
+    match = TASK_ID_EXTRACT_PATTERN.search(normalized)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _filter_notes_by_since(notes: list[Path], since: str | None) -> list[Path]:
+    if since is None:
+        return notes
+
+    try:
+        since_date = _dt.date.fromisoformat(since)
+    except ValueError as exc:
+        raise ValueError(f"Invalid since date: {since}") from exc
+
+    filtered: list[Path] = []
+    for note_path in notes:
+        try:
+            dir_date = _dt.date.fromisoformat(note_path.parent.name)
+            if dir_date < since_date:
+                continue
+        except ValueError:
+            pass
+        filtered.append(note_path)
+    return filtered
+
+
+def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
+    normalized_task_id = _normalize_task_id(task_id)
+    if normalized_task_id is None:
+        raise ValueError(f"Invalid task_id: {task_id!r}")
+
+    entries = load_index(_index_path(memory_dir))
+    resolved_paths: list[Path] = []
+    seen: set[Path] = set()
+    for entry in entries:
+        if _normalize_task_id(entry.task_id) != normalized_task_id:
+            continue
+        resolved_path = _resolve_note_path(entry.path, memory_dir)
+        if resolved_path in seen:
+            continue
+        seen.add(resolved_path)
+        resolved_paths.append(resolved_path)
+    return resolved_paths
 
 
 @mcp.tool()
@@ -644,15 +705,22 @@ def memory_index_build(
     max_summary_chars: int = 280,
     no_dense: bool = False,
     since: str | None = None,
+    dry_run: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Rebuild memory index from all notes.
 
     `max_summary_chars` truncates extracted summary text.
     `no_dense` skips dense embedding index build, and `since` filters by date (YYYY-MM-DD).
+    `dry_run` returns paths that would be indexed, without mutating `_index.jsonl`.
     Returns full rebuilt index entries as JSON.
     """
     resolved = _resolve_dir(memory_dir)
+    if dry_run:
+        notes = index.list_notes(resolved)
+        filtered = _filter_notes_by_since(notes, since)
+        return _serialize_json([str(path) for path in filtered])
+
     result = index.rebuild_index(
         index_path=_index_path(resolved),
         dailynote_dir=resolved,
@@ -697,7 +765,8 @@ def memory_index_upsert(
 @mcp.tool()
 def memory_evidence(
     query: str,
-    paths: list[str],
+    paths: list[str] | None = None,
+    task_id: str | None = None,
     max_lines: int = 8,
     memory_dir: str | None = None,
 ) -> str:
@@ -705,10 +774,17 @@ def memory_evidence(
 
     `query` is used to filter relevant lines.
     `paths` is a list of note paths (absolute or relative), `max_lines` limits lines per section.
+    If `paths` is omitted and `task_id` is provided, note paths are auto-resolved from `_index.jsonl`.
     Returns markdown evidence text with provenance per note.
     """
     resolved = _resolve_dir(memory_dir)
-    resolved_paths = _resolve_paths(paths, resolved)
+    if paths is not None:
+        resolved_paths = _resolve_paths(paths, resolved)
+    elif task_id is not None:
+        resolved_paths = _resolve_paths_from_task_id(task_id, resolved)
+    else:
+        raise ValueError("Either paths or task_id must be provided.")
+
     return evidence.generate_evidence_pack(query=query, paths=resolved_paths, max_lines=max_lines)
 
 

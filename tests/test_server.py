@@ -195,6 +195,21 @@ def test_memory_index_build(tmp_memory_dir: Path, monkeypatch) -> None:
     assert (memory_dir / "_index.jsonl").exists()
 
 
+def test_memory_index_build_dry_run(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    created_path = Path(memory_note_new(title="Index Dry Run", memory_dir=str(memory_dir)))
+    assert created_path.exists()
+    before = (memory_dir / "_index.jsonl").read_text(encoding="utf-8")
+
+    raw = memory_index_build(dry_run=True, no_dense=True, memory_dir=str(memory_dir))
+    payload = json.loads(raw)
+    assert isinstance(payload, list)
+    assert str(created_path) in payload
+    assert (memory_dir / "_index.jsonl").read_text(encoding="utf-8") == before
+
+
 def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
@@ -217,6 +232,32 @@ def test_memory_evidence(tmp_memory_dir: Path, monkeypatch) -> None:
     output = memory_evidence(query="validate", paths=[str(note_path)], memory_dir=str(memory_dir))
     assert "# DailyNote Evidence Pack" in output
     assert str(note_path) in output
+
+
+def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    note_path = Path(memory_note_new(title="Evidence by Task", task_id="TASK-401", memory_dir=str(memory_dir)))
+    output = memory_evidence(query="Evidence", task_id="TASK-401", memory_dir=str(memory_dir))
+    assert "# DailyNote Evidence Pack" in output
+    assert note_path.name in output
+
+
+def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    _ = Path(memory_note_new(title="Ignored Task Note", task_id="TASK-501", memory_dir=str(memory_dir)))
+    explicit_path = _write_note(memory_dir, name="explicit-evidence.md")
+    output = memory_evidence(
+        query="validate",
+        paths=[str(explicit_path)],
+        task_id="TASK-501",
+        memory_dir=str(memory_dir),
+    )
+    assert str(explicit_path) in output
+    assert "Ignored Task Note" not in output
 
 
 def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) -> None:

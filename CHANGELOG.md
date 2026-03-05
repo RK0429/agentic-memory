@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-05
+
+### Added
+
+- `task_id` parameter to `memory_evidence` for automatic path resolution
+- `dry_run` parameter to `memory_index_build` MCP tool
+
+### Changed
+
+- `memory_evidence`: `paths` parameter changed from required to optional
+
 ## [0.1.2] - 2026-03-05
 
 ### Added
