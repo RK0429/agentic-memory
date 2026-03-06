@@ -326,3 +326,45 @@ def test_auto_restore_uses_task_id_from_focus(tmp_memory_dir: Path) -> None:
     active_tasks = payload["active_tasks"]
     assert isinstance(active_tasks, list)
     assert active_tasks[0]["task_id"] == "TASK-456"
+
+
+def test_cmd_add_replace(sample_state_path: Path) -> None:
+    """cmd_add with replace removes matching items before adding new ones."""
+    assert state.cmd_set(sample_state_path, "focus", ["v2.0.0 の検証完了", "別のタスク"]) == 0
+
+    rc = state.cmd_add(sample_state_path, "focus", ["v2.0.2 の検証完了"], replace=["検証完了"])
+    loaded = state.load_state(sample_state_path)
+    focus = loaded[state.STATE_SHORT_KEYS["focus"]]
+
+    assert rc == 0
+    assert len(focus) == 2
+    assert focus[0].text == "v2.0.2 の検証完了"
+    assert focus[1].text == "別のタスク"
+
+
+def test_cmd_add_replace_none_is_noop(sample_state_path: Path) -> None:
+    """cmd_add without replace behaves as before (backwards compatible)."""
+    assert state.cmd_set(sample_state_path, "focus", ["existing"]) == 0
+
+    rc = state.cmd_add(sample_state_path, "focus", ["new item"])
+    loaded = state.load_state(sample_state_path)
+    focus = loaded[state.STATE_SHORT_KEYS["focus"]]
+
+    assert rc == 0
+    assert len(focus) == 2
+    assert focus[0].text == "new item"
+    assert focus[1].text == "existing"
+
+
+def test_cmd_add_replace_multiple_patterns(sample_state_path: Path) -> None:
+    """cmd_add with multiple replace patterns removes all matching items."""
+    assert state.cmd_set(sample_state_path, "open", ["agentic-relay 修正", "agentic-memory 修正", "ドキュメント更新"]) == 0
+
+    rc = state.cmd_add(sample_state_path, "open", ["両プロジェクト修正完了"], replace=["agentic-relay", "agentic-memory"])
+    loaded = state.load_state(sample_state_path)
+    items = loaded[state.STATE_SHORT_KEYS["open"]]
+
+    assert rc == 0
+    assert len(items) == 2
+    assert items[0].text == "両プロジェクト修正完了"
+    assert items[1].text == "ドキュメント更新"

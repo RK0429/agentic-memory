@@ -250,12 +250,15 @@ def memory_state_show(
 def memory_state_add(
     section: str,
     items: list[str],
+    replace: list[str] | None = None,
     memory_dir: str | None = None,
 ) -> str:
-    """Low-level: add items to a state section directly. Prefer memory_state_from_note for note-driven updates.
+    """Add items to a state section with optional pattern-based replacement.
 
     `section` is the target state section key/name.
     `items` is a list of new bullet items to prepend and de-duplicate.
+    `replace` is an optional list of substring patterns; existing items matching any pattern
+    are removed before adding new items (upsert semantics: remove old + add new in one step).
     Returns command output including updated state path.
     """
     resolved = _resolve_dir(memory_dir)
@@ -264,6 +267,7 @@ def memory_state_add(
         _state_path(resolved),
         section=section,
         items=items,
+        replace=replace,
     )
 
 

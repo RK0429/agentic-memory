@@ -476,7 +476,7 @@ def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
     return 0
 
 
-def cmd_add(state_path: Path, section: str, items: list[str]) -> int:
+def cmd_add(state_path: Path, section: str, items: list[str], replace: list[str] | None = None) -> int:
     try:
         section_name = _resolve_section_or_raise(section)
         new_items = _parse_items_or_raise(items)
@@ -485,7 +485,13 @@ def cmd_add(state_path: Path, section: str, items: list[str]) -> int:
         return 2
 
     sections = load_state(state_path)
-    merged = deduplicate(new_items + sections.get(section_name, []))
+    existing = sections.get(section_name, [])
+    if replace:
+        existing = [
+            item for item in existing
+            if not any(p.lower() in item.text.lower() for p in replace)
+        ]
+    merged = deduplicate(new_items + existing)
     sections[section_name] = enforce_cap(merged, get_cap(section_name))
     save_state(state_path, sections)
     print(str(state_path))
