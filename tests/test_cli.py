@@ -54,7 +54,9 @@ def test_cli_version() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert result.output.strip() == "0.3.0"
+    from agentic_memory import __version__
+
+    assert result.output.strip() == __version__
 
 
 def test_cli_help() -> None:
