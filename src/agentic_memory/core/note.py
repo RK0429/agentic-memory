@@ -6,7 +6,7 @@ import datetime as _dt
 import re
 from pathlib import Path
 
-TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "assets/note-template.md"
+from agentic_memory.core import config as memory_config
 
 
 def now_local() -> _dt.datetime:
@@ -22,11 +22,8 @@ def slugify(s: str) -> str:
     return s or "session"
 
 
-def read_template() -> str:
-    tpl = TEMPLATE_PATH.resolve()
-    if tpl.exists():
-        return tpl.read_text(encoding="utf-8")
-    return "# <short title>\n- Date: <YYYY-MM-DD>\n- Time: <HH:MM> - <HH:MM>\n\n## 目標\n- \n"
+def read_template(lang: str = "ja") -> str:
+    return memory_config.load_template(lang=lang)
 
 
 def create_note(
@@ -35,6 +32,8 @@ def create_note(
     context: str | None = None,
     tags: str | None = None,
     keywords: str | None = None,
+    auto_index: bool = True,
+    lang: str = "ja",
 ) -> Path:
     """Create a new note from template and return created file path."""
     dt = now_local()
@@ -59,7 +58,7 @@ def create_note(
                 break
             i += 1
 
-    tpl = read_template()
+    tpl = read_template(lang=lang)
     content = tpl
     content = content.replace("<short title>", title)
     content = content.replace("<YYYY-MM-DD>", date_s)
@@ -73,4 +72,14 @@ def create_note(
         content = content.replace("\\<comma,separated,keywords or empty>", keywords)
 
     out_path.write_text(content, encoding="utf-8")
+
+    if auto_index:
+        from agentic_memory.core import index
+
+        index.index_note(
+            note_path=out_path,
+            index_path=memory_dir / "_index.jsonl",
+            dailynote_dir=memory_dir,
+        )
+
     return out_path

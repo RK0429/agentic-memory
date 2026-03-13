@@ -66,6 +66,8 @@ class IndexEntry:
     commands: list[str] = dataclasses.field(default_factory=list)
     summary: str = ""
     work_log_keywords: list[str] = dataclasses.field(default_factory=list)
+    source_dir: str | None = None
+    explain_summary: str | None = None
 
     def field_text(self) -> dict[str, str]:
         return {
@@ -269,7 +271,8 @@ def score_entry(
                 return 0.0, {"missing_must": qt.raw}
 
     total = 0.0
-    details: dict = {"terms": []} if explain else {}
+    field_scores: dict[str, float] = {}
+    details: dict = {"terms": [], "field_scores": {}} if explain else {}
 
     for qt in qterms:
         if qt.exclude or not qt.term:
@@ -304,6 +307,7 @@ def score_entry(
             c = w * idf * tf_bm25 * term_factor * quality * qt.weight
             total += c
             if explain:
+                field_scores[f] = field_scores.get(f, 0.0) + c
                 contribs.append(
                     {
                         "field": f,
@@ -325,13 +329,22 @@ def score_entry(
         if d:
             age_days = max(0.0, (_now_local().date() - d).days)
             w = math.exp(-math.log(2) * age_days / max(1.0, half_life_days))
-            total *= 1.0 + recency_boost_max * w
+            boost = total * recency_boost_max * w
+            total += boost
             if explain:
                 details["recency"] = {
                     "age_days": age_days,
                     "w": round(w, 3),
                     "boost_max": recency_boost_max,
+                    "add": round(boost, 3),
+                    "multiplier": round(1.0 + recency_boost_max * w, 3),
                 }
+
+    if explain:
+        details["field_scores"] = {
+            field: round(score, 3) for field, score in field_scores.items() if score > 0
+        }
+        details["total"] = round(total, 3)
 
     return total, details
 

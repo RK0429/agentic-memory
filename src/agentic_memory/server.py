@@ -15,7 +15,18 @@ from typing import Any, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
 
-from agentic_memory.core import config, evidence, index, note, search, state
+from agentic_memory.core import (
+    cleanup,
+    config,
+    evidence,
+    export,
+    health,
+    index,
+    note,
+    search,
+    state,
+    stats,
+)
 from agentic_memory.core.scorer import load_index
 
 try:
@@ -166,15 +177,19 @@ def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
 
 
 @mcp.tool()
-def memory_init(memory_dir: str | None = None) -> str:
+def memory_init(
+    memory_dir: str | None = None,
+    enable_dense: bool = False,
+) -> str:
     """Initialize memory directory files.
 
     Creates `_state.md`, `_index.jsonl`, and `_rag_config.json` when missing.
+    Set `enable_dense` to true to configure dense (semantic) retrieval in `_rag_config.json`.
     `memory_dir` selects the target root directory.
     Returns initialization status and generated paths as JSON.
     """
     resolved = _resolve_dir(memory_dir)
-    result = config.init_memory_dir(resolved)
+    result = config.init_memory_dir(resolved, enable_dense=enable_dense)
     return _serialize_json(result)
 
 
@@ -187,12 +202,14 @@ def memory_note_new(
     task_id: str | None = None,
     agent_id: str | None = None,
     relay_session_id: str | None = None,
+    lang: str = "ja",
     memory_dir: str | None = None,
 ) -> str:
     """Create a new session note from template.
 
     `title` is required. Optional `context`, `tags`, and `keywords` fill metadata fields.
     `task_id`, `agent_id`, and `relay_session_id` are stored in index metadata.
+    `lang` selects the template language (`ja` or `en`).
     `memory_dir` sets the note root directory.
     Returns the created note file path.
     """
@@ -203,6 +220,8 @@ def memory_note_new(
         context=context,
         tags=tags,
         keywords=keywords,
+        auto_index=False,
+        lang=lang,
     )
     index.index_note(
         note_path=created,
@@ -277,8 +296,9 @@ def memory_state_set(
     items: list[str],
     memory_dir: str | None = None,
 ) -> str:
-    """Low-level: replace a state section directly. Prefer memory_state_from_note for note-driven updates.
+    """Low-level: replace a state section directly.
 
+    Prefer memory_state_from_note for note-driven updates.
     `section` is the target state section key/name.
     `items` fully replace existing entries in that section.
     Returns command output including updated state path.
@@ -299,8 +319,9 @@ def memory_state_remove(
     regex: bool = False,
     memory_dir: str | None = None,
 ) -> str:
-    """Low-level: remove items from a state section directly. Prefer memory_state_from_note for note-driven updates.
+    """Low-level: remove items from a state section directly.
 
+    Prefer memory_state_from_note for note-driven updates.
     `section` is the target section.
     `pattern` is a substring by default, or regular expression when `regex=True`.
     Returns command output including number of removed items.
@@ -348,11 +369,18 @@ def memory_auto_restore(
     relay_session_id: str | None = None,
     max_evidence_notes: int = 3,
     max_lines: int = 6,
+    max_total_lines: int = 200,
     include_project_state: bool = True,
     include_agent_state: bool = True,
     memory_dir: str | None = None,
 ) -> str:
-    """Restore active context by combining state_show + related note evidence in one call. Convenience wrapper for session recovery."""
+    """Restore active context by combining state_show + related note evidence in one call.
+
+    `max_total_lines` caps total response size.
+    Priority: project_state > agent_state > evidence.
+    When truncated, `truncated` and `truncated_reason` are included in the response.
+    Convenience wrapper for session recovery.
+    """
     resolved = _resolve_dir(memory_dir)
     payload = state.auto_restore(
         memory_dir=resolved,
@@ -360,6 +388,7 @@ def memory_auto_restore(
         relay_session_id=relay_session_id,
         max_evidence_notes=max_evidence_notes,
         max_lines=max_lines,
+        max_total_lines=max_total_lines,
         include_project_state=include_project_state,
         include_agent_state=include_agent_state,
     )
@@ -466,7 +495,7 @@ def memory_evidence(
 
     `query` is used to filter relevant lines.
     `paths` is a list of note paths (absolute or relative), `max_lines` limits lines per section.
-    If `paths` is omitted and `task_id` is provided, note paths are auto-resolved from `_index.jsonl`.
+    If `paths` is omitted and `task_id` is provided, paths are auto-resolved from the index.
     Returns markdown evidence text with provenance per note.
     """
     resolved = _resolve_dir(memory_dir)
@@ -478,6 +507,146 @@ def memory_evidence(
         raise ValueError("Either paths or task_id must be provided.")
 
     return evidence.generate_evidence_pack(query=query, paths=resolved_paths, max_lines=max_lines)
+
+
+@mcp.tool()
+def memory_stats(memory_dir: str | None = None) -> str:
+    """Get storage statistics for the memory directory.
+
+    Returns note counts (total and by date), index entry count, storage size in bytes,
+    date range, SIGFB signal summary by skill/type, and state item counts per section.
+    """
+    resolved = _resolve_dir(memory_dir)
+    result = stats.get_stats(resolved)
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_health_check(memory_dir: str | None = None) -> str:
+    """Check index integrity and consistency of the memory directory.
+
+    Detects orphan index entries (no matching note file), unindexed notes (no index entry),
+    stale entries (note newer than index), and validates state/config file parsability.
+    Returns a structured report with a human-readable summary.
+    """
+    resolved = _resolve_dir(memory_dir)
+    result = health.health_check(resolved)
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_export(
+    output_path: str,
+    fmt: str = "json",
+    memory_dir: str | None = None,
+) -> str:
+    """Export the entire memory directory to a backup file.
+
+    `output_path` is the destination file path.
+    `fmt` is `json` (single JSON file with all data) or `zip` (directory structure preserved).
+    Returns export metadata including note count and file size.
+    """
+    resolved = _resolve_dir(memory_dir)
+    result = export.export_memory(resolved, Path(output_path), fmt=fmt)
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_list_stale_notes(
+    days: int = 90,
+    memory_dir: str | None = None,
+) -> str:
+    """List notes older than a given number of days.
+
+    Returns a list of note metadata (path, date, title, size) for notes created more than
+    `days` days ago. Does not delete anything — use `memory_cleanup_notes` to remove.
+    """
+    resolved = _resolve_dir(memory_dir)
+    result = cleanup.list_stale_notes(resolved, days=days)
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_cleanup_notes(
+    paths: list[str],
+    dry_run: bool = True,
+    memory_dir: str | None = None,
+) -> str:
+    """Remove specified notes and their index entries.
+
+    `paths` is a list of note file paths (relative to memory_dir or absolute).
+    `dry_run` (default true) lists what would be removed without actually deleting.
+    Set `dry_run` to false to perform the actual deletion.
+    """
+    resolved = _resolve_dir(memory_dir)
+    result = cleanup.cleanup_notes(resolved, paths=paths, dry_run=dry_run)
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_search_global(
+    query: str,
+    memory_dirs: list[str],
+    top: int | None = None,
+    explain: bool = False,
+    prefer_recent: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Search across multiple memory directories.
+
+    `memory_dirs` is a list of memory directory paths to search.
+    Results from all directories are merged, scored, and sorted.
+    Each result includes a `source_dir` key identifying its origin.
+    Accepts the same query syntax as `memory_search`.
+    """
+    dirs = [Path(d) for d in memory_dirs]
+    result = search.search_global(
+        query=query,
+        memory_dirs=dirs,
+        top=top,
+        explain=explain,
+        prefer_recent=prefer_recent,
+    )
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_expire_stale(
+    stale_days: int = 30,
+    archive: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Detect and optionally archive stale state items.
+
+    Items in rolling state older than `stale_days` are listed.
+    The 'focus' section is always preserved (never expired).
+    Set `archive` to true to move expired items to `_state_archive.md`.
+    Without `archive`, this is a dry-run that only lists what would expire.
+    """
+    resolved = _resolve_dir(memory_dir)
+    archive_path = (resolved / "_state_archive.md") if archive else None
+    result = state.expire_stale_items(
+        state_path=_state_path(resolved),
+        stale_days=stale_days,
+        archive_path=archive_path,
+    )
+    return _serialize_json(result)
+
+
+@mcp.tool()
+def memory_update_weights(
+    updates: dict[str, float],
+    memory_dir: str | None = None,
+) -> str:
+    """Dynamically adjust field weights for search scoring.
+
+    `updates` is a dict of field names to new weight values (e.g. {"title": 8.0, "tags": 3.0}).
+    Only existing field names are updated; unknown keys are ignored with a warning.
+    Returns the complete updated weights dict.
+    """
+    resolved = _resolve_dir(memory_dir)
+    result = config.update_weights(resolved, updates=updates)
+    return _serialize_json(result)
 
 
 def run_server(

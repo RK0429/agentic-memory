@@ -258,6 +258,104 @@ def state_sections_to_rendered(
     return rendered
 
 
+def _count_rendered_lines(rendered: dict[str, list[str]] | None) -> int:
+    if rendered is None:
+        return 0
+    return sum(len(lines) for lines in rendered.values())
+
+
+def _truncate_rendered_sections(
+    rendered: dict[str, list[str]] | None,
+    max_lines: int,
+) -> tuple[dict[str, list[str]] | None, int, bool]:
+    if rendered is None:
+        return None, 0, False
+
+    remaining = max(max_lines, 0)
+    used = 0
+    truncated = False
+    trimmed: dict[str, list[str]] = {}
+
+    for key, lines in rendered.items():
+        if remaining <= 0:
+            trimmed[key] = []
+            truncated = truncated or bool(lines)
+            continue
+
+        kept = lines[:remaining]
+        trimmed[key] = kept
+        used += len(kept)
+        remaining -= len(kept)
+        if len(kept) < len(lines):
+            truncated = True
+
+    return trimmed, used, truncated
+
+
+def _count_text_lines(text: str) -> int:
+    if not text:
+        return 0
+    return len(text.splitlines())
+
+
+def _truncate_text_lines(text: str, max_lines: int) -> tuple[str, int, bool]:
+    safe_max = max(max_lines, 0)
+    lines = text.splitlines()
+    kept = lines[:safe_max]
+    truncated = len(kept) < len(lines)
+
+    if not kept:
+        return "", 0, truncated
+
+    truncated_text = "\n".join(kept)
+    if text.endswith("\n"):
+        truncated_text += "\n"
+    return truncated_text, len(kept), truncated
+
+
+def _apply_restore_line_budget(
+    *,
+    project_state: dict[str, list[str]] | None,
+    agent_state: dict[str, list[str]] | None,
+    active_tasks: list[dict[str, object]],
+    max_total_lines: int,
+) -> tuple[
+    dict[str, list[str]] | None,
+    dict[str, list[str]] | None,
+    list[dict[str, object]],
+    list[str],
+]:
+    remaining = max(max_total_lines, 0)
+    truncated_parts: list[str] = []
+
+    project_state, used, project_truncated = _truncate_rendered_sections(project_state, remaining)
+    remaining -= used
+    if project_truncated:
+        truncated_parts.append("project_state")
+
+    agent_state, used, agent_truncated = _truncate_rendered_sections(agent_state, remaining)
+    remaining -= used
+    if agent_truncated:
+        truncated_parts.append("agent_state")
+
+    trimmed_tasks: list[dict[str, object]] = []
+    evidence_truncated = False
+    for task in active_tasks:
+        trimmed_task = dict(task)
+        evidence_pack = trimmed_task.get("evidence_pack", "")
+        if isinstance(evidence_pack, str):
+            trimmed_pack, used, was_truncated = _truncate_text_lines(evidence_pack, remaining)
+            trimmed_task["evidence_pack"] = trimmed_pack
+            remaining -= used
+            evidence_truncated = evidence_truncated or was_truncated
+        trimmed_tasks.append(trimmed_task)
+
+    if evidence_truncated:
+        truncated_parts.append("evidence_packs")
+
+    return project_state, agent_state, trimmed_tasks, truncated_parts
+
+
 def extract_task_ids_from_focus(sections_data: dict[str, list[StateItem]]) -> list[str]:
     focus_section = STATE_SHORT_KEYS["focus"]
     task_ids: list[str] = []
@@ -476,7 +574,12 @@ def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
     return 0
 
 
-def cmd_add(state_path: Path, section: str, items: list[str], replace: list[str] | None = None) -> int:
+def cmd_add(
+    state_path: Path,
+    section: str,
+    items: list[str],
+    replace: list[str] | None = None,
+) -> int:
     try:
         section_name = _resolve_section_or_raise(section)
         new_items = _parse_items_or_raise(items)
@@ -566,6 +669,52 @@ def cmd_prune(
         save_state(state_path, sections)
     print(str(removed))
     return 0
+
+
+def expire_stale_items(
+    state_path: Path,
+    stale_days: int = 30,
+    archive_path: Path | None = None,
+) -> dict[str, Any]:
+    _validate_non_negative("stale_days", stale_days)
+
+    sections = load_state(state_path)
+    expired_items: list[dict[str, str]] = []
+    archive_sections = load_state(archive_path) if archive_path is not None else None
+    focus_section = STATE_SHORT_KEYS["focus"]
+
+    for sec in SECTION_ORDER:
+        if sec == focus_section:
+            continue
+
+        kept: list[StateItem] = []
+        expired_in_section: list[StateItem] = []
+        for item in sections.get(sec, []):
+            if is_stale(item, stale_days):
+                expired_items.append({"section": sec, "text": item.text, "date": item.date})
+                expired_in_section.append(item)
+            else:
+                kept.append(item)
+
+        if archive_path is not None:
+            sections[sec] = kept
+            if archive_sections is not None and expired_in_section:
+                archive_sections[sec] = archive_sections.get(sec, []) + expired_in_section
+
+    expired_count = len(expired_items)
+    archived = archive_path is not None and expired_count > 0
+
+    if archived and archive_sections is not None:
+        assert archive_path is not None
+        save_state(archive_path, archive_sections)
+        save_state(state_path, sections)
+
+    return {
+        "expired_items": expired_items,
+        "count": expired_count,
+        "archived": archived,
+        "archive_path": str(archive_path) if archive_path is not None else None,
+    }
 
 
 def _collect_agent_state_files(memory_dir: Path) -> list[AgentStateFile]:
@@ -944,6 +1093,7 @@ def auto_restore(
     relay_session_id: str | None = None,
     max_evidence_notes: int = 3,
     max_lines: int = 6,
+    max_total_lines: int = 200,
     include_project_state: bool = True,
     include_agent_state: bool = True,
 ) -> dict[str, Any]:
@@ -969,6 +1119,9 @@ def auto_restore(
             )
             ensure_state_file(resolved_agent_state_path)
             agent_sections = load_state(resolved_agent_state_path)
+
+    if max_total_lines < 0:
+        warnings.append("max_total_lines must be >= 0; using 0.")
 
     task_ids = extract_task_ids_from_focus(project_sections)
     if agent_sections is not None:
@@ -1036,19 +1189,24 @@ def auto_restore(
             }
         )
 
-    return {
+    project_state = state_sections_to_rendered(project_sections) if include_project_state else None
+    agent_state = (
+        state_sections_to_rendered(agent_sections)
+        if (include_agent_state and agent_sections is not None)
+        else None
+    )
+    project_state, agent_state, active_tasks, truncated_parts = _apply_restore_line_budget(
+        project_state=project_state,
+        agent_state=agent_state,
+        active_tasks=active_tasks,
+        max_total_lines=max_total_lines,
+    )
+
+    result: dict[str, Any] = {
         "agent_id": agent_id,
         "relay_session_id": relay_session_id,
-        "project_state": (
-            state_sections_to_rendered(project_sections)
-            if include_project_state
-            else None
-        ),
-        "agent_state": (
-            state_sections_to_rendered(agent_sections)
-            if (include_agent_state and agent_sections is not None)
-            else None
-        ),
+        "project_state": project_state,
+        "agent_state": agent_state,
         "agent_state_path": str(resolved_agent_state_path) if resolved_agent_state_path else None,
         "active_tasks": active_tasks,
         "restored_task_count": len(active_tasks),
@@ -1056,3 +1214,10 @@ def auto_restore(
         "warnings": warnings,
         "restored_at": _dt.datetime.now().isoformat(timespec="seconds"),
     }
+    if truncated_parts:
+        result["truncated"] = True
+        result["truncated_reason"] = (
+            f"restore output exceeded max_total_lines={max(max_total_lines, 0)}; "
+            f"truncated {', '.join(truncated_parts)}."
+        )
+    return result

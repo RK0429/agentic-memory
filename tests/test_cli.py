@@ -54,7 +54,7 @@ def test_cli_version() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert result.output.strip() == "0.1.0"
+    assert result.output.strip() == "0.3.0"
 
 
 def test_cli_help() -> None:

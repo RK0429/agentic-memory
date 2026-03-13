@@ -181,6 +181,7 @@ def cmd_note_new(
         context=context,
         tags=tags,
         keywords=keywords,
+        auto_index=False,
     )
     try:
         index.index_note(

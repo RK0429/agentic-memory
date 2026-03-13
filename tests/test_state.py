@@ -11,6 +11,46 @@ def _empty_sections() -> dict[str, list[state.StateItem]]:
     return {sec: [] for sec in state.SECTION_ORDER}
 
 
+def _full_sections(prefix: str, *, task_id: str | None = None) -> dict[str, list[state.StateItem]]:
+    sections_data = _empty_sections()
+    for short_key, cap in state.STATE_CAPS.items():
+        section_name = state.STATE_SHORT_KEYS[short_key]
+        items: list[state.StateItem] = []
+        for idx in range(cap):
+            text = f"{prefix}-{short_key}-{idx}"
+            if short_key == "focus" and idx == 0 and task_id is not None:
+                text = f"{task_id}: {text}"
+            items.append(
+                state.StateItem(
+                    date=f"2026-01-01 00:{idx:02d}",
+                    text=text,
+                )
+            )
+        sections_data[section_name] = items
+    return sections_data
+
+
+def _rendered_line_count(rendered: object) -> int:
+    if not isinstance(rendered, dict):
+        return 0
+    return sum(len(lines) for lines in rendered.values() if isinstance(lines, list))
+
+
+def _restore_line_count(payload: dict[str, object]) -> int:
+    total = _rendered_line_count(payload.get("project_state"))
+    total += _rendered_line_count(payload.get("agent_state"))
+
+    active_tasks = payload.get("active_tasks")
+    if isinstance(active_tasks, list):
+        for task in active_tasks:
+            if not isinstance(task, dict):
+                continue
+            evidence_pack = task.get("evidence_pack")
+            if isinstance(evidence_pack, str):
+                total += len(evidence_pack.splitlines())
+    return total
+
+
 def test_state_item_parse_with_date() -> None:
     item = state.StateItem.parse("- [2026-01-01 10:00] fix auth")
     assert item is not None
@@ -328,6 +368,48 @@ def test_auto_restore_uses_task_id_from_focus(tmp_memory_dir: Path) -> None:
     assert active_tasks[0]["task_id"] == "TASK-456"
 
 
+def test_auto_restore_max_total_lines(tmp_memory_dir: Path) -> None:
+    created = note.create_note(tmp_memory_dir, title="Restore Budget")
+    index.index_note(
+        note_path=created,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+        task_id="TASK-456",
+        agent_id="coder",
+        relay_session_id="relay-r",
+        no_dense=True,
+    )
+
+    state.save_state(
+        tmp_memory_dir / "_state.md",
+        _full_sections("project", task_id="TASK-456"),
+    )
+    agent_state_path = state.resolve_agent_state_path(
+        tmp_memory_dir,
+        agent_id="coder",
+        relay_session_id="relay-r",
+        for_write=True,
+    )
+    state.save_state(agent_state_path, _full_sections("agent"))
+
+    payload = state.auto_restore(
+        memory_dir=tmp_memory_dir,
+        agent_id="coder",
+        relay_session_id="relay-r",
+        max_total_lines=50,
+    )
+
+    assert payload["truncated"] is True
+    assert "max_total_lines=50" in payload["truncated_reason"]
+    assert _restore_line_count(payload) <= 50
+    assert _rendered_line_count(payload["project_state"]) == 43
+    assert _rendered_line_count(payload["agent_state"]) == 7
+    assert payload["restored_task_count"] >= 1
+    active_tasks = payload["active_tasks"]
+    assert isinstance(active_tasks, list)
+    assert active_tasks[0]["evidence_pack"] == ""
+
+
 def test_cmd_add_replace(sample_state_path: Path) -> None:
     """cmd_add with replace removes matching items before adding new ones."""
     assert state.cmd_set(sample_state_path, "focus", ["v2.0.0 の検証完了", "別のタスク"]) == 0
@@ -358,9 +440,21 @@ def test_cmd_add_replace_none_is_noop(sample_state_path: Path) -> None:
 
 def test_cmd_add_replace_multiple_patterns(sample_state_path: Path) -> None:
     """cmd_add with multiple replace patterns removes all matching items."""
-    assert state.cmd_set(sample_state_path, "open", ["agentic-relay 修正", "agentic-memory 修正", "ドキュメント更新"]) == 0
+    assert (
+        state.cmd_set(
+            sample_state_path,
+            "open",
+            ["agentic-relay 修正", "agentic-memory 修正", "ドキュメント更新"],
+        )
+        == 0
+    )
 
-    rc = state.cmd_add(sample_state_path, "open", ["両プロジェクト修正完了"], replace=["agentic-relay", "agentic-memory"])
+    rc = state.cmd_add(
+        sample_state_path,
+        "open",
+        ["両プロジェクト修正完了"],
+        replace=["agentic-relay", "agentic-memory"],
+    )
     loaded = state.load_state(sample_state_path)
     items = loaded[state.STATE_SHORT_KEYS["open"]]
 
@@ -368,3 +462,98 @@ def test_cmd_add_replace_multiple_patterns(sample_state_path: Path) -> None:
     assert len(items) == 2
     assert items[0].text == "両プロジェクト修正完了"
     assert items[1].text == "ドキュメント更新"
+
+
+def test_expire_stale_items_dry_run(sample_state_path: Path) -> None:
+    stale = (dt.datetime.now() - dt.timedelta(days=45)).strftime("%Y-%m-%d %H:%M")
+    fresh = (dt.datetime.now() - dt.timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
+    sections_data = _empty_sections()
+    sections_data[state.STATE_SHORT_KEYS["open"]] = [
+        state.StateItem(date=stale, text="stale open item"),
+        state.StateItem(date=fresh, text="fresh open item"),
+    ]
+    state.save_state(sample_state_path, sections_data)
+
+    result = state.expire_stale_items(sample_state_path, stale_days=30, archive_path=None)
+
+    assert result["count"] == 1
+    assert result["archived"] is False
+    assert result["archive_path"] is None
+    assert result["expired_items"] == [
+        {
+            "section": state.STATE_SHORT_KEYS["open"],
+            "text": "stale open item",
+            "date": stale,
+        }
+    ]
+    loaded = state.load_state(sample_state_path)
+    assert [item.text for item in loaded[state.STATE_SHORT_KEYS["open"]]] == [
+        "stale open item",
+        "fresh open item",
+    ]
+
+
+def test_expire_stale_items_archive(sample_state_path: Path, tmp_memory_dir: Path) -> None:
+    stale = (dt.datetime.now() - dt.timedelta(days=45)).strftime("%Y-%m-%d %H:%M")
+    fresh = (dt.datetime.now() - dt.timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
+    sections_data = _empty_sections()
+    sections_data[state.STATE_SHORT_KEYS["open"]] = [
+        state.StateItem(date=stale, text="stale open item"),
+        state.StateItem(date=fresh, text="fresh open item"),
+    ]
+    sections_data[state.STATE_SHORT_KEYS["decisions"]] = [
+        state.StateItem(date=stale, text="stale decision item")
+    ]
+    state.save_state(sample_state_path, sections_data)
+
+    archive_path = tmp_memory_dir / "_state_archive.md"
+    archive_sections = _empty_sections()
+    archive_sections[state.STATE_SHORT_KEYS["open"]] = [
+        state.StateItem(date="2026-01-01 00:00", text="already archived")
+    ]
+    state.save_state(archive_path, archive_sections)
+
+    result = state.expire_stale_items(
+        sample_state_path,
+        stale_days=30,
+        archive_path=archive_path,
+    )
+
+    assert result["count"] == 2
+    assert result["archived"] is True
+    assert result["archive_path"] == str(archive_path)
+
+    loaded = state.load_state(sample_state_path)
+    assert [item.text for item in loaded[state.STATE_SHORT_KEYS["open"]]] == ["fresh open item"]
+    assert loaded[state.STATE_SHORT_KEYS["decisions"]] == []
+
+    archived = state.load_state(archive_path)
+    assert [item.text for item in archived[state.STATE_SHORT_KEYS["open"]]] == [
+        "already archived",
+        "stale open item",
+    ]
+    assert [item.text for item in archived[state.STATE_SHORT_KEYS["decisions"]]] == [
+        "stale decision item"
+    ]
+
+
+def test_expire_stale_items_focus_preserved(sample_state_path: Path, tmp_memory_dir: Path) -> None:
+    stale = (dt.datetime.now() - dt.timedelta(days=45)).strftime("%Y-%m-%d %H:%M")
+    sections_data = _empty_sections()
+    sections_data[state.STATE_SHORT_KEYS["focus"]] = [
+        state.StateItem(date=stale, text="stale focus item")
+    ]
+    state.save_state(sample_state_path, sections_data)
+
+    archive_path = tmp_memory_dir / "_focus_archive.md"
+    result = state.expire_stale_items(
+        sample_state_path,
+        stale_days=30,
+        archive_path=archive_path,
+    )
+
+    assert result["count"] == 0
+    assert result["expired_items"] == []
+    loaded = state.load_state(sample_state_path)
+    assert [item.text for item in loaded[state.STATE_SHORT_KEYS["focus"]]] == ["stale focus item"]
+    assert not archive_path.exists()

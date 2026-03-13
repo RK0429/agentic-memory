@@ -10,6 +10,7 @@ Design goals:
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import json
 import re
@@ -143,7 +144,9 @@ def _resolve_metadata_filter(
         if normalized is None:
             raise ValueError(f"Invalid {field}: {explicit!r}")
         if query_value is not None and query_value != normalized:
-            warnings.append(f"Query {field} filter is ignored because explicit {field} is provided.")
+            warnings.append(
+                f"Query {field} filter is ignored because explicit {field} is provided."
+            )
         return normalized
     return query_value
 
@@ -155,9 +158,8 @@ def _entry_matches_metadata(
     agent_id: str | None,
     relay_session_id: str | None,
 ) -> bool:
-    if task_id is not None:
-        if _normalize_task_id(entry.task_id) != task_id:
-            return False
+    if task_id is not None and _normalize_task_id(entry.task_id) != task_id:
+        return False
     if agent_id is not None:
         entry_agent = _normalize_optional_text(entry.agent_id)
         if entry_agent is None or entry_agent.casefold() != agent_id.casefold():
@@ -489,6 +491,84 @@ def _weighted_rrf_merge(
         scores[path] = scores.get(path, 0.0) + (dense_weight / (k + rank))
 
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+
+def _format_score(value: float) -> str:
+    return f"{value:.1f}"
+
+
+def human_readable_explain(explain_data: dict) -> str:
+    field_scores_raw = explain_data.get("field_scores", {})
+    field_scores: list[tuple[str, float]] = []
+    if isinstance(field_scores_raw, dict):
+        for field, score in field_scores_raw.items():
+            if isinstance(score, (int, float)) and not isinstance(score, bool) and score > 0:
+                field_scores.append((str(field), float(score)))
+
+    field_scores.sort(key=lambda item: (-item[1], item[0]))
+    parts = [f"{field}一致: +{_format_score(score)}" for field, score in field_scores]
+
+    recency_raw = explain_data.get("recency", {})
+    recency_add = 0.0
+    if isinstance(recency_raw, dict):
+        add = recency_raw.get("add")
+        if isinstance(add, (int, float)) and not isinstance(add, bool) and add > 0:
+            recency_add = float(add)
+            parts.append(f"鮮度補正: +{_format_score(recency_add)}")
+
+    hitcount = explain_data.get("hitcount")
+    if not parts and isinstance(hitcount, (int, float)) and not isinstance(hitcount, bool):
+        hitcount_f = float(hitcount)
+        parts.append(f"ヒット数: +{_format_score(hitcount_f)}")
+        total = hitcount_f
+    else:
+        total_raw = explain_data.get("total")
+        if isinstance(total_raw, (int, float)) and not isinstance(total_raw, bool):
+            total = float(total_raw)
+        else:
+            total = sum(score for _, score in field_scores) + recency_add
+
+    if not parts:
+        reason = explain_data.get("filtered_by") or explain_data.get("excluded_by")
+        if isinstance(reason, str) and reason.strip():
+            return reason
+        missing_must = explain_data.get("missing_must")
+        if isinstance(missing_must, str) and missing_must.strip():
+            return f"必須条件未一致: {missing_must}"
+        return f"合計: {_format_score(total)}"
+
+    return f"{', '.join(parts)} → 合計: {_format_score(total)}"
+
+
+def _attach_explain_summaries(
+    results: list[tuple[float, IndexEntry, dict]],
+) -> list[tuple[float, IndexEntry, dict]]:
+    summarized: list[tuple[float, IndexEntry, dict]] = []
+    for score, entry, detail in results:
+        entry.explain_summary = human_readable_explain(detail)
+        summarized.append((score, entry, detail))
+    return summarized
+
+
+def _dedupe_query_terms(terms: list[QueryTerm]) -> list[QueryTerm]:
+    deduped: list[QueryTerm] = []
+    seen: set[tuple[object, ...]] = set()
+    for qt in terms:
+        key = (
+            qt.raw,
+            qt.term,
+            qt.is_phrase,
+            qt.must,
+            qt.exclude,
+            qt.field,
+            qt.weight,
+            qt.date_range,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(qt)
+    return deduped
 
 
 # ---------- Orchestration ----------
@@ -867,6 +947,9 @@ def search(
     if rerank_enabled and results:
         results = rerank_module.rerank(query, results, top_n=top_n)
 
+    if explain:
+        results = _attach_explain_summaries(results)
+
     return {
         "engine": used_engine,
         "query": query,
@@ -890,4 +973,86 @@ def search(
             "agent_id": resolved_agent_id,
             "relay_session_id": resolved_relay_session_id,
         },
+    }
+
+
+def search_global(query: str, memory_dirs: list[Path], **kwargs) -> dict:
+    combined_results: list[tuple[float, IndexEntry, dict]] = []
+    combined_expanded: list[QueryTerm] = []
+    combined_feedback_terms: list[str] = []
+    combined_suggestions: list[str] = []
+    warnings: list[str] = []
+    feedback_sources: list[str] = []
+    source_engines: dict[str, str | None] = {}
+    top_n: int | None = None
+    snippets_n: int | None = None
+    filters: dict[str, str | None] = {}
+    expand_enabled = False
+    feedback_expand = False
+    rerank_enabled = False
+    rerank_auto_enabled = False
+
+    for memory_dir in memory_dirs:
+        payload = search(query=query, memory_dir=memory_dir, **kwargs)
+        source_dir = str(memory_dir)
+        source_engines[source_dir] = payload.get("engine")
+
+        if top_n is None:
+            top_n = int(payload.get("top", 10))
+        if snippets_n is None:
+            snippets_n = int(payload.get("snippets", 3))
+        if not filters:
+            payload_filters = payload.get("filters", {})
+            if isinstance(payload_filters, dict):
+                filters = {
+                    "task_id": payload_filters.get("task_id"),
+                    "agent_id": payload_filters.get("agent_id"),
+                    "relay_session_id": payload_filters.get("relay_session_id"),
+                }
+
+        expand_enabled = expand_enabled or bool(payload.get("expand_enabled", False))
+        feedback_expand = feedback_expand or bool(payload.get("feedback_expand", False))
+        rerank_enabled = rerank_enabled or bool(payload.get("rerank_enabled", False))
+        rerank_auto_enabled = rerank_auto_enabled or bool(payload.get("rerank_auto_enabled", False))
+
+        combined_expanded.extend(payload.get("expanded", []))
+        combined_feedback_terms.extend(payload.get("feedback_terms_used", []))
+        combined_suggestions.extend(payload.get("suggestions", []))
+
+        feedback_source = payload.get("feedback_source_note")
+        if isinstance(feedback_source, str) and feedback_source:
+            feedback_sources.append(feedback_source)
+
+        for warning in payload.get("warnings", []):
+            warnings.append(f"[{source_dir}] {warning}")
+
+        for score, entry, detail in payload.get("results", []):
+            combined_results.append(
+                (score, dataclasses.replace(entry, source_dir=source_dir), detail)
+            )
+
+    combined_results.sort(key=lambda item: item[0], reverse=True)
+    if top_n is not None:
+        combined_results = combined_results[:top_n]
+
+    return {
+        "engine": "global",
+        "query": query,
+        "expanded": _dedupe_query_terms(combined_expanded),
+        "expanded_terms": _dedupe_keep_order(
+            [qt.term for qt in combined_expanded if isinstance(qt.term, str) and qt.term]
+        ),
+        "feedback_source_note": _dedupe_keep_order(feedback_sources),
+        "feedback_terms_used": _dedupe_keep_order(combined_feedback_terms),
+        "warnings": warnings,
+        "results": combined_results,
+        "suggestions": _dedupe_keep_order(combined_suggestions),
+        "expand_enabled": expand_enabled,
+        "feedback_expand": feedback_expand,
+        "top": top_n if top_n is not None else kwargs.get("top", 10),
+        "snippets": snippets_n if snippets_n is not None else kwargs.get("snippets", 3),
+        "rerank_enabled": rerank_enabled,
+        "rerank_auto_enabled": rerank_auto_enabled,
+        "filters": filters,
+        "source_engines": source_engines,
     }

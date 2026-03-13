@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-13
+
+### Added
+
+- **A1: Dense retrieval auto-config** — `memory_init` gains `enable_dense` parameter to auto-configure dense embeddings on initialization
+- **A2: Human-readable explain** — `memory_search` returns `explain_summary` with human-readable score breakdowns when `explain=True`
+- **A3: Auto-index on note creation** — `create_note()` automatically calls `index_note()` after creation (opt-out via `auto_index=False`)
+- **B1: Response size control** — `memory_auto_restore` gains `max_total_lines` parameter with priority-based truncation
+- **B2: Note lifecycle management** — New `memory_list_stale_notes` and `memory_cleanup_notes` MCP tools for lightweight note cleanup
+- **B3: State item auto-expiry** — New `memory_expire_stale` MCP tool to archive items not referenced within a configurable period
+- **C1: Multi-project search** — New `memory_search_global` MCP tool for cross-project memory search
+- **C2: Note template customization** — `memory_note_new` gains `lang` parameter supporting English (`en`) and Japanese (`ja`) templates
+- **C3: Dynamic field weight tuning** — New `memory_update_weights` MCP tool to adjust search field weights based on feedback
+- **D1: Storage statistics** — New `memory_stats` MCP tool for storage statistics and SIGFB signal summary
+- **D2: Index integrity check** — New `memory_health_check` MCP tool to detect orphan entries, unindexed notes, and stale entries
+- **D3: Backup/export** — New `memory_export` MCP tool supporting JSON and ZIP export formats
+
+### Changed
+
+- MCP tool count increased from 11 to 19
+
 ## [0.2.1] - 2026-03-06
 
 ### Added
