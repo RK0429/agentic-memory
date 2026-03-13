@@ -1104,9 +1104,7 @@ def cmd_from_note(
             "note": str(note_path),
             "updated_sections": updated_sections,
             "stale_count": stale_count,
-            "section_counts": {
-                sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER
-            },
+            "section_counts": {sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER},
         },
         ensure_ascii=False,
     )

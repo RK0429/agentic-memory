@@ -448,7 +448,8 @@ def memory_search(
     `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
     `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
     from results to reduce response size.
-    `mode` preset: `quick` (compact, no explain), `detailed` (default), `debug` (explain, all fields).
+    `mode` preset: `quick` (compact, no explain), `detailed` (default),
+    `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
     """
     # Apply mode presets

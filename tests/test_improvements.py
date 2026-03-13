@@ -9,8 +9,10 @@ import pytest
 
 from agentic_memory.core import evidence, index, note, sections, state, tokenizer
 from agentic_memory.core.query import expand_terms, parse_query
-from agentic_memory.core.search import COMPACT_EXCLUDE_FIELDS, search
-
+from agentic_memory.core.search import (
+    COMPACT_EXCLUDE_FIELDS,
+    search,
+)
 
 # ---------- Bug 1 / M4: Case-insensitive section lookup ----------
 
@@ -94,8 +96,17 @@ def test_search_compact_false_by_default(tmp_memory_dir: Path) -> None:
 
 
 def test_compact_exclude_fields_defined() -> None:
-    expected = {"auto_keywords", "work_log_keywords", "plan_keywords", "errors", "skills", "commands", "test_names", "skill_feedback"}
-    assert COMPACT_EXCLUDE_FIELDS == expected
+    expected = {
+        "auto_keywords",
+        "work_log_keywords",
+        "plan_keywords",
+        "errors",
+        "skills",
+        "commands",
+        "test_names",
+        "skill_feedback",
+    }
+    assert expected == COMPACT_EXCLUDE_FIELDS
 
 
 # ---------- H2: Preset modes (tested at server layer via mode parameter) ----------
@@ -226,11 +237,7 @@ def test_evidence_english_note_uses_english_section_names() -> None:
 
 
 def test_evidence_japanese_note_uses_japanese_section_names() -> None:
-    note_content = (
-        "# 日本語セッション\n\n"
-        "## 目標\n\n- 機能構築\n\n"
-        "## 成果\n\n- 構築完了\n"
-    )
+    note_content = "# 日本語セッション\n\n## 目標\n\n- 機能構築\n\n## 成果\n\n- 構築完了\n"
     parsed = evidence.parse_sections(note_content)
     lang = evidence._detect_note_language(parsed)
     assert lang == "ja"
@@ -257,9 +264,7 @@ def test_evidence_pack_english_sections(tmp_path: Path) -> None:
 def test_evidence_pack_japanese_sections(tmp_path: Path) -> None:
     note_path = tmp_path / "ja_note.md"
     note_path.write_text(
-        "# 日本語セッション\n\n"
-        "## 目標\n\n- 機能構築\n\n"
-        "## 成果\n\n- 構築完了\n",
+        "# 日本語セッション\n\n## 目標\n\n- 機能構築\n\n## 成果\n\n- 構築完了\n",
         encoding="utf-8",
     )
     pack = evidence.generate_evidence_pack("機能", [note_path])

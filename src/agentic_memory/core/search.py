@@ -76,16 +76,18 @@ DEFAULT_HYBRID_RRF_K = 60
 DEFAULT_HYBRID_DENSE_WEIGHT = 1.0
 
 # Fields excluded from results in compact mode to reduce response size.
-COMPACT_EXCLUDE_FIELDS = frozenset({
-    "auto_keywords",
-    "work_log_keywords",
-    "plan_keywords",
-    "errors",
-    "skills",
-    "commands",
-    "test_names",
-    "skill_feedback",
-})
+COMPACT_EXCLUDE_FIELDS = frozenset(
+    {
+        "auto_keywords",
+        "work_log_keywords",
+        "plan_keywords",
+        "errors",
+        "skills",
+        "commands",
+        "test_names",
+        "skill_feedback",
+    }
+)
 
 
 # ---------- Utilities ----------
