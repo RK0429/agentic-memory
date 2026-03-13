@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import re
 from pathlib import Path
 
@@ -14,12 +15,18 @@ def now_local() -> _dt.datetime:
 
 
 def slugify(s: str) -> str:
-    s = s.strip().lower()
+    original = s.strip()
+    s = original.lower()
     s = re.sub(r"[^a-z0-9\s\-_.]+", "", s)
     s = s.replace("_", "-").replace(".", "-")
     s = re.sub(r"\s+", "-", s)
     s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s or "session"
+    if s:
+        return s
+    # Fallback for non-ASCII titles (e.g., Japanese): use short hash
+    if original and not original.isascii():
+        return hashlib.sha1(original.encode("utf-8")).hexdigest()[:8]
+    return "session"
 
 
 def read_template(lang: str = "ja") -> str:

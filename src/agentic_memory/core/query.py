@@ -29,8 +29,8 @@ def _safe_lower(s: str) -> str:
     return _normalize_text(s).lower()
 
 
-def _tokenize_for_match(s: str) -> list[str]:
-    return tokenizer.tokenize(s)
+def _tokenize_for_match(s: str, max_cjk_terms: int = 120) -> list[str]:
+    return tokenizer.tokenize(s, max_cjk_terms=max_cjk_terms)
 
 
 def _get_nested(d: dict, path: Sequence[str], default=None):
@@ -175,7 +175,7 @@ def expand_terms(terms: list[QueryTerm], config: dict, enable: bool) -> list[Que
         if "\\" in base:
             variants.add(base.split("\\")[-1])
 
-        for tk in _tokenize_for_match(base):
+        for tk in _tokenize_for_match(base, max_cjk_terms=20):
             variants.add(tk)
             variants.add(tk.lower())
 

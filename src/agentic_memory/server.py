@@ -118,6 +118,27 @@ def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
     return resolved
 
 
+def _strip_compact_fields(result: dict) -> dict:
+    """Remove verbose index fields from search results for compact mode."""
+    exclude = search.COMPACT_EXCLUDE_FIELDS
+    stripped_results = []
+    for item in result.get("results", []):
+        if isinstance(item, tuple) and len(item) >= 2:
+            score, entry, *rest = item
+            if dataclasses.is_dataclass(entry) and not isinstance(entry, type):
+                entry_dict = dataclasses.asdict(entry)
+                entry_dict = {k: v for k, v in entry_dict.items() if k not in exclude}
+                detail = rest[0] if rest else {}
+                stripped_results.append((score, entry_dict, detail))
+            else:
+                stripped_results.append(item)
+        else:
+            stripped_results.append(item)
+    result = dict(result)
+    result["results"] = stripped_results
+    return result
+
+
 TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
 TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
 
@@ -417,14 +438,27 @@ def memory_search(
     prf: bool = False,
     no_prf: bool = False,
     default_date_range: int | None = None,
+    compact: bool = False,
+    mode: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Search session notes by query.
 
     Supports quoted phrases, +must, -exclude, field:term, and date-range filters.
     `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
+    `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
+    from results to reduce response size.
+    `mode` preset: `quick` (compact, no explain), `detailed` (default), `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
     """
+    # Apply mode presets
+    if mode == "quick":
+        compact = True
+        explain = False
+    elif mode == "debug":
+        compact = False
+        explain = True
+
     resolved = _resolve_dir(memory_dir)
     result = search.search(
         query=query,
@@ -448,7 +482,10 @@ def memory_search(
         prf=prf,
         no_prf=no_prf,
         default_date_range=default_date_range,
+        compact=compact,
     )
+    if compact:
+        result = _strip_compact_fields(result)
     return _serialize_json(result)
 
 
@@ -590,6 +627,7 @@ def memory_search_global(
     top: int | None = None,
     explain: bool = False,
     prefer_recent: bool = False,
+    compact: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Search across multiple memory directories.
@@ -597,16 +635,20 @@ def memory_search_global(
     `memory_dirs` is a list of memory directory paths to search.
     Results from all directories are merged, scored, and sorted.
     Each result includes a `source_dir` key identifying its origin.
+    `compact` omits verbose index fields from results to reduce response size.
     Accepts the same query syntax as `memory_search`.
     """
     dirs = [Path(d) for d in memory_dirs]
     result = search.search_global(
         query=query,
         memory_dirs=dirs,
+        compact=compact,
         top=top,
         explain=explain,
         prefer_recent=prefer_recent,
     )
+    if compact:
+        result = _strip_compact_fields(result)
     return _serialize_json(result)
 
 

@@ -37,7 +37,11 @@ _ALL_ALIASES: dict[str, str] = {**NOTE_SECTION_ALIASES, **STATE_SECTION_ALIASES}
 
 
 def get_section(secs: dict[str, list[str]], name: str) -> list[str]:
-    """Find section lines with Japanese priority and English fallback."""
+    """Find section lines with Japanese priority and English fallback.
+
+    Falls back to case-insensitive matching to handle template variations
+    (e.g. "Skill Feedback" vs "Skill feedback").
+    """
     canonical = _ALL_REVERSE.get(name, name)
     if canonical in secs:
         return secs[canonical]
@@ -49,6 +53,17 @@ def get_section(secs: dict[str, list[str]], name: str) -> list[str]:
     alt = _ALL_ALIASES.get(name) or _ALL_REVERSE.get(name)
     if alt and alt in secs:
         return secs[alt]
+    # Case-insensitive fallback for all candidate names
+    candidates = {name.lower()}
+    if canonical != name:
+        candidates.add(canonical.lower())
+    if alias:
+        candidates.add(alias.lower())
+    if alt:
+        candidates.add(alt.lower())
+    for key in secs:
+        if key.lower() in candidates:
+            return secs[key]
     return []
 
 

@@ -174,6 +174,7 @@ def tokenize(
     config: dict | None = None,
     stopwords: set[str] | None = None,
     min_length: int = 0,
+    max_cjk_terms: int = 120,
 ) -> list[str]:
     """Tokenize text for retrieval with configurable CJK backend selection.
 
@@ -192,7 +193,7 @@ def tokenize(
     if backend == "sudachi":
         tokens.extend(_sudachi_tokenize(text_norm))
     else:
-        tokens.extend(_cjk_ngrams(text_norm))
+        tokens.extend(_cjk_ngrams(text_norm, max_terms=max_cjk_terms))
 
     normalized_stopwords: set[str] | None = None
     if stopwords is not None:

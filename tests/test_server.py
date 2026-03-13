@@ -89,7 +89,10 @@ def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
     result = memory_state_add(
         section="focus", items=["Task A", "Task B"], memory_dir=str(memory_dir)
     )
-    assert result.endswith("_state.md")
+    result_data = json.loads(result)
+    assert result_data["path"].endswith("_state.md")
+    assert result_data["added"] == 2
+    assert result_data["after"] == 2
 
     output = memory_state_show(section="focus", memory_dir=str(memory_dir))
     assert "Task A" in output
@@ -132,7 +135,10 @@ def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
         no_auto_improve=True,
         memory_dir=str(memory_dir),
     )
-    assert result.endswith("_state.md")
+    result_data = json.loads(result)
+    assert result_data["path"].endswith("_state.md")
+    assert isinstance(result_data["updated_sections"], list)
+    assert isinstance(result_data["section_counts"], dict)
 
     output = memory_state_show(section="open", memory_dir=str(memory_dir))
     assert "write assertions" in output

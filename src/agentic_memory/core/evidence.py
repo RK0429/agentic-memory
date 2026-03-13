@@ -32,6 +32,14 @@ SECTION_ORDER = [
 ]
 
 
+def _detect_note_language(parsed_sections: dict[str, list[str]]) -> str:
+    """Detect note language from section headings."""
+    for sec_name in parsed_sections:
+        if sec_name in sections.NOTE_SECTION_ALIASES:
+            return "ja"
+    return "en"
+
+
 def parse_sections(md: str) -> dict[str, list[str]]:
     """
     Very small markdown section parser for level-2 headings (## ...).
@@ -134,6 +142,7 @@ def generate_evidence_pack(query: str, paths: Sequence[Path | str], max_lines: i
         out_lines.append("")
 
         # Use ordered sections, but also include any non-standard that match
+        lang = _detect_note_language(parsed_sections)
         for sec in SECTION_ORDER:
             section_lines = sections.get_section(parsed_sections, sec)
             if not section_lines:
@@ -141,7 +150,9 @@ def generate_evidence_pack(query: str, paths: Sequence[Path | str], max_lines: i
             filtered = filter_lines(section_lines, rx, max_lines)
             if not filtered:
                 continue
-            out_lines.append(f"### {sec}")
+            # Display section name in the note's language
+            display_name = sec if lang == "ja" else sections.NOTE_SECTION_ALIASES.get(sec, sec)
+            out_lines.append(f"### {display_name}")
             for ln in filtered:
                 # Avoid super long lines
                 if len(ln) > 300:

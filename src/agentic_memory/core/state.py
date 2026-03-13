@@ -589,14 +589,30 @@ def cmd_add(
 
     sections = load_state(state_path)
     existing = sections.get(section_name, [])
+    before_count = len(existing)
+    removed_count = 0
     if replace:
-        existing = [
+        filtered = [
             item for item in existing if not any(p.lower() in item.text.lower() for p in replace)
         ]
+        removed_count = before_count - len(filtered)
+        existing = filtered
     merged = deduplicate(new_items + existing)
     sections[section_name] = enforce_cap(merged, get_cap(section_name))
+    after_count = len(sections[section_name])
     save_state(state_path, sections)
-    print(str(state_path))
+    summary = json.dumps(
+        {
+            "path": str(state_path),
+            "section": section_name,
+            "added": len(new_items),
+            "removed": removed_count,
+            "before": before_count,
+            "after": after_count,
+        },
+        ensure_ascii=False,
+    )
+    print(summary)
     return 0
 
 
@@ -675,7 +691,8 @@ def expire_stale_items(
     stale_days: int = 30,
     archive_path: Path | None = None,
 ) -> dict[str, Any]:
-    _validate_non_negative("stale_days", stale_days)
+    if stale_days < 1:
+        raise ValueError("stale_days must be >= 1 (use 1 for items older than 1 day)")
 
     sections = load_state(state_path)
     expired_items: list[dict[str, str]] = []
@@ -1064,7 +1081,7 @@ def cmd_from_note(
 
     try:
         _validate_non_negative("max-entries", max_entries)
-        _, _, stale_count = _merge_from_note(
+        sections_data, updated_sections, stale_count = _merge_from_note(
             state_path=state_path,
             note_path=note_path,
             no_auto_improve=no_auto_improve,
@@ -1081,7 +1098,19 @@ def cmd_from_note(
     if stale_count > 0:
         print(f"Warning: {stale_count} stale items found (7+ days old)", file=sys.stderr)
 
-    print(str(state_path))
+    summary = json.dumps(
+        {
+            "path": str(state_path),
+            "note": str(note_path),
+            "updated_sections": updated_sections,
+            "stale_count": stale_count,
+            "section_counts": {
+                sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER
+            },
+        },
+        ensure_ascii=False,
+    )
+    print(summary)
     return 0
 
 

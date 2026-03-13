@@ -59,6 +59,9 @@ STOPWORDS = set(
     ]
 )
 CJK_CHUNK_RE = tokenizer.CJK_CHUNK_RE
+# Template placeholder tokens that are not error identifiers.
+_ERROR_EXCLUDE_TOKENS = {"SIGFB", "SKILL"}
+
 TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
 TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
 
@@ -356,6 +359,9 @@ def extract_errors(md: str) -> list[str]:
             if tok.isdigit() and tok in {"200", "201", "202", "204"}:
                 continue
             if len(tok) < 4 and tok.isdigit():
+                continue
+            # Skip template placeholder tokens (e.g. "SIGFB: none", "SKILL: none")
+            if tok in _ERROR_EXCLUDE_TOKENS:
                 continue
             out.append(tok)
     # keep somewhat unique + short list

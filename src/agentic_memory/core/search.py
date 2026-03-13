@@ -75,6 +75,18 @@ DEFAULT_RERANK_AUTO_THRESHOLD = 50
 DEFAULT_HYBRID_RRF_K = 60
 DEFAULT_HYBRID_DENSE_WEIGHT = 1.0
 
+# Fields excluded from results in compact mode to reduce response size.
+COMPACT_EXCLUDE_FIELDS = frozenset({
+    "auto_keywords",
+    "work_log_keywords",
+    "plan_keywords",
+    "errors",
+    "skills",
+    "commands",
+    "test_names",
+    "skill_feedback",
+})
+
 
 # ---------- Utilities ----------
 def _now_local() -> _dt.datetime:
@@ -595,6 +607,7 @@ def search(
     prf: bool = False,
     no_prf: bool = False,
     default_date_range: int | None = None,
+    compact: bool = False,
 ) -> dict:
     dn_dir = memory_dir
     index_path = dn_dir / "_index.jsonl"
@@ -963,6 +976,7 @@ def search(
         "snippets": snippets_n,
         "rerank_enabled": rerank_enabled,
         "rerank_auto_enabled": rerank_auto_enabled,
+        "compact": compact,
         "filters": {
             "task_id": resolved_task_id,
             "agent_id": resolved_agent_id,
@@ -971,7 +985,7 @@ def search(
     }
 
 
-def search_global(query: str, memory_dirs: list[Path], **kwargs) -> dict:
+def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **kwargs) -> dict:
     combined_results: list[tuple[float, IndexEntry, dict]] = []
     combined_expanded: list[QueryTerm] = []
     combined_feedback_terms: list[str] = []
@@ -988,7 +1002,7 @@ def search_global(query: str, memory_dirs: list[Path], **kwargs) -> dict:
     rerank_auto_enabled = False
 
     for memory_dir in memory_dirs:
-        payload = search(query=query, memory_dir=memory_dir, **kwargs)
+        payload = search(query=query, memory_dir=memory_dir, compact=compact, **kwargs)
         source_dir = str(memory_dir)
         source_engines[source_dir] = payload.get("engine")
 
@@ -1048,6 +1062,7 @@ def search_global(query: str, memory_dirs: list[Path], **kwargs) -> dict:
         "snippets": snippets_n if snippets_n is not None else kwargs.get("snippets", 3),
         "rerank_enabled": rerank_enabled,
         "rerank_auto_enabled": rerank_auto_enabled,
+        "compact": compact,
         "filters": filters,
         "source_engines": source_engines,
     }
