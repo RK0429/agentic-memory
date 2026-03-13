@@ -69,14 +69,21 @@ def _state_is_valid(state_path: Path) -> bool:
     return set(state.SECTION_ORDER).issubset(loaded)
 
 
-def _config_is_valid(config_path: Path) -> bool:
-    if not config_path.exists() or not config_path.is_file():
-        return False
+def _config_is_valid(config_path: Path) -> tuple[bool, str | None]:
+    """Check config file validity and return (is_valid, reason_if_invalid)."""
+    if not config_path.exists():
+        return False, "config file not found"
+    if not config_path.is_file():
+        return False, "config path is not a file"
     try:
         loaded = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return isinstance(loaded, dict)
+    except OSError as exc:
+        return False, f"cannot read config file: {exc}"
+    except json.JSONDecodeError as exc:
+        return False, f"invalid JSON: {exc}"
+    if not isinstance(loaded, dict):
+        return False, f"expected JSON object, got {type(loaded).__name__}"
+    return True, None
 
 
 def health_check(memory_dir: Path) -> dict[str, Any]:
@@ -126,7 +133,7 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
     stale_entries = sorted(set(stale_entries))
     unindexed_notes = sorted(set(unindexed_notes))
     state_valid = _state_is_valid(state_path)
-    config_valid = _config_is_valid(config_path)
+    config_valid, config_reason = _config_is_valid(config_path)
 
     if index_error:
         summary = (
@@ -154,7 +161,7 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
             f"config {'有効' if config_valid else '無効'}。"
         )
 
-    return {
+    result: dict[str, Any] = {
         "orphan_entries": orphan_entries,
         "unindexed_notes": unindexed_notes,
         "stale_entries": stale_entries,
@@ -162,3 +169,6 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
         "config_valid": config_valid,
         "summary": summary,
     }
+    if config_reason is not None:
+        result["config_invalid_reason"] = config_reason
+    return result

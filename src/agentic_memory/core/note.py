@@ -71,12 +71,9 @@ def create_note(
     content = content.replace("<YYYY-MM-DD>", date_s)
     content = content.replace("<HH:MM> - <HH:MM>", f"{start} - {end}")
     content = content.replace("<HH:MM>", start)
-    if context is not None:
-        content = content.replace("\\<issue/pr/link or N/A>", context)
-    if tags is not None:
-        content = content.replace("\\<comma,separated,tags or empty>", tags)
-    if keywords is not None:
-        content = content.replace("\\<comma,separated,keywords or empty>", keywords)
+    content = content.replace("\\<issue/pr/link or N/A>", context or "")
+    content = content.replace("\\<comma,separated,tags or empty>", tags or "")
+    content = content.replace("\\<comma,separated,keywords or empty>", keywords or "")
 
     out_path.write_text(content, encoding="utf-8")
 

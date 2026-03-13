@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-03-14
+
+### Fixed
+
+- `memory_update_weights` not returning warnings for unknown field keys (`warnings.warn` was invisible to MCP clients; now included in response as `{"weights": {...}, "warnings": [...]}`)
+- `memory_state_set` returning only file path instead of JSON summary with `set`/`before`/`after` counts (now consistent with `memory_state_add`)
+- Template placeholders (`\<comma,separated,keywords or empty>` etc.) remaining in notes when `context`, `tags`, or `keywords` are omitted
+
+### Improved
+
+- `memory_health_check` now returns `config_invalid_reason` field when `config_valid` is false
+- `memory_evidence` description now explicitly states that either `paths` or `task_id` must be provided
+- `memory_expire_stale` description now explicitly states the default (30) and minimum (1) for `stale_days`
+
 ## [0.4.1] - 2026-03-13
 
 ### Fixed

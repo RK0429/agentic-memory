@@ -568,9 +568,21 @@ def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
         return 2
 
     sections = load_state(state_path)
+    before_count = len(sections.get(section_name, []))
     sections[section_name] = enforce_cap(deduplicate(new_items), get_cap(section_name))
+    after_count = len(sections[section_name])
     save_state(state_path, sections)
-    print(str(state_path))
+    summary = json.dumps(
+        {
+            "path": str(state_path),
+            "section": section_name,
+            "set": len(new_items),
+            "before": before_count,
+            "after": after_count,
+        },
+        ensure_ascii=False,
+    )
+    print(summary)
     return 0
 
 

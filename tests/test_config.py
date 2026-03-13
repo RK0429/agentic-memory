@@ -90,10 +90,11 @@ def test_update_weights(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     config.init_memory_dir(memory_dir)
 
-    with pytest.warns(UserWarning, match="unknown weight key: missing"):
-        updated = config.update_weights(memory_dir, {"title": 9.5, "missing": 1.0})
+    updated = config.update_weights(memory_dir, {"title": 9.5, "missing": 1.0})
 
     loaded = json.loads((memory_dir / "_rag_config.json").read_text(encoding="utf-8"))
-    assert updated["title"] == 9.5
+    assert updated["weights"]["title"] == 9.5
     assert loaded["weights"]["title"] == 9.5
     assert "missing" not in loaded["weights"]
+    assert len(updated["warnings"]) == 1
+    assert "missing" in updated["warnings"][0]

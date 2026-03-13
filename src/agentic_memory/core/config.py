@@ -185,8 +185,14 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
     }
 
 
-def update_weights(memory_dir: Path, updates: dict[str, float]) -> dict[str, float]:
-    """Partially update weight settings and return the full weight mapping."""
+def update_weights(
+    memory_dir: Path, updates: dict[str, float]
+) -> dict[str, Any]:
+    """Partially update weight settings and return the full weight mapping.
+
+    Returns a dict with ``weights`` (the full mapping) and ``warnings``
+    (list of ignored unknown keys, if any).
+    """
     config_path = memory_dir / "_rag_config.json"
     config_payload = load_config(memory_dir)
 
@@ -197,11 +203,17 @@ def update_weights(memory_dir: Path, updates: dict[str, float]) -> dict[str, flo
         weights = copy.deepcopy(DEFAULT_WEIGHTS)
         config_payload["weights"] = weights
 
+    ignored: list[str] = []
     for key, value in updates.items():
         if key not in weights:
-            warnings.warn(f"Ignoring unknown weight key: {key}", stacklevel=2)
+            ignored.append(key)
             continue
         weights[key] = float(value)
 
     _write_json_atomic(config_path, config_payload)
-    return {key: float(value) for key, value in weights.items()}
+    result: dict[str, Any] = {
+        "weights": {key: float(value) for key, value in weights.items()},
+    }
+    if ignored:
+        result["warnings"] = [f"Ignoring unknown weight key: {k}" for k in ignored]
+    return result

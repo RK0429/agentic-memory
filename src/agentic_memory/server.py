@@ -534,6 +534,7 @@ def memory_evidence(
     `query` is used to filter relevant lines.
     `paths` is a list of note paths (absolute or relative), `max_lines` limits lines per section.
     If `paths` is omitted and `task_id` is provided, paths are auto-resolved from the index.
+    Either `paths` or `task_id` must be provided; omitting both raises an error.
     Returns markdown evidence text with provenance per note.
     """
     resolved = _resolve_dir(memory_dir)
@@ -661,7 +662,7 @@ def memory_expire_stale(
 ) -> str:
     """Detect and optionally archive stale state items.
 
-    Items in rolling state older than `stale_days` are listed.
+    Items in rolling state older than `stale_days` (default 30, minimum 1) are listed.
     The 'focus' section is always preserved (never expired).
     Set `archive` to true to move expired items to `_state_archive.md`.
     Without `archive`, this is a dry-run that only lists what would expire.
@@ -684,8 +685,8 @@ def memory_update_weights(
     """Dynamically adjust field weights for search scoring.
 
     `updates` is a dict of field names to new weight values (e.g. {"title": 8.0, "tags": 3.0}).
-    Only existing field names are updated; unknown keys are ignored with a warning.
-    Returns the complete updated weights dict.
+    Only existing field names are updated; unknown keys are ignored.
+    Returns `{"weights": {...}, "warnings": [...]}`. `warnings` is present only when unknown keys were given.
     """
     resolved = _resolve_dir(memory_dir)
     result = config.update_weights(resolved, updates=updates)

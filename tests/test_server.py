@@ -105,7 +105,11 @@ def test_memory_state_set(tmp_memory_dir: Path, monkeypatch) -> None:
 
     memory_state_add(section="focus", items=["Old"], memory_dir=str(memory_dir))
     result = memory_state_set(section="focus", items=["New"], memory_dir=str(memory_dir))
-    assert result.endswith("_state.md")
+    parsed = json.loads(result)
+    assert "_state.md" in parsed["path"]
+    assert parsed["set"] == 1
+    assert parsed["before"] == 1
+    assert parsed["after"] == 1
 
     output = memory_state_show(section="focus", memory_dir=str(memory_dir))
     assert "New" in output
