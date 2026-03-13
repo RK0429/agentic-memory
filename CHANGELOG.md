@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-14
+
+### Added
+
+- `no_cjk_expand` parameter for `memory_search_global` to suppress CJK n-gram expansion across cross-project searches
+
+### Fixed
+
+- `memory_search` / `memory_search_global` in compact mode (`compact=True` or `mode: quick`) now omit the verbose `expanded` field (full QueryTerm objects), keeping only the lightweight `expanded_terms` string list
+- `memory_evidence` now skips template placeholder lines (`-`, `- ## Files:`, `- ## Tests:`, etc.) instead of including them as noise in the evidence pack
+- `extract_errors` no longer captures common ALLCAPS abbreviations (`CHANGELOG`, `JSON`, `CSV`, `README`, etc.) as error identifiers; only genuine error tokens (`ECONNRESET`, `TimeoutException`, etc.) are extracted
+
 ## [0.5.0] - 2026-03-14
 
 ### Added

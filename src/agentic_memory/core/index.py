@@ -59,8 +59,97 @@ STOPWORDS = set(
     ]
 )
 CJK_CHUNK_RE = tokenizer.CJK_CHUNK_RE
-# Template placeholder tokens that are not error identifiers.
-_ERROR_EXCLUDE_TOKENS = {"SIGFB", "SKILL"}
+# Tokens that are not error identifiers.
+# Includes template placeholders, common tech abbreviations, and general acronyms
+# that match ERROR_PATTERNS[0] (ALLCAPS ≥ 4 chars) but are not error-like.
+_ERROR_EXCLUDE_TOKENS = {
+    # Template placeholders
+    "SIGFB",
+    "SKILL",
+    # Data formats / file types
+    "JSON",
+    "JSONL",
+    "YAML",
+    "TOML",
+    "HTML",
+    "UUID",
+    "UTF8",
+    "CSV",
+    "XML",
+    "PDF",
+    "PNG",
+    "JPEG",
+    "WEBP",
+    "AVIF",
+    # Tools / standards / protocols
+    "HTTP",
+    "HTTPS",
+    "SMTP",
+    "GRPC",
+    "REST",
+    "WASM",
+    "CORS",
+    "MQTT",
+    "AMQP",
+    # Common tech abbreviations
+    "CHANGELOG",
+    "README",
+    "LICENSE",
+    "VERSION",
+    "TODO",
+    "AGENTS",
+    "CLAUDE",
+    "MEMORY",
+    "INDEX",
+    # Programming / build
+    "PYPI",
+    "RUST",
+    "JAVA",
+    "GOTO",
+    "ENUM",
+    "IMPL",
+    "SELF",
+    "TRUE",
+    "FALSE",
+    "NULL",
+    "NONE",
+    "VOID",
+    # CI / DevOps
+    "CICD",
+    "DOCKER",
+    # Architecture / design
+    "SSOT",
+    "KISS",
+    "YAGNI",
+    "ACID",
+    "BASE",
+    "CQRS",
+    "CRUD",
+    # Semver / versioning
+    "MAJOR",
+    "MINOR",
+    "PATCH",
+    # Other common non-error ALLCAPS
+    "IMPORTANT",
+    "NOTE",
+    "INFO",
+    "WARN",
+    "DEBUG",
+    "TASK",
+    "GOAL",
+    "PLAN",
+    "TEST",
+    "ADDED",
+    "FIXED",
+    "CHANGED",
+    "REMOVED",
+    "DEPRECATED",
+    "MUST",
+    "SHOULD",
+    # MCP / agent related
+    "RELAY",
+    "SPAWN",
+}
 
 TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
 TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")

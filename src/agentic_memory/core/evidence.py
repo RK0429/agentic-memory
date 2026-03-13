@@ -82,15 +82,25 @@ def build_regex_from_query(query: str) -> re.Pattern:
     return re.compile("|".join(pats), re.IGNORECASE)
 
 
+# Template placeholder patterns that carry no meaningful content.
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"^-?\s*(?:##\s*(?:Files|Notes|Tests|Result):?\s*$|$)")
+
+
+def _is_empty_content(s: str) -> bool:
+    """Return True if *s* is a bare bullet or template placeholder."""
+    return s in ("-", "*") or bool(_TEMPLATE_PLACEHOLDER_RE.match(s))
+
+
 def filter_lines(lines: list[str], rx: re.Pattern, max_lines: int) -> list[str]:
     """
     Keep lines matching rx, plus a few leading bullets if nothing matches.
+    Skips template placeholder lines (bare bullets, ``## Files:``, etc.).
     """
     kept = []
     for ln in lines:
         if rx.search(ln):
             s = ln.strip()
-            if s:
+            if s and not _is_empty_content(s):
                 kept.append(s)
         if len(kept) >= max_lines:
             break
@@ -99,7 +109,7 @@ def filter_lines(lines: list[str], rx: re.Pattern, max_lines: int) -> list[str]:
     # fallback: keep first non-empty bullet-ish lines
     for ln in lines:
         s = ln.strip()
-        if not s:
+        if not s or _is_empty_content(s):
             continue
         if s.startswith("-") or s.startswith("*") or s.startswith("`") or s.startswith("Files:"):
             kept.append(s)

@@ -987,10 +987,9 @@ def search(
     if explain:
         results = _attach_explain_summaries(results)
 
-    return {
+    result_dict: dict = {
         "engine": used_engine,
         "query": query,
-        "expanded": expanded,
         "expanded_terms": [qt.term for qt in expanded],
         "feedback_source_note": str(feedback_note_path)
         if feedback_terms and feedback_note_path
@@ -1012,6 +1011,10 @@ def search(
             "relay_session_id": resolved_relay_session_id,
         },
     }
+    # Include full expanded QueryTerm objects only when not compact
+    if not compact:
+        result_dict["expanded"] = expanded
+    return result_dict
 
 
 def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **kwargs) -> dict:
@@ -1073,10 +1076,9 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
     if top_n is not None:
         combined_results = combined_results[:top_n]
 
-    return {
+    result_dict: dict = {
         "engine": "global",
         "query": query,
-        "expanded": _dedupe_query_terms(combined_expanded),
         "expanded_terms": _dedupe_keep_order(
             [qt.term for qt in combined_expanded if isinstance(qt.term, str) and qt.term]
         ),
@@ -1095,3 +1097,6 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
         "filters": filters,
         "source_engines": source_engines,
     }
+    if not compact:
+        result_dict["expanded"] = _dedupe_query_terms(combined_expanded)
+    return result_dict

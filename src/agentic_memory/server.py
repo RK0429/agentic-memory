@@ -634,6 +634,7 @@ def memory_search_global(
     explain: bool = False,
     prefer_recent: bool = False,
     compact: bool = False,
+    no_cjk_expand: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Search across multiple memory directories.
@@ -642,6 +643,7 @@ def memory_search_global(
     Results from all directories are merged, scored, and sorted.
     Each result includes a `source_dir` key identifying its origin.
     `compact` omits verbose index fields from results to reduce response size.
+    `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
     Accepts the same query syntax as `memory_search`.
     """
     dirs = [Path(d) for d in memory_dirs]
@@ -652,6 +654,7 @@ def memory_search_global(
         top=top,
         explain=explain,
         prefer_recent=prefer_recent,
+        no_cjk_expand=no_cjk_expand,
     )
     if compact:
         result = _strip_compact_fields(result)
