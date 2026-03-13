@@ -686,7 +686,8 @@ def memory_update_weights(
 
     `updates` is a dict of field names to new weight values (e.g. {"title": 8.0, "tags": 3.0}).
     Only existing field names are updated; unknown keys are ignored.
-    Returns `{"weights": {...}, "warnings": [...]}`. `warnings` is present only when unknown keys were given.
+    Returns ``{"weights": {...}, "warnings": [...]}``.
+    ``warnings`` is present only when unknown keys were given.
     """
     resolved = _resolve_dir(memory_dir)
     result = config.update_weights(resolved, updates=updates)

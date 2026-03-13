@@ -6,7 +6,6 @@ import copy
 import json
 import os
 import tempfile
-import warnings
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
