@@ -176,11 +176,7 @@ def test_index_note_overrides_identifier_fields(tmp_memory_dir: Path) -> None:
     note_dir.mkdir(parents=True, exist_ok=True)
     note_path = note_dir / "1100_override.md"
     note_path.write_text(
-        (
-            "# Override Note\n\n"
-            "- Date: 2026-01-11\n\n"
-            "## 目標\n- verify overrides\n"
-        ),
+        ("# Override Note\n\n- Date: 2026-01-11\n\n## 目標\n- verify overrides\n"),
         encoding="utf-8",
     )
 

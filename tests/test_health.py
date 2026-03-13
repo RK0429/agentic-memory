@@ -33,12 +33,7 @@ def test_health_check_detects_index_and_file_issues(
     stale_dir.mkdir(parents=True, exist_ok=True)
     stale_note = stale_dir / "0900_stale.md"
     stale_note.write_text(
-        (
-            "# Stale Session\n\n"
-            "- Date: 2026-01-02\n\n"
-            "## 目標\n\n"
-            "- Verify stale detection\n"
-        ),
+        ("# Stale Session\n\n- Date: 2026-01-02\n\n## 目標\n\n- Verify stale detection\n"),
         encoding="utf-8",
     )
     index.rebuild_index(

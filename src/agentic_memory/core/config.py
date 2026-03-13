@@ -68,20 +68,8 @@ DEFAULT_DENSE_CONFIG = {
 }
 
 FALLBACK_NOTE_TEMPLATES = {
-    "ja": (
-        "# <short title>\n"
-        "- Date: <YYYY-MM-DD>\n"
-        "- Time: <HH:MM> - <HH:MM>\n\n"
-        "## 目標\n"
-        "- \n"
-    ),
-    "en": (
-        "# <short title>\n"
-        "- Date: <YYYY-MM-DD>\n"
-        "- Time: <HH:MM> - <HH:MM>\n\n"
-        "## Goals\n"
-        "- \n"
-    ),
+    "ja": ("# <short title>\n- Date: <YYYY-MM-DD>\n- Time: <HH:MM> - <HH:MM>\n\n## 目標\n- \n"),
+    "en": ("# <short title>\n- Date: <YYYY-MM-DD>\n- Time: <HH:MM> - <HH:MM>\n\n## Goals\n- \n"),
 }
 
 

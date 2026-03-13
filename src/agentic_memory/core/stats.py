@@ -96,8 +96,7 @@ def get_stats(memory_dir: Path) -> dict[str, Any]:
     index_path = memory_dir / "_index.jsonl"
     state_path = memory_dir / "_state.md"
     state_items = {
-        section_name: len(items)
-        for section_name, items in state.load_state(state_path).items()
+        section_name: len(items) for section_name, items in state.load_state(state_path).items()
     }
     index_entries = _load_index_entries(index_path)
 

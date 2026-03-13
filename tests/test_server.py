@@ -264,5 +264,3 @@ def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert payload["restored_task_count"] >= 1
     assert payload["active_tasks"][0]["task_id"] == "TASK-301"
-
-

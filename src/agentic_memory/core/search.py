@@ -919,12 +919,7 @@ def search(
     else:
         results = _search_with_engine(used_engine, expanded, dn_dir, top_n, explain, has_rg)
 
-    if (
-        engine == "auto"
-        and used_engine == "index"
-        and not results
-        and not has_metadata_filters
-    ):
+    if engine == "auto" and used_engine == "index" and not results and not has_metadata_filters:
         fallback_engine = "rg" if has_rg else "python"
         warnings.append(f"Index returned 0 results. Retrying with {fallback_engine} engine.")
         used_engine = fallback_engine

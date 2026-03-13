@@ -591,8 +591,7 @@ def cmd_add(
     existing = sections.get(section_name, [])
     if replace:
         existing = [
-            item for item in existing
-            if not any(p.lower() in item.text.lower() for p in replace)
+            item for item in existing if not any(p.lower() in item.text.lower() for p in replace)
         ]
     merged = deduplicate(new_items + existing)
     sections[section_name] = enforce_cap(merged, get_cap(section_name))

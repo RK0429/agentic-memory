@@ -111,9 +111,10 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
             orphan_entries.append(path_text)
             continue
 
-        if indexed_at is None or (
-            note_mtime - indexed_at.timestamp()
-        ) > _INDEXED_AT_TOLERANCE_SECONDS:
+        if (
+            indexed_at is None
+            or (note_mtime - indexed_at.timestamp()) > _INDEXED_AT_TOLERANCE_SECONDS
+        ):
             stale_entries.append(path_text)
 
     unindexed_notes = [
