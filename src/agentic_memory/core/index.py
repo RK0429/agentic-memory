@@ -500,7 +500,7 @@ def _index_lock_path(index_path: Path) -> Path:
 def _acquire_index_lock(index_path: Path, timeout_seconds: float = 5.0) -> TextIO:
     lock_path = _index_lock_path(index_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = open(lock_path, "w", encoding="utf-8")
+    lock_file = lock_path.open("w", encoding="utf-8")  # noqa: SIM115
     deadline = time.monotonic() + timeout_seconds
     while True:
         try:

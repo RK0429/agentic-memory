@@ -176,7 +176,9 @@ def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeyp
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    note_path = Path(memory_note_new(title="Evidence by Task", task_id="TASK-401", memory_dir=str(memory_dir)))
+    note_path = Path(
+        memory_note_new(title="Evidence by Task", task_id="TASK-401", memory_dir=str(memory_dir))
+    )
     output = memory_evidence(query="Evidence", task_id="TASK-401", memory_dir=str(memory_dir))
     assert "# DailyNote Evidence Pack" in output
     assert note_path.name in output
@@ -186,7 +188,9 @@ def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkey
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    _ = Path(memory_note_new(title="Ignored Task Note", task_id="TASK-501", memory_dir=str(memory_dir)))
+    _ = Path(
+        memory_note_new(title="Ignored Task Note", task_id="TASK-501", memory_dir=str(memory_dir))
+    )
     explicit_path = _write_note(memory_dir, name="explicit-evidence.md")
     output = memory_evidence(
         query="validate",
