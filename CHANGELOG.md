@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-13
+
+### Added
+
+- `compact` parameter for `memory_search` and `memory_search_global` to reduce response size by excluding verbose index fields (auto_keywords, work_log_keywords, plan_keywords, errors, skills, commands, test_names, skill_feedback)
+- `mode` parameter for `memory_search` with presets: `quick` (compact + no explain), `detailed` (default), `debug` (explain + all fields)
+- JSON summary return from `memory_state_add` and `memory_state_from_note` including added/removed counts and section details
+- `max_cjk_terms` cap for CJK n-gram tokenization to prevent excessive expansion
+
+### Fixed
+
+- English template section name "Skill Feedback" not recognized by section parser, causing `sigfb_status` to report `"missing"` for English notes
+- Template placeholder tokens (`SIGFB`, `SKILL`) incorrectly extracted as error strings from `- SIGFB: none` / `- SKILL: none` lines
+- Japanese-only note titles producing empty slugs; now falls back to short SHA1 hash
+- `expire_stale` accepting `stale_days=0` which would expire all items; now validates minimum of 1
+
+### Changed
+
+- Evidence pack now detects note language and uses matching section display names (English sections for English notes, Japanese for Japanese)
+
 ## [0.3.0] - 2026-03-13
 
 ### Added
