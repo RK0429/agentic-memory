@@ -184,9 +184,7 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
     }
 
 
-def update_weights(
-    memory_dir: Path, updates: dict[str, float]
-) -> dict[str, Any]:
+def update_weights(memory_dir: Path, updates: dict[str, float]) -> dict[str, Any]:
     """Partially update weight settings and return the full weight mapping.
 
     Returns a dict with ``weights`` (the full mapping) and ``warnings``
