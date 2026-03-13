@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
 import re
 from pathlib import Path
 
@@ -14,19 +13,40 @@ def now_local() -> _dt.datetime:
     return _dt.datetime.now()
 
 
-def slugify(s: str) -> str:
+def slugify(s: str, max_length: int = 50) -> str:
+    """Create a filesystem-safe slug from a title string.
+
+    CJK characters are preserved as-is for human readability.
+    ASCII characters are lowercased and non-alphanumeric chars
+    are replaced with hyphens (standard slug behavior).
+    """
     original = s.strip()
-    s = original.lower()
-    s = re.sub(r"[^a-z0-9\s\-_.]+", "", s)
-    s = s.replace("_", "-").replace(".", "-")
-    s = re.sub(r"\s+", "-", s)
+    if not original:
+        return "session"
+
+    # Remove filesystem-unsafe characters
+    s = re.sub(r'[/\\:*?"<>|\x00\r\n]+', "", original)
+
+    # Per-character processing: lowercase ASCII, keep CJK
+    result: list[str] = []
+    for ch in s:
+        if ch.isascii():
+            lower = ch.lower()
+            if lower.isalnum():
+                result.append(lower)
+            elif lower in " \t_.-":
+                result.append("-")
+            # other ASCII punctuation is dropped
+        else:
+            result.append(ch)
+
+    s = "".join(result)
     s = re.sub(r"-{2,}", "-", s).strip("-")
-    if s:
-        return s
-    # Fallback for non-ASCII titles (e.g., Japanese): use short hash
-    if original and not original.isascii():
-        return hashlib.sha1(original.encode("utf-8")).hexdigest()[:8]
-    return "session"
+
+    if len(s) > max_length:
+        s = s[:max_length].rstrip("-")
+
+    return s or "session"
 
 
 def read_template(lang: str = "ja") -> str:

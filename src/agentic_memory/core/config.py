@@ -146,12 +146,24 @@ def load_config(memory_dir: Path) -> dict[str, Any]:
 
 
 def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, str]:
-    """Initialize memory directory structure and return status metadata."""
+    """Initialize memory directory structure and return status metadata.
+
+    Status levels:
+      - ``created``: directory did not exist; created with all files.
+      - ``initialized``: directory existed but one or more files were missing and created.
+      - ``already_exists``: directory and all files already existed.
+    """
     state_path = memory_dir / "_state.md"
     index_path = memory_dir / "_index.jsonl"
     config_path = memory_dir / "_rag_config.json"
 
-    existed = memory_dir.exists()
+    dir_existed = memory_dir.exists()
+    files_existed_before = (
+        (state_path.exists() and index_path.exists() and config_path.exists())
+        if dir_existed
+        else False
+    )
+
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     if state_path.exists():
@@ -174,8 +186,15 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
     if enable_dense or not config_path.exists():
         _write_json_atomic(config_path, config_payload)
 
+    if not dir_existed:
+        status = "created"
+    elif not files_existed_before:
+        status = "initialized"
+    else:
+        status = "already_exists"
+
     return {
-        "status": "already_exists" if existed else "created",
+        "status": status,
         "memory_dir": str(memory_dir),
         "state_path": str(state_path),
         "state_content": template_content,

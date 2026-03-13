@@ -73,6 +73,39 @@ class QueryParseError(ValueError):
     """Raised when a query cannot be parsed."""
 
 
+# Canonical field names accepted in field:term syntax.
+_FIELD_NAMES = {
+    "task_id",
+    "agent_id",
+    "relay_session_id",
+    "title",
+    "tags",
+    "keywords",
+    "auto_keywords",
+    "context",
+    "files",
+    "errors",
+    "skills",
+    "decisions",
+    "next",
+    "pitfalls",
+    "commands",
+    "summary",
+}
+
+# Singular → plural aliases for convenience (e.g., tag:foo → tags:foo).
+_FIELD_ALIASES: dict[str, str] = {
+    "tag": "tags",
+    "keyword": "keywords",
+    "file": "files",
+    "error": "errors",
+    "skill": "skills",
+    "decision": "decisions",
+    "pitfall": "pitfalls",
+    "command": "commands",
+}
+
+
 def parse_query(query: str) -> list[QueryTerm]:
     """
     Supports:
@@ -80,6 +113,7 @@ def parse_query(query: str) -> list[QueryTerm]:
       - +term (must)
       - -term (exclude)
       - field:term (restrict to a field; e.g., title:auth, files:login.ts)
+        Singular aliases are accepted: tag:foo → tags:foo
     """
     try:
         tokens = shlex.split(query)
@@ -114,25 +148,10 @@ def parse_query(query: str) -> list[QueryTerm]:
                         )
                     )
                     continue
-            elif maybe_field in {
-                "task_id",
-                "agent_id",
-                "relay_session_id",
-                "title",
-                "tags",
-                "keywords",
-                "auto_keywords",
-                "context",
-                "files",
-                "errors",
-                "skills",
-                "decisions",
-                "next",
-                "pitfalls",
-                "commands",
-                "summary",
-            }:
-                field, t = maybe_field, rest
+            else:
+                resolved = _FIELD_ALIASES.get(maybe_field, maybe_field)
+                if resolved in _FIELD_NAMES:
+                    field, t = resolved, rest
 
         is_phrase = (" " in tok) or (" " in t)
         out.append(
@@ -141,10 +160,18 @@ def parse_query(query: str) -> list[QueryTerm]:
     return out
 
 
-def expand_terms(terms: list[QueryTerm], config: dict, enable: bool) -> list[QueryTerm]:
+def expand_terms(
+    terms: list[QueryTerm],
+    config: dict,
+    enable: bool,
+    no_cjk_expand: bool = False,
+) -> list[QueryTerm]:
     """
     Optional helper: expands terms with simple heuristics + synonym map (config).
     This does NOT replace agent judgment; it's an optional assist.
+
+    When ``no_cjk_expand`` is True, CJK n-gram expansion is suppressed to reduce
+    context window consumption. Only ASCII-based tokenization is applied.
     """
     if not enable:
         return terms
@@ -176,6 +203,8 @@ def expand_terms(terms: list[QueryTerm], config: dict, enable: bool) -> list[Que
             variants.add(base.split("\\")[-1])
 
         for tk in _tokenize_for_match(base, max_cjk_terms=20):
+            if no_cjk_expand and not tk.isascii():
+                continue
             variants.add(tk)
             variants.add(tk.lower())
 

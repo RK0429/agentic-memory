@@ -1145,18 +1145,19 @@ def auto_restore(
     agent_sections: dict[str, list[StateItem]] | None = None
     resolved_agent_state_path: Path | None = None
 
+    if include_agent_state and agent_id is None:
+        include_agent_state = False
+
     if include_agent_state:
-        if agent_id is None:
-            warnings.append("include_agent_state=true requires agent_id.")
-        else:
-            resolved_agent_state_path = resolve_agent_state_path(
-                memory_dir,
-                agent_id,
-                relay_session_id,
-                for_write=False,
-            )
-            ensure_state_file(resolved_agent_state_path)
-            agent_sections = load_state(resolved_agent_state_path)
+        assert agent_id is not None  # guaranteed by the guard above
+        resolved_agent_state_path = resolve_agent_state_path(
+            memory_dir,
+            agent_id,
+            relay_session_id,
+            for_write=False,
+        )
+        ensure_state_file(resolved_agent_state_path)
+        agent_sections = load_state(resolved_agent_state_path)
 
     if max_total_lines < 0:
         warnings.append("max_total_lines must be >= 0; using 0.")

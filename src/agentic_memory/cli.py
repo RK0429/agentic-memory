@@ -142,6 +142,8 @@ def cmd_init(ctx: click.Context) -> None:
 
     if status == "already_exists":
         click.echo(f"Already exists: {result.get('memory_dir', str(app.memory_dir))}")
+    elif status == "initialized":
+        click.echo(f"Initialized: {result.get('memory_dir', str(app.memory_dir))}")
     else:
         click.echo(str(app.memory_dir))
 

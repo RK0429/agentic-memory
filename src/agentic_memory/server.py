@@ -432,6 +432,7 @@ def memory_search(
     no_expand: bool = False,
     no_feedback_expand: bool = False,
     no_fuzzy: bool = False,
+    no_cjk_expand: bool = False,
     sync_stale_index: bool = False,
     rerank: bool = False,
     no_rerank: bool = False,
@@ -444,10 +445,12 @@ def memory_search(
 ) -> str:
     """Search session notes by query.
 
-    Supports quoted phrases, +must, -exclude, field:term, and date-range filters.
+    Supports quoted phrases, +must, -exclude, field:term (with aliases like tag:),
+    and date-range filters.
     `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
     `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
     from results to reduce response size.
+    `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
     `mode` preset: `quick` (compact, no explain), `detailed` (default),
     `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
@@ -477,6 +480,7 @@ def memory_search(
         no_expand=no_expand,
         no_feedback_expand=no_feedback_expand,
         no_fuzzy=no_fuzzy,
+        no_cjk_expand=no_cjk_expand,
         sync_stale_index=sync_stale_index,
         use_rerank=rerank,
         no_use_rerank=no_rerank,

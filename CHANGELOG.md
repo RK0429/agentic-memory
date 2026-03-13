@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-14
+
+### Added
+
+- `no_cjk_expand` parameter for `memory_search` to suppress CJK n-gram expansion and reduce context window consumption
+- Field alias support in `field:term` query syntax — singular forms (`tag:`, `keyword:`, `file:`, `error:`, `skill:`, `decision:`, `pitfall:`, `command:`) are automatically resolved to their plural canonical names
+
+### Fixed
+
+- CJK characters in note titles now preserved in filenames instead of falling back to SHA1 hash (e.g., `0751_動作テスト用ノート.md` instead of `0751_53f9eb68.md`)
+- `rg`/`python` fallback search engine now enriches results with metadata from the index when available, instead of returning empty title/date/tags fields
+- `memory_init` now returns 3-level status: `created` (new directory), `initialized` (existing directory with missing files), `already_exists` (all files present)
+- `memory_auto_restore` no longer emits a warning when `include_agent_state=True` but `agent_id` is not provided; agent state is silently skipped
+
 ## [0.4.2] - 2026-03-14
 
 ### Fixed

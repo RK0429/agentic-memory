@@ -418,14 +418,38 @@ def extract_snippets(path: Path, query_terms: list[QueryTerm], top_snippets: int
 
 # ---------- Fallback adaptation ----------
 def _ranked_to_results(
-    ranked: list[tuple[str, int]], top: int, explain: bool
+    ranked: list[tuple[str, int]],
+    top: int,
+    explain: bool,
+    index_map: dict[str, IndexEntry] | None = None,
 ) -> list[tuple[float, IndexEntry, dict]]:
     out: list[tuple[float, IndexEntry, dict]] = []
     for p, hitcount in ranked[:top]:
-        e = IndexEntry(path=p, title="", date="", time="")
+        entry: IndexEntry | None = None
+        if index_map is not None:
+            # Try exact match, then relative suffix match for path normalization
+            entry = index_map.get(p)
+            if entry is None:
+                for idx_path, idx_entry in index_map.items():
+                    if p.endswith(idx_path) or idx_path.endswith(p):
+                        entry = idx_entry
+                        break
+        if entry is None:
+            entry = IndexEntry(path=p, title="", date="", time="")
         detail = {"hitcount": hitcount} if explain else {}
-        out.append((float(hitcount), e, detail))
+        out.append((float(hitcount), entry, detail))
     return out
+
+
+def _load_index_map(memory_dir: Path) -> dict[str, IndexEntry] | None:
+    """Load index as a path → IndexEntry map for metadata enrichment."""
+    index_path = memory_dir / "_index.jsonl"
+    if not index_path.exists():
+        return None
+    entries = load_index(index_path)
+    if not entries:
+        return None
+    return {e.path: e for e in entries}
 
 
 def _search_with_engine(
@@ -436,9 +460,11 @@ def _search_with_engine(
     explain: bool,
     has_rg: bool,
 ) -> list[tuple[float, IndexEntry, dict]]:
+    index_map = _load_index_map(memory_dir)
+
     if engine == "rg":
         ranked = fallback_search_files(query_terms, memory_dir)
-        return _ranked_to_results(ranked, top, explain)
+        return _ranked_to_results(ranked, top, explain, index_map=index_map)
 
     if engine != "python":
         return []
@@ -447,7 +473,7 @@ def _search_with_engine(
         ranked = fallback_search_files(query_terms, memory_dir)
     else:
         ranked = search_python(query_terms, memory_dir)
-    return _ranked_to_results(ranked, top, explain)
+    return _ranked_to_results(ranked, top, explain, index_map=index_map)
 
 
 # ---------- Index staleness ----------
@@ -603,6 +629,7 @@ def search(
     no_expand: bool = False,
     no_feedback_expand: bool = False,
     no_fuzzy: bool = False,
+    no_cjk_expand: bool = False,
     sync_stale_index: bool = False,
     use_rerank: bool = False,
     no_use_rerank: bool = False,
@@ -690,7 +717,7 @@ def search(
     # Query expansion
     expand_enabled_default = bool(_get_nested(config, ["query_expansion", "enabled_default"], True))
     expand_enabled = expand_enabled_default and (not no_expand)
-    expanded = expand_terms(qterms, config, enable=expand_enabled)
+    expanded = expand_terms(qterms, config, enable=expand_enabled, no_cjk_expand=no_cjk_expand)
 
     if not no_fuzzy:
         vocab = _load_vocab(dn_dir)

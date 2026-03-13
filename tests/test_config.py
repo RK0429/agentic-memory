@@ -57,15 +57,26 @@ def test_init_dense_config(tmp_path: Path) -> None:
     }
 
 
-def test_init_memory_dir_already_exists(tmp_path: Path) -> None:
+def test_init_memory_dir_partially_existing(tmp_path: Path) -> None:
+    """Directory exists with some files → status should be 'initialized'."""
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     (memory_dir / "_state.md").write_text("existing-state", encoding="utf-8")
 
     result = config.init_memory_dir(memory_dir)
 
-    assert result["status"] == "already_exists"
+    assert result["status"] == "initialized"
     assert result["state_content"] == "existing-state"
+
+
+def test_init_memory_dir_already_exists(tmp_path: Path) -> None:
+    """All files already exist → status should be 'already_exists'."""
+    memory_dir = tmp_path / "memory"
+    config.init_memory_dir(memory_dir)  # creates everything
+
+    result = config.init_memory_dir(memory_dir)
+
+    assert result["status"] == "already_exists"
 
 
 def test_load_template() -> None:

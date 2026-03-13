@@ -195,18 +195,17 @@ def test_cmd_from_note_returns_json_summary(tmp_memory_dir: Path) -> None:
     assert isinstance(result["section_counts"], dict)
 
 
-# ---------- M1: Japanese slug hash fallback ----------
+# ---------- M1: Japanese slug — CJK characters preserved ----------
 
 
 def test_slugify_japanese_title() -> None:
     slug = note.slugify("日本語テスト")
-    assert len(slug) == 8  # SHA1 hex[:8]
-    assert slug.isalnum()
+    assert slug == "日本語テスト"
 
 
 def test_slugify_mixed_title() -> None:
     slug = note.slugify("日本語 test")
-    assert slug == "test"
+    assert slug == "日本語-test"
 
 
 def test_slugify_ascii_special_chars_still_session() -> None:
@@ -218,6 +217,16 @@ def test_slugify_same_japanese_title_is_deterministic() -> None:
     slug1 = note.slugify("同じタイトル")
     slug2 = note.slugify("同じタイトル")
     assert slug1 == slug2
+
+
+def test_slugify_ascii_unchanged() -> None:
+    assert note.slugify("Hello World") == "hello-world"
+
+
+def test_slugify_truncation() -> None:
+    long_title = "あ" * 60
+    slug = note.slugify(long_title)
+    assert len(slug) <= 50
 
 
 # ---------- M2: Evidence language-aware section names ----------
@@ -272,6 +281,40 @@ def test_evidence_pack_japanese_sections(tmp_path: Path) -> None:
     assert "### 成果" in pack
 
 
+# ---------- Improvement: rg fallback metadata enrichment ----------
+
+
+def test_rg_fallback_enriches_metadata_from_index(tmp_memory_dir: Path) -> None:
+    """When rg/python fallback is used, results should have metadata from the index."""
+    note_dir = tmp_memory_dir / "2026-03-14"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_rg-test.md"
+    note_path.write_text(
+        "# RG Fallback Test\n\n"
+        "- Date: 2026-03-14\n"
+        "- Tags: rg_test, fallback\n\n"
+        "## 目標\n\n- Test rg fallback metadata enrichment\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+
+    result = search(
+        query="fallback",
+        memory_dir=tmp_memory_dir,
+        engine="python",
+    )
+
+    assert len(result["results"]) >= 1
+    _, entry, _ = result["results"][0]
+    # Metadata should be populated from index, not empty
+    assert entry.title == "RG Fallback Test"
+    assert entry.date == "2026-03-14"
+
+
 # ---------- L1: n-gram expansion cap ----------
 
 
@@ -293,6 +336,66 @@ def test_expand_terms_limits_cjk_expansion() -> None:
     # Should not generate more than ~20 CJK terms per original term
     cjk_terms = [qt for qt in expanded if qt.term and not qt.term.isascii()]
     assert len(cjk_terms) <= 40  # reasonable cap for a 2-token query
+
+
+# ---------- Improvement: memory_init 3-level status ----------
+
+
+def test_init_status_created(tmp_path: Path) -> None:
+    """New directory should return status 'created'."""
+    from agentic_memory.core.config import init_memory_dir
+
+    new_dir = tmp_path / "brand_new"
+    result = init_memory_dir(new_dir)
+    assert result["status"] == "created"
+
+
+def test_init_status_initialized(tmp_path: Path) -> None:
+    """Existing directory with missing files should return status 'initialized'."""
+    from agentic_memory.core.config import init_memory_dir
+
+    existing_dir = tmp_path / "partial"
+    existing_dir.mkdir(parents=True)
+    result = init_memory_dir(existing_dir)
+    assert result["status"] == "initialized"
+
+
+def test_init_status_already_exists(tmp_path: Path) -> None:
+    """Existing directory with all files should return status 'already_exists'."""
+    from agentic_memory.core.config import init_memory_dir
+
+    full_dir = tmp_path / "complete"
+    init_memory_dir(full_dir)  # first call creates everything
+    result = init_memory_dir(full_dir)  # second call
+    assert result["status"] == "already_exists"
+
+
+# ---------- Improvement: auto_restore agent_id auto-skip ----------
+
+
+def test_auto_restore_no_agent_id_no_warning(tmp_memory_dir: Path) -> None:
+    """auto_restore with no agent_id should skip agent_state without warning."""
+    result = state.auto_restore(
+        memory_dir=tmp_memory_dir,
+        agent_id=None,
+        include_agent_state=True,  # explicitly True, but should auto-skip
+    )
+    assert result["agent_state"] is None
+    # Should NOT contain the old warning about agent_id being required
+    for w in result.get("warnings", []):
+        assert "agent_id" not in w.lower()
+
+
+def test_auto_restore_with_agent_id_includes_state(tmp_memory_dir: Path) -> None:
+    """auto_restore with agent_id should include agent_state."""
+    result = state.auto_restore(
+        memory_dir=tmp_memory_dir,
+        agent_id="test-agent",
+        include_agent_state=True,
+    )
+    assert result["agent_id"] == "test-agent"
+    # agent_state should be populated (even if empty sections)
+    assert result["agent_state"] is not None
 
 
 # ---------- L3: expire_stale stale_days=0 validation ----------
