@@ -240,7 +240,7 @@ def _validate_config(config: dict) -> tuple[dict, list[str]]:
         warnings.append("config.weights must be an object; default weights are used.")
     else:
         for k, v in raw_weights.items():
-            if isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool):
+            if isinstance(k, str) and isinstance(v, int | float) and not isinstance(v, bool):
                 merged_weights[k] = float(v)
             else:
                 warnings.append(f"config.weights[{k!r}] must be a number; entry is ignored.")
@@ -276,7 +276,7 @@ def _validate_config(config: dict) -> tuple[dict, list[str]]:
         hybrid_cfg["rrf_k"] = DEFAULT_HYBRID_RRF_K
 
     dense_weight = _get_nested(config, ["hybrid", "dense_weight"], DEFAULT_HYBRID_DENSE_WEIGHT)
-    if isinstance(dense_weight, (int, float)) and not isinstance(dense_weight, bool):
+    if isinstance(dense_weight, int | float) and not isinstance(dense_weight, bool):
         hybrid_cfg["dense_weight"] = float(dense_weight)
     else:
         warnings.append("config.hybrid.dense_weight must be a float; default 1.0 is used.")
@@ -516,7 +516,7 @@ def human_readable_explain(explain_data: dict) -> str:
     field_scores: list[tuple[str, float]] = []
     if isinstance(field_scores_raw, dict):
         for field, score in field_scores_raw.items():
-            if isinstance(score, (int, float)) and not isinstance(score, bool) and score > 0:
+            if isinstance(score, int | float) and not isinstance(score, bool) and score > 0:
                 field_scores.append((str(field), float(score)))
 
     field_scores.sort(key=lambda item: (-item[1], item[0]))
@@ -526,18 +526,18 @@ def human_readable_explain(explain_data: dict) -> str:
     recency_add = 0.0
     if isinstance(recency_raw, dict):
         add = recency_raw.get("add")
-        if isinstance(add, (int, float)) and not isinstance(add, bool) and add > 0:
+        if isinstance(add, int | float) and not isinstance(add, bool) and add > 0:
             recency_add = float(add)
             parts.append(f"鮮度補正: +{_format_score(recency_add)}")
 
     hitcount = explain_data.get("hitcount")
-    if not parts and isinstance(hitcount, (int, float)) and not isinstance(hitcount, bool):
+    if not parts and isinstance(hitcount, int | float) and not isinstance(hitcount, bool):
         hitcount_f = float(hitcount)
         parts.append(f"ヒット数: +{_format_score(hitcount_f)}")
         total = hitcount_f
     else:
         total_raw = explain_data.get("total")
-        if isinstance(total_raw, (int, float)) and not isinstance(total_raw, bool):
+        if isinstance(total_raw, int | float) and not isinstance(total_raw, bool):
             total = float(total_raw)
         else:
             total = sum(score for _, score in field_scores) + recency_add
@@ -624,7 +624,7 @@ def search(
         **{
             k: float(v)
             for k, v in weights.items()
-            if isinstance(v, (int, float)) and not isinstance(v, bool)
+            if isinstance(v, int | float) and not isinstance(v, bool)
         },
     }
 
