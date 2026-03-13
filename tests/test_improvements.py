@@ -276,9 +276,11 @@ def test_evidence_pack_japanese_sections(tmp_path: Path) -> None:
 
 
 def test_tokenize_max_cjk_terms_respected() -> None:
+    """max_cjk_terms caps n-gram expansion (ngram backend only)."""
     long_text = "日本語のテストで非常に長いテキストを生成する"
-    tokens_default = tokenizer.tokenize(long_text, max_cjk_terms=120)
-    tokens_capped = tokenizer.tokenize(long_text, max_cjk_terms=5)
+    ngram_cfg = {"tokenizer": {"backend": "ngram"}}
+    tokens_default = tokenizer.tokenize(long_text, config=ngram_cfg, max_cjk_terms=120)
+    tokens_capped = tokenizer.tokenize(long_text, config=ngram_cfg, max_cjk_terms=5)
     cjk_capped = [t for t in tokens_capped if not t.isascii()]
     assert len(cjk_capped) <= 5
     assert len(tokens_capped) <= len(tokens_default)
