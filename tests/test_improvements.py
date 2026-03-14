@@ -114,12 +114,15 @@ def test_compact_exclude_fields_defined() -> None:
 
 
 def test_search_mode_quick_sets_compact(tmp_memory_dir: Path) -> None:
-    """mode='quick' should enable compact and disable explain."""
+    """mode='quick' should enable compact — settings echo-back fields are stripped."""
     from agentic_memory.server import memory_search
 
     raw = memory_search(query="test", mode="quick", memory_dir=str(tmp_memory_dir))
     payload = json.loads(raw)
-    assert payload.get("compact") is True
+    # Settings echo-back fields should be stripped in compact mode
+    assert "compact" not in payload
+    assert "expand_enabled" not in payload
+    assert "rerank_enabled" not in payload
 
 
 def test_search_mode_debug_sets_explain(tmp_memory_dir: Path) -> None:
@@ -535,12 +538,13 @@ def test_feedback_terms_skip_embedded_filenames_in_phrases(tmp_path: Path) -> No
 
 
 def test_search_mode_quick_disables_feedback_expand(tmp_memory_dir: Path) -> None:
-    """mode='quick' should disable feedback expansion."""
+    """mode='quick' strips feedback_expand from output (settings echo-back removed)."""
     from agentic_memory.server import memory_search
 
     raw = memory_search(query="test", mode="quick", memory_dir=str(tmp_memory_dir))
     payload = json.loads(raw)
-    assert payload.get("feedback_expand") is False
+    # feedback_expand is stripped in compact mode along with other settings
+    assert "feedback_expand" not in payload
 
 
 def test_search_mode_quick_strips_empty_metadata(tmp_memory_dir: Path) -> None:
@@ -561,13 +565,15 @@ def test_search_mode_quick_strips_empty_metadata(tmp_memory_dir: Path) -> None:
 
 
 def test_search_global_mode_quick(tmp_memory_dir: Path) -> None:
-    """memory_search_global with mode='quick' should set compact and disable feedback."""
+    """memory_search_global with mode='quick' strips settings echo-back fields."""
     from agentic_memory.server import memory_search_global
 
     raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="quick")
     payload = json.loads(raw)
-    assert payload.get("compact") is True
-    assert payload.get("feedback_expand") is False
+    # Settings echo-back fields should be stripped in compact mode
+    assert "compact" not in payload
+    assert "feedback_expand" not in payload
+    assert "expand_enabled" not in payload
 
 
 def test_search_global_mode_debug(tmp_memory_dir: Path) -> None:

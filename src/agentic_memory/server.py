@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from agentic_memory.core import (
     cleanup,
@@ -37,6 +38,12 @@ try:
 except TypeError:
     # Backward compatibility for mcp versions where FastMCP(description=...) is unavailable.
     mcp = FastMCP("memory")
+
+# MCP tool annotations
+_READONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
+_ADDITIVE = ToolAnnotations(destructiveHint=False, openWorldHint=False)
+_IDEMPOTENT = ToolAnnotations(destructiveHint=False, idempotentHint=True, openWorldHint=False)
+_DESTRUCTIVE = ToolAnnotations(destructiveHint=True, openWorldHint=False)
 
 
 def _resolve_dir(explicit: str | None = None) -> Path:
@@ -126,24 +133,30 @@ def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
 
 
 def _strip_compact_fields(result: dict) -> dict:
-    """Remove verbose index fields from search results for compact mode."""
+    """Remove verbose index fields and settings echo-back from compact mode results."""
     exclude = search.COMPACT_EXCLUDE_FIELDS
     stripped_results = []
     for item in result.get("results", []):
-        if isinstance(item, tuple) and len(item) >= 2:
+        if isinstance(item, tuple | list) and len(item) >= 2:
             score, entry, *rest = item
             if dataclasses.is_dataclass(entry) and not isinstance(entry, type):
                 entry_dict = dataclasses.asdict(entry)
                 entry_dict = {k: v for k, v in entry_dict.items() if k not in exclude}
-                detail = rest[0] if rest else {}
-                stripped_results.append((score, entry_dict, detail))
+            elif isinstance(entry, dict):
+                entry_dict = {k: v for k, v in entry.items() if k not in exclude}
             else:
                 stripped_results.append(item)
+                continue
+            detail = rest[0] if rest else {}
+            if detail:
+                stripped_results.append((score, entry_dict, detail))
+            else:
+                stripped_results.append((score, entry_dict))
         else:
             stripped_results.append(item)
     result = dict(result)
     result["results"] = stripped_results
-    # Strip empty/null metadata fields to reduce context consumption
+    # Strip empty/null metadata fields
     for key in ("feedback_source_note", "feedback_terms_used", "suggestions"):
         val = result.get(key)
         if val is None or val == []:
@@ -151,6 +164,17 @@ def _strip_compact_fields(result: dict) -> dict:
     filters = result.get("filters")
     if isinstance(filters, dict) and all(v is None for v in filters.values()):
         result.pop("filters", None)
+    # Strip settings echo-back fields
+    for key in (
+        "expand_enabled",
+        "feedback_expand",
+        "top",
+        "snippets",
+        "rerank_enabled",
+        "rerank_auto_enabled",
+        "compact",
+    ):
+        result.pop(key, None)
     return result
 
 
@@ -212,7 +236,7 @@ def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
     return resolved_paths
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def memory_init(
     memory_dir: str | None = None,
     enable_dense: bool = False,
@@ -220,7 +244,9 @@ def memory_init(
     """Initialize memory directory files.
 
     Creates `_state.md`, `_index.jsonl`, and `_rag_config.json` when missing.
-    Set `enable_dense` to true to configure dense (semantic) retrieval in `_rag_config.json`.
+    Use this before any other memory tool when starting with a new memory directory.
+    Already-initialized directories are left unchanged (idempotent).
+    `enable_dense` configures dense (semantic) retrieval in `_rag_config.json`.
     `memory_dir` selects the target root directory.
     Returns initialization status and generated paths as JSON.
     """
@@ -229,7 +255,7 @@ def memory_init(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_ADDITIVE)
 def memory_note_new(
     title: str,
     context: str | None = None,
@@ -238,16 +264,17 @@ def memory_note_new(
     task_id: str | None = None,
     agent_id: str | None = None,
     relay_session_id: str | None = None,
-    lang: str = "ja",
+    lang: Literal["ja", "en"] = "ja",
     memory_dir: str | None = None,
 ) -> str:
     """Create a new session note from template.
 
+    Use this at the start of a work session to create a note for logging.
+    Do not use for updating existing notes — edit the note file directly instead.
     `title` is required. Optional `context`, `tags`, and `keywords` fill metadata fields.
     `task_id`, `agent_id`, and `relay_session_id` are stored in index metadata.
-    `lang` selects the template language (`ja` or `en`).
-    `memory_dir` sets the note root directory.
-    Returns the created note file path.
+    `lang` selects the template language.
+    Returns JSON with the created note path and metadata.
     """
     resolved = _resolve_dir(memory_dir)
     created = note.create_note(
@@ -268,10 +295,10 @@ def memory_note_new(
         relay_session_id=relay_session_id,
         no_dense=True,
     )
-    return str(created)
+    return _serialize_json({"path": str(created), "title": title, "date": str(created.parent.name)})
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_state_show(
     section: str | None = None,
     stale_days: int = 0,
@@ -280,6 +307,7 @@ def memory_state_show(
 ) -> str:
     """Show rolling state sections.
 
+    Use this to check current focus, open actions, decisions, and pitfalls.
     `section` filters one state section, `stale_days` marks stale items,
     and `as_json` uses JSON output.
     `memory_dir` selects the state file location.
@@ -301,7 +329,7 @@ def memory_state_show(
     return output
 
 
-@mcp.tool()
+@mcp.tool(annotations=_ADDITIVE)
 def memory_state_add(
     section: str,
     items: list[str],
@@ -310,6 +338,7 @@ def memory_state_add(
 ) -> str:
     """Add items to a state section with optional pattern-based replacement.
 
+    Use this for incremental state updates. For full section replacement, use memory_state_set.
     `section` is the target state section key/name.
     `items` is a list of new bullet items to prepend and de-duplicate.
     `replace` is an optional list of substring patterns; existing items matching any pattern
@@ -326,7 +355,7 @@ def memory_state_add(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def memory_state_set(
     section: str,
     items: list[str],
@@ -348,7 +377,7 @@ def memory_state_set(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 def memory_state_remove(
     section: str,
     pattern: str,
@@ -372,7 +401,7 @@ def memory_state_remove(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_ADDITIVE)
 def memory_state_from_note(
     note_path: str,
     no_auto_improve: bool = False,
@@ -399,7 +428,7 @@ def memory_state_from_note(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_auto_restore(
     agent_id: str | None = None,
     relay_session_id: str | None = None,
@@ -431,66 +460,43 @@ def memory_auto_restore(
     return _serialize_json(payload)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_search(
     query: str,
+    mode: Literal["quick", "detailed", "debug"] = "quick",
     task_id: str | None = None,
     agent_id: str | None = None,
     relay_session_id: str | None = None,
     top: int | None = None,
     snippets: int | None = None,
-    engine: str = "auto",
+    engine: Literal["auto", "index", "hybrid", "rg", "python"] = "auto",
     prefer_recent: bool = False,
     half_life_days: float | None = None,
-    explain: bool = False,
     suggest: bool = False,
     no_expand: bool = False,
-    no_feedback_expand: bool = False,
     no_fuzzy: bool = False,
     no_cjk_expand: bool = False,
-    sync_stale_index: bool = False,
-    rerank: bool = False,
     no_rerank: bool = False,
-    prf: bool = False,
-    no_prf: bool = False,
+    sync_stale_index: bool = False,
     default_date_range: int | None = None,
-    compact: bool = False,
-    mode: Literal["quick", "detailed", "debug"] = "quick",
     memory_dir: str | None = None,
 ) -> str:
     """Search session notes by query.
 
+    Use this to find past session notes by keywords, tags, or metadata.
+    Do not use for full-text reading of a specific note — use memory_evidence instead.
     Supports quoted phrases, +must, -exclude, field:term (with aliases like tag:),
     and date-range filters.
-    `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
-    `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
-    from results to reduce response size.
-    `mode` preset: `quick` (default; compact, no explain, no feedback expand),
-    `detailed`, `debug` (explain, all fields).
-    Returns ranked results, warnings, expansions, and snippets settings as JSON.
-    `total_found` indicates how many entries matched before `top` truncation
-    (for index engine; non-index engines return post-truncation count).
-
-    **Mode presets vs boolean parameters**: `mode` controls `compact`,
-    `explain`, and `no_feedback_expand`; the selected mode takes precedence
-    over those boolean parameters.
-    The following boolean parameters are independent and can be combined
-    freely with any mode:
-
-    - `no_expand`: disables all query term expansion.
-    - `no_cjk_expand`: suppresses CJK n-gram expansion to reduce context consumption.
-    - `no_fuzzy`: disables fuzzy (edit-distance) matching.
-    - `no_prf`: disables pseudo-relevance feedback scoring.
-    - `no_rerank`: disables result reranking.
+    `mode` controls output verbosity: `quick` (default; compact, minimal context),
+    `detailed` (full fields), `debug` (with scoring explanation).
+    `no_expand`, `no_cjk_expand`, `no_fuzzy`, `no_rerank` disable
+    individual search features independently of mode.
+    Returns ranked results, warnings, and match metadata as JSON.
     """
-    # Apply mode presets
-    if mode == "quick":
-        compact = True
-        explain = False
-        no_feedback_expand = True
-    elif mode == "debug":
-        compact = False
-        explain = True
+    # Derive compact/explain/no_feedback_expand from mode
+    compact = mode == "quick"
+    explain = mode == "debug"
+    no_feedback_expand = mode == "quick"
 
     resolved = _resolve_dir(memory_dir)
     result = search.search(
@@ -511,10 +517,10 @@ def memory_search(
         no_fuzzy=no_fuzzy,
         no_cjk_expand=no_cjk_expand,
         sync_stale_index=sync_stale_index,
-        use_rerank=rerank,
+        use_rerank=False,
         no_use_rerank=no_rerank,
-        prf=prf,
-        no_prf=no_prf,
+        prf=False,
+        no_prf=False,
         default_date_range=default_date_range,
         compact=compact,
     )
@@ -523,7 +529,7 @@ def memory_search(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def memory_index_upsert(
     note_path: str,
     task_id: str | None = None,
@@ -559,7 +565,7 @@ def memory_index_upsert(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_evidence(
     query: str,
     paths: list[str] | None = None,
@@ -569,10 +575,12 @@ def memory_evidence(
 ) -> str:
     """Generate a compact evidence pack from note paths.
 
-    `query` is used to filter relevant lines.
-    `paths` is a list of note paths (absolute or relative), `max_lines` limits lines per section.
-    If `paths` is omitted and `task_id` is provided, paths are auto-resolved from the index.
-    Either `paths` or `task_id` must be provided; omitting both raises an error.
+    Use this to read relevant sections from specific notes. For searching notes
+    by keyword, use memory_search instead.
+    `query` filters relevant lines from the selected notes.
+    Either `paths` (note file paths) or `task_id` must be provided — omitting both
+    raises an error. If only `task_id` is given, paths are auto-resolved from the index.
+    `max_lines` limits lines per section.
     Returns markdown evidence text with provenance per note.
     """
     resolved = _resolve_dir(memory_dir)
@@ -586,10 +594,11 @@ def memory_evidence(
     return evidence.generate_evidence_pack(query=query, paths=resolved_paths, max_lines=max_lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_stats(memory_dir: str | None = None) -> str:
     """Get storage statistics for the memory directory.
 
+    Use this to check memory usage, note counts, and SIGFB signal distribution.
     Returns note counts (total and by date), index entry count, storage size in bytes,
     date range, SIGFB signal summary by skill/type, and state item counts per section.
     """
@@ -598,10 +607,11 @@ def memory_stats(memory_dir: str | None = None) -> str:
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_health_check(memory_dir: str | None = None) -> str:
     """Check index integrity and consistency of the memory directory.
 
+    Use this to diagnose index issues or verify memory directory health.
     Detects orphan index entries (no matching note file), unindexed notes (no index entry),
     stale entries (note newer than index), and validates state/config file parsability.
     Returns a structured report with a human-readable summary.
@@ -611,16 +621,16 @@ def memory_health_check(memory_dir: str | None = None) -> str:
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def memory_export(
     output_path: str,
-    fmt: str = "json",
+    fmt: Literal["json", "zip"] = "json",
     memory_dir: str | None = None,
 ) -> str:
     """Export the entire memory directory to a backup file.
 
     `output_path` is the destination file path.
-    `fmt` is `json` (single JSON file with all data) or `zip` (directory structure preserved).
+    `fmt` selects the export format: `json` (single file) or `zip` (directory preserved).
     Returns export metadata including note count and file size.
     """
     resolved = _resolve_dir(memory_dir)
@@ -628,7 +638,7 @@ def memory_export(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_list_stale_notes(
     days: int = 90,
     memory_dir: str | None = None,
@@ -643,7 +653,7 @@ def memory_list_stale_notes(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 def memory_cleanup_notes(
     paths: list[str],
     dry_run: bool = True,
@@ -660,44 +670,29 @@ def memory_cleanup_notes(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def memory_search_global(
     query: str,
     memory_dirs: list[str],
-    top: int | None = None,
-    explain: bool = False,
-    prefer_recent: bool = False,
-    compact: bool = False,
-    no_cjk_expand: bool = False,
-    no_feedback_expand: bool = False,
     mode: Literal["quick", "detailed", "debug"] = "quick",
+    top: int | None = None,
+    prefer_recent: bool = False,
+    no_cjk_expand: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Search across multiple memory directories.
 
+    Use this to find notes across different projects or workspaces.
+    For searching within a single memory directory, use memory_search instead.
     `memory_dirs` is a list of memory directory paths to search.
-    Results from all directories are merged, scored, and sorted.
-    Each result includes a `source_dir` key identifying its origin.
-    `compact` omits verbose index fields from results to reduce response size.
+    Results are merged, scored, and sorted; each result includes `source_dir`.
+    `mode` controls output verbosity: `quick` (default), `detailed`, `debug`.
     `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
-    `mode` preset: `quick` (default; compact, no explain, no feedback expand),
-    `detailed`, `debug` (explain, all fields).
     Accepts the same query syntax as `memory_search`.
-
-    **Mode presets vs boolean parameters**: `mode` controls `compact`,
-    `explain`, and `no_feedback_expand`; the selected mode takes precedence
-    over those boolean parameters. The `no_cjk_expand` parameter is
-    independent — for minimal context consumption, combine `mode="quick"`
-    with `no_cjk_expand=True`.
     """
-    # Apply mode presets ("detailed" uses defaults — no overrides needed)
-    if mode == "quick":
-        compact = True
-        explain = False
-        no_feedback_expand = True
-    elif mode == "debug":
-        compact = False
-        explain = True
+    compact = mode == "quick"
+    explain = mode == "debug"
+    no_feedback_expand = mode == "quick"
 
     dirs = [Path(d) for d in memory_dirs]
     result = search.search_global(
@@ -715,7 +710,7 @@ def memory_search_global(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_ADDITIVE)
 def memory_expire_stale(
     stale_days: int = 30,
     archive: bool = False,
@@ -738,7 +733,7 @@ def memory_expire_stale(
     return _serialize_json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def memory_update_weights(
     updates: dict[str, float],
     memory_dir: str | None = None,

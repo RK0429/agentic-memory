@@ -21,6 +21,11 @@ from agentic_memory.server import (
 )
 
 
+def _note_path(raw: str) -> Path:
+    """Extract path from memory_note_new JSON response."""
+    return Path(json.loads(raw)["path"])
+
+
 def _write_note(memory_dir: Path, name: str = "source.md") -> Path:
     note_path = memory_dir / name
     note_path.write_text(
@@ -70,7 +75,12 @@ def test_memory_note_new(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    created_path = Path(memory_note_new(title="Server Note", memory_dir=str(memory_dir)))
+    raw = memory_note_new(title="Server Note", memory_dir=str(memory_dir))
+    payload = json.loads(raw)
+    assert "path" in payload
+    assert payload["title"] == "Server Note"
+    assert "date" in payload
+    created_path = Path(payload["path"])
     assert created_path.exists()
     assert created_path.suffix == ".md"
 
@@ -167,8 +177,9 @@ def test_memory_search_defaults_to_quick_mode(tmp_memory_dir: Path, monkeypatch)
 
     raw = memory_search(query="__no_result_expected__", engine="python", memory_dir=str(memory_dir))
     payload = json.loads(raw)
-    assert payload["compact"] is True
-    assert payload["feedback_expand"] is False
+    # Settings echo-back fields are stripped in compact (quick) mode
+    assert "compact" not in payload
+    assert "feedback_expand" not in payload
 
 
 def test_memory_search_global_defaults_to_quick_mode(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -177,15 +188,16 @@ def test_memory_search_global_defaults_to_quick_mode(tmp_memory_dir: Path, monke
 
     raw = memory_search_global(query="__no_result_expected__", memory_dirs=[str(memory_dir)])
     payload = json.loads(raw)
-    assert payload["compact"] is True
-    assert payload["feedback_expand"] is False
+    # Settings echo-back fields are stripped in compact (quick) mode
+    assert "compact" not in payload
+    assert "feedback_expand" not in payload
 
 
 def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    created_path = Path(memory_note_new(title="Upsert One", memory_dir=str(memory_dir)))
+    created_path = _note_path(memory_note_new(title="Upsert One", memory_dir=str(memory_dir)))
     raw = memory_index_upsert(
         note_path=str(created_path), no_dense=True, memory_dir=str(memory_dir)
     )
@@ -234,7 +246,7 @@ def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeyp
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    note_path = Path(
+    note_path = _note_path(
         memory_note_new(title="Evidence by Task", task_id="TASK-401", memory_dir=str(memory_dir))
     )
     output = memory_evidence(query="Evidence", task_id="TASK-401", memory_dir=str(memory_dir))
@@ -246,7 +258,7 @@ def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkey
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    _ = Path(
+    _ = _note_path(
         memory_note_new(title="Ignored Task Note", task_id="TASK-501", memory_dir=str(memory_dir))
     )
     explicit_path = _write_note(memory_dir, name="explicit-evidence.md")
@@ -264,7 +276,7 @@ def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) 
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    created_path = Path(
+    created_path = _note_path(
         memory_note_new(
             title="Metadata Note",
             task_id="TASK-111",
@@ -291,7 +303,7 @@ def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    created = Path(
+    created = _note_path(
         memory_note_new(
             title="Auto Restore Source",
             task_id="TASK-301",

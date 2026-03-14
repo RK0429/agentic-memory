@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2026-03-15
+
+### Added
+
+- MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) on all 19 tools for machine-readable safety classification
+- Usage/non-usage conditions in tool descriptions (e.g., "Use this to...", "Do not use for...")
+
+### Changed
+
+- **Breaking**: `memory_note_new` now returns JSON `{"path", "title", "date"}` instead of a plain path string
+- **Breaking**: `memory_search` removes 6 parameters: `prf`, `no_prf`, `rerank`, `compact`, `explain`, `no_feedback_expand` — use `mode` presets instead. `no_rerank` is retained for disabling auto-enabled reranking
+- **Breaking**: `memory_search_global` removes 3 parameters: `compact`, `explain`, `no_feedback_expand` — use `mode` presets instead
+- `engine` parameter in `memory_search` now uses `Literal["auto", "index", "hybrid", "rg", "python"]` enum constraint
+- `fmt` parameter in `memory_export` now uses `Literal["json", "zip"]` enum constraint
+- `lang` parameter in `memory_note_new` now uses `Literal["ja", "en"]` enum constraint
+- Compact mode (`mode="quick"`) now strips settings echo-back fields (`expand_enabled`, `feedback_expand`, `top`, `snippets`, `rerank_enabled`, `rerank_auto_enabled`, `compact`) from search results
+- Compact mode now omits empty detail dict from result tuples (2-element `[score, entry]` instead of 3-element `[score, entry, {}]`)
+
 ## [0.5.8] - 2026-03-15
 
 ### Changed
