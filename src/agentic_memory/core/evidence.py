@@ -83,7 +83,16 @@ def build_regex_from_query(query: str) -> re.Pattern:
 
 
 # Template placeholder patterns that carry no meaningful content.
-_TEMPLATE_PLACEHOLDER_RE = re.compile(r"^-?\s*(?:##\s*(?:Files|Notes|Tests|Result):?\s*$|$)")
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"^-?\s*(?:"
+    r"##\s*(?:Files|Notes|Tests|Result|Outcome|Goal|Plan):?\s*$"
+    r"|Query\s+used:\s*$"
+    r"|Useful\s+notes:\s*$"
+    r"|Missed\s+notes\s*/\s*gaps:\s*$"
+    r"|Retrieval\s+improvements:\s*$"
+    r"|$"
+    r")"
+)
 
 
 def _is_empty_content(s: str) -> bool:
@@ -162,12 +171,18 @@ def generate_evidence_pack(query: str, paths: Sequence[Path | str], max_lines: i
                 continue
             # Display section name in the note's language
             display_name = sec if lang == "ja" else sections.NOTE_SECTION_ALIASES.get(sec, sec)
-            out_lines.append(f"### {display_name}")
+            section_entries: list[str] = []
             for ln in filtered:
-                # Avoid super long lines
-                if len(ln) > 300:
-                    ln = ln[:300] + "\u2026"
-                out_lines.append(f"- {ln.lstrip('- ').strip()}")
+                content = ln.lstrip("- ").strip()
+                if not content or _is_empty_content(ln.strip()):
+                    continue
+                if len(content) > 300:
+                    content = content[:300] + "\u2026"
+                section_entries.append(f"- {content}")
+            if not section_entries:
+                continue
+            out_lines.append(f"### {display_name}")
+            out_lines.extend(section_entries)
             out_lines.append("")
 
         # If nothing extracted, include short excerpt of first 30 lines

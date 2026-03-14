@@ -51,6 +51,13 @@ def test_parse_date_range() -> None:
     assert terms[0].date_range == (dt.date(2026, 1, 1), dt.date(2026, 1, 31))
 
 
+def test_parse_query_single_date() -> None:
+    terms = query.parse_query("date:2026-03-14")
+    assert len(terms) == 1
+    assert terms[0].field == "date"
+    assert terms[0].date_range == (dt.date(2026, 3, 14), dt.date(2026, 3, 14))
+
+
 def test_parse_field_alias_tag() -> None:
     """Singular alias 'tag' should resolve to 'tags'."""
     terms = query.parse_query("tag:usability")
@@ -126,3 +133,10 @@ def test_expand_terms() -> None:
 
     assert any(term.term == "auth" and term.weight == 1.0 for term in expanded)
     assert any(term.term == "authentication" and term.weight == 0.4 for term in expanded)
+
+
+def test_expand_terms_no_uppercase() -> None:
+    terms = query.parse_query("test")
+    expanded = query.expand_terms(terms, {"query_expansion": {"decay": 0.4}}, enable=True)
+
+    assert "TEST" not in {term.term for term in expanded}

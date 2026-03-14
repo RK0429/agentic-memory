@@ -444,13 +444,27 @@ def deduplicate(items: list[StateItem]) -> list[StateItem]:
         key = item.normalize_key()
         if not key:
             continue
-        if key not in index:
+        if key in index:
+            pos = index[key]
+            if _is_newer(item, out[pos]):
+                out[pos] = item
+            continue
+        subsumed = False
+        for existing_key, pos in list(index.items()):
+            if key in existing_key:
+                if _is_newer(item, out[pos]):
+                    out[pos] = StateItem(date=item.date, text=out[pos].text)
+                subsumed = True
+                break
+            if existing_key in key:
+                index[key] = pos
+                del index[existing_key]
+                out[pos] = item
+                subsumed = True
+                break
+        if not subsumed:
             index[key] = len(out)
             out.append(item)
-            continue
-        pos = index[key]
-        if _is_newer(item, out[pos]):
-            out[pos] = item
     return out
 
 
@@ -645,7 +659,7 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
 
     sections = load_state(state_path)
     kept: list[StateItem] = []
-    removed = 0
+    removed_items: list[str] = []
     for item in sections.get(section_name, []):
         matched = (
             bool(matcher.search(item.text))
@@ -653,15 +667,24 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
             else pattern.lower() in item.text.lower()
         )
         if matched:
-            removed += 1
-            print(f"Removed: [{item.date}] {item.text}", file=sys.stderr)
+            removed_items.append(f"[{item.date}] {item.text}")
         else:
             kept.append(item)
 
-    if removed > 0:
+    removed_count = len(removed_items)
+    if removed_count > 0:
         sections[section_name] = kept
         save_state(state_path, sections)
-    print(str(removed))
+    summary = json.dumps(
+        {
+            "path": str(state_path),
+            "section": section_name,
+            "removed": removed_count,
+            "items": removed_items,
+        },
+        ensure_ascii=False,
+    )
+    print(summary)
     return 0
 
 
@@ -877,7 +900,7 @@ def _extract_from_note(note_text: str) -> dict[str, list[str]]:
         or bullets(get_section(secs, "Pitfalls"))
     )
     skills = [s for s in bullets(get_section(secs, "スキル候補")) if not _is_none_skill(s)]
-    focus = nxt[:3] if nxt else goal[:3]
+    focus = goal[:3]
 
     return {
         STATE_SHORT_KEYS["focus"]: focus,

@@ -502,12 +502,14 @@ def memory_index_upsert(
     relay_session_id: str | None = None,
     max_summary_chars: int = 280,
     no_dense: bool = False,
+    compact: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Upsert one note into the index.
 
     `note_path` targets the note to index.
     `max_summary_chars` truncates summary extraction, and `no_dense` skips dense upsert.
+    `compact` omits verbose fields (auto_keywords, work_log_keywords, etc.) from the response.
     Returns the indexed entry as JSON.
     """
     resolved = _resolve_dir(memory_dir)
@@ -522,6 +524,9 @@ def memory_index_upsert(
         max_summary_chars=max_summary_chars,
         no_dense=no_dense,
     )
+    if compact:
+        exclude = search.COMPACT_EXCLUDE_FIELDS
+        result = {key: value for key, value in result.items() if key not in exclude}
     return _serialize_json(result)
 
 

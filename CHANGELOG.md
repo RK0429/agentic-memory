@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-03-14
+
+### Added
+
+- `date:YYYY-MM-DD` single-date filter syntax as shorthand for `date:YYYY-MM-DD..YYYY-MM-DD`
+- `compact` parameter for `memory_index_upsert` to omit verbose fields (auto_keywords, work_log_keywords, etc.) from the response
+
+### Fixed
+
+- `no_cjk_expand` now also suppresses CJK n-gram tokens in feedback expansion (previously only affected query expansion)
+- `memory_state_remove` now returns structured JSON (`{"path", "section", "removed", "items"}`) consistent with other state commands (previously returned plain count)
+- `memory_state_from_note` no longer copies "next actions" into the "focus" section; focus is derived only from goals
+- `deduplicate` now detects substring-level near-duplicates (e.g., "X has room for improvement" vs "X is inconsistent with other tools") and keeps the more detailed version
+- `memory_evidence` more aggressively skips template placeholder lines and empty bullets, preventing noise in evidence packs
+- `expand_terms` no longer generates redundant ALLCAPS variants (e.g., `AGENTIC-MEMORY`) in query expansion; search scoring is already case-insensitive
+
 ## [0.5.1] - 2026-03-14
 
 ### Added

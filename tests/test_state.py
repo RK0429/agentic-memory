@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 from pathlib import Path
 
@@ -148,6 +149,25 @@ def test_deduplicate() -> None:
     assert deduped[1].text == "Add tests"
 
 
+def test_deduplicate_substring_match() -> None:
+    items = [
+        state.StateItem(
+            date="2026-01-01 09:00",
+            text="memory_state_remove の戻り値フォーマット",
+        ),
+        state.StateItem(
+            date="2026-01-02 09:00",
+            text="memory_state_remove の戻り値フォーマットが他ツールと不整合",
+        ),
+    ]
+
+    deduped = state.deduplicate(items)
+
+    assert len(deduped) == 1
+    assert deduped[0].date == "2026-01-02 09:00"
+    assert deduped[0].text == "memory_state_remove の戻り値フォーマットが他ツールと不整合"
+
+
 def test_enforce_cap() -> None:
     items = [
         state.StateItem(date="2026-01-01 09:00", text="a"),
@@ -207,10 +227,35 @@ def test_cmd_remove_substring(sample_state_path: Path, capsys) -> None:
     rc = state.cmd_remove(sample_state_path, "open", "token")
     captured = capsys.readouterr()
     loaded = state.load_state(sample_state_path)
+    payload = json.loads(captured.out)
 
     assert rc == 0
-    assert captured.out.strip() == "1"
+    assert payload["path"] == str(sample_state_path)
+    assert payload["section"] == state.STATE_SHORT_KEYS["open"]
+    assert payload["removed"] == 1
+    assert payload["items"][0].endswith("Token bug")
     assert [item.text for item in loaded[state.STATE_SHORT_KEYS["open"]]] == ["Refactor parser"]
+
+
+def test_cmd_remove_json_output(sample_state_path: Path, capsys) -> None:
+    sections_data = _empty_sections()
+    sections_data[state.STATE_SHORT_KEYS["open"]] = [
+        state.StateItem(date="2026-01-01 10:00", text="Drop me"),
+        state.StateItem(date="2026-01-01 10:01", text="Keep me"),
+    ]
+    state.save_state(sample_state_path, sections_data)
+
+    rc = state.cmd_remove(sample_state_path, "open", "drop")
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert rc == 0
+    assert payload == {
+        "path": str(sample_state_path),
+        "section": state.STATE_SHORT_KEYS["open"],
+        "removed": 1,
+        "items": ["[2026-01-01 10:00] Drop me"],
+    }
 
 
 def test_cmd_remove_regex(sample_state_path: Path, capsys) -> None:
@@ -220,9 +265,13 @@ def test_cmd_remove_regex(sample_state_path: Path, capsys) -> None:
     rc = state.cmd_remove(sample_state_path, "open", r"bug-\d+", regex=True)
     captured = capsys.readouterr()
     loaded = state.load_state(sample_state_path)
+    payload = json.loads(captured.out)
 
     assert rc == 0
-    assert captured.out.strip() == "1"
+    assert payload["path"] == str(sample_state_path)
+    assert payload["section"] == state.STATE_SHORT_KEYS["open"]
+    assert payload["removed"] == 1
+    assert payload["items"][0].endswith("bug-123")
     assert [item.text for item in loaded[state.STATE_SHORT_KEYS["open"]]] == ["feature-task"]
 
 
@@ -302,8 +351,9 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
     loaded = state.load_state(sample_state_path)
 
     assert rc == 0
+    assert any(item.text == "Fix login failure" for item in loaded[state.STATE_SHORT_KEYS["focus"]])
     assert any(
-        item.text == "Add integration coverage." for item in loaded[state.STATE_SHORT_KEYS["focus"]]
+        item.text == "Add integration coverage." for item in loaded[state.STATE_SHORT_KEYS["open"]]
     )
     assert any(
         item.text == "Use stricter token validation."
@@ -313,6 +363,15 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
         item.text == "Monitor 401 spikes after deploy."
         for item in loaded[state.STATE_SHORT_KEYS["pitfalls"]]
     )
+
+
+def test_extract_from_note_focus_no_next() -> None:
+    note_text = "# Note\n\n## 次のアクション\n- next item\n"
+
+    extracted = state._extract_from_note(note_text)
+
+    assert extracted[state.STATE_SHORT_KEYS["focus"]] == []
+    assert extracted[state.STATE_SHORT_KEYS["open"]] == ["next item"]
 
 
 def test_resolve_agent_state_path_priority(tmp_memory_dir: Path) -> None:

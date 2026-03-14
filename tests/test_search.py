@@ -156,6 +156,33 @@ def test_search_backward_compatible_without_new_fields(tmp_memory_dir: Path) -> 
     assert filtered["results"] == []
 
 
+def test_search_feedback_no_cjk_expand(tmp_memory_dir: Path) -> None:
+    note_dir = tmp_memory_dir / "2026-03-14"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "0900_feedback.md"
+    note_path.write_text(
+        "# Feedback Source\n\n"
+        "- Date: 2026-03-14\n\n"
+        "## 想起フィードバック（任意）\n\n"
+        "- Useful notes: 認証エラー, oauth, token\n",
+        encoding="utf-8",
+    )
+
+    result = search.search(
+        query="refresh",
+        memory_dir=tmp_memory_dir,
+        engine="python",
+        suggest=True,
+        no_expand=True,
+        no_fuzzy=True,
+        no_cjk_expand=True,
+    )
+
+    assert note_path.exists()
+    assert result["feedback_terms_used"] == ["oauth", "token"]
+    assert all(term.isascii() for term in result["feedback_terms_used"])
+
+
 def test_human_readable_explain(
     tmp_memory_dir: Path, sample_note_path: Path, sample_index_path: Path
 ) -> None:

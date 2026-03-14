@@ -166,7 +166,10 @@ def test_cli_state_remove(tmp_memory_dir: Path) -> None:
         runner, memory_dir, ["state", "remove", "--section", "focus", "--pattern", "Remove"]
     )
     assert removed.exit_code == 0
-    assert removed.output.splitlines()[0].strip() == "1"
+    import json as _json
+
+    data = _json.loads(removed.output.splitlines()[0].strip())
+    assert data["removed"] == 1
 
     show = _run(runner, memory_dir, ["state", "show", "--section", "focus"])
     assert show.exit_code == 0
@@ -325,7 +328,10 @@ def test_cli_agent_state_show_set_add_remove(tmp_memory_dir: Path) -> None:
         ],
     )
     assert remove_result.exit_code == 0
-    assert remove_result.output.splitlines()[0].strip() == "1"
+    import json as _json
+
+    data = _json.loads(remove_result.output.splitlines()[0].strip())
+    assert data["removed"] == 1
 
 
 def test_cli_search_with_metadata_filters(tmp_memory_dir: Path) -> None:

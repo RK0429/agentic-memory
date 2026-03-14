@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from agentic_memory.core.search import COMPACT_EXCLUDE_FIELDS
 from agentic_memory.server import (
     _resolve_dir,
     memory_auto_restore,
@@ -122,7 +123,8 @@ def test_memory_state_remove(tmp_memory_dir: Path, monkeypatch) -> None:
 
     memory_state_add(section="focus", items=["Keep", "Drop"], memory_dir=str(memory_dir))
     removed = memory_state_remove(section="focus", pattern="Drop", memory_dir=str(memory_dir))
-    assert removed.splitlines()[0].strip() == "1"
+    removed_data = json.loads(removed)
+    assert removed_data["removed"] == 1
 
     output = memory_state_show(section="focus", memory_dir=str(memory_dir))
     assert "Keep" in output
@@ -170,6 +172,31 @@ def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert isinstance(payload, dict)
     assert payload["path"].endswith(".md")
+
+
+def test_index_upsert_compact(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    note_path = _write_note(memory_dir, name="compact-source.md")
+    full_payload = json.loads(
+        memory_index_upsert(note_path=str(note_path), no_dense=True, memory_dir=str(memory_dir))
+    )
+    compact_payload = json.loads(
+        memory_index_upsert(
+            note_path=str(note_path),
+            no_dense=True,
+            compact=True,
+            memory_dir=str(memory_dir),
+        )
+    )
+
+    assert "auto_keywords" in full_payload
+    assert compact_payload["path"].endswith(".md")
+    assert compact_payload["title"] == full_payload["title"]
+    for field in COMPACT_EXCLUDE_FIELDS:
+        assert field in full_payload
+        assert field not in compact_payload
 
 
 def test_memory_evidence(tmp_memory_dir: Path, monkeypatch) -> None:

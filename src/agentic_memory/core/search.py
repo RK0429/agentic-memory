@@ -735,6 +735,8 @@ def search(
         feedback_note_path = _latest_note_path(dn_dir)
         if feedback_note_path is not None:
             feedback_terms = _extract_recall_feedback_terms(feedback_note_path)
+            if no_cjk_expand:
+                feedback_terms = [term for term in feedback_terms if term.isascii()]
             expanded = expand_with_feedback(expanded, feedback_terms, feedback_decay=feedback_decay)
 
     if suggest:

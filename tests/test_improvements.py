@@ -281,6 +281,37 @@ def test_evidence_pack_japanese_sections(tmp_path: Path) -> None:
     assert "### 成果" in pack
 
 
+def test_evidence_skip_placeholder_lines(tmp_path: Path) -> None:
+    note_path = tmp_path / "placeholder_note.md"
+    note_path.write_text(
+        "# Placeholder Session\n\n"
+        "- Date: 2026-03-14\n\n"
+        "## 成果\n\n"
+        "-\n\n"
+        "## 検証\n\n"
+        "- ## Tests:\n"
+        "- ## Result:\n\n"
+        "## 判断\n\n"
+        "- Query used:\n"
+        "- Useful notes:\n"
+        "- Missed notes / gaps:\n"
+        "- Retrieval improvements:\n\n"
+        "## 次のアクション\n\n"
+        "- Ship fix\n",
+        encoding="utf-8",
+    )
+
+    pack = evidence.generate_evidence_pack("unmatched-query", [note_path])
+
+    assert "### 成果" not in pack
+    assert "### 検証" not in pack
+    assert "### 判断" not in pack
+    assert "## Tests:" not in pack
+    assert "Query used:" not in pack
+    assert "### 次のアクション" in pack
+    assert "- Ship fix" in pack
+
+
 # ---------- Improvement: rg fallback metadata enrichment ----------
 
 

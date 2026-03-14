@@ -130,24 +130,42 @@ def parse_query(query: str) -> list[QueryTerm]:
         date_range = None
         if ":" in t and not t.startswith("http"):
             maybe_field, rest = t.split(":", 1)
-            if maybe_field == "date" and ".." in rest:
-                lo_s, hi_s = rest.split("..", 1)
-                lo = _parse_date(lo_s) if lo_s.strip() else None
-                hi = _parse_date(hi_s) if hi_s.strip() else None
-                if (not lo_s.strip() and not hi_s.strip()) or (lo is not None or hi is not None):
-                    date_range = (lo, hi)
-                    out.append(
-                        QueryTerm(
-                            raw=tok,
-                            term="",
-                            is_phrase=False,
-                            must=False,
-                            exclude=exclude,
-                            field="date",
-                            date_range=date_range,
+            if maybe_field == "date":
+                if ".." in rest:
+                    lo_s, hi_s = rest.split("..", 1)
+                    lo = _parse_date(lo_s) if lo_s.strip() else None
+                    hi = _parse_date(hi_s) if hi_s.strip() else None
+                    both_empty = not lo_s.strip() and not hi_s.strip()
+                    if both_empty or (lo is not None or hi is not None):
+                        date_range = (lo, hi)
+                        out.append(
+                            QueryTerm(
+                                raw=tok,
+                                term="",
+                                is_phrase=False,
+                                must=False,
+                                exclude=exclude,
+                                field="date",
+                                date_range=date_range,
+                            )
                         )
-                    )
-                    continue
+                        continue
+                else:
+                    single = _parse_date(rest)
+                    if single is not None:
+                        date_range = (single, single)
+                        out.append(
+                            QueryTerm(
+                                raw=tok,
+                                term="",
+                                is_phrase=False,
+                                must=False,
+                                exclude=exclude,
+                                field="date",
+                                date_range=date_range,
+                            )
+                        )
+                        continue
             else:
                 resolved = _FIELD_ALIASES.get(maybe_field, maybe_field)
                 if resolved in _FIELD_NAMES:
@@ -196,7 +214,7 @@ def expand_terms(
             continue
 
         base = qt.term
-        variants = {base, base.lower(), base.upper()}
+        variants = {base, base.lower()}
         if "/" in base:
             variants.add(base.split("/")[-1])
         if "\\" in base:
