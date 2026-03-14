@@ -72,3 +72,23 @@ def test_export_memory_rejects_unknown_format(
         raise AssertionError("ValueError was not raised")
 
     assert sample_note_path.exists()
+
+
+def test_zip_export_excludes_lock_files(tmp_path: Path) -> None:
+    """ZIP export should not include .lock files."""
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    (mem / "_state.md").write_text("# state")
+    (mem / "_index.jsonl").write_text("")
+    (mem / "_index.jsonl.lock").write_text("")
+    (mem / "_state.md.lock").write_text("")
+    out = tmp_path / "out.zip"
+
+    export.export_memory(mem, out, fmt="zip")
+
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+
+    assert not any(n.endswith(".lock") for n in names), (
+        f"Lock files found: {[n for n in names if n.endswith('.lock')]}"
+    )

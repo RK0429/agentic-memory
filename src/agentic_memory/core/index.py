@@ -814,6 +814,7 @@ def build_entry(
     )
     tags = parse_list_field(header_field(md, "Tags"))
     keywords = parse_list_field(header_field(md, "Keywords"))
+    keywords = [kw for kw in keywords if not kw.startswith("#")]
 
     secs = parse_sections(md)
 

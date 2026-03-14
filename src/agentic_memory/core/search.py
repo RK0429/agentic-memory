@@ -1034,8 +1034,10 @@ def search(
             "relay_session_id": resolved_relay_session_id,
         },
     }
-    # Include full expanded QueryTerm objects only when not compact
-    if not compact:
+    if compact:
+        # Omit expanded_terms and expanded QueryTerm objects in compact mode
+        result_dict.pop("expanded_terms", None)
+    else:
         result_dict["expanded"] = expanded
     return result_dict
 
@@ -1102,6 +1104,8 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
     if top_n is not None:
         combined_results = combined_results[:top_n]
 
+    # Compact sub-searches omit expansion payloads; keep this aggregation path intact
+    # for non-compact compatibility and drop expanded_terms below when compact=True.
     # Use QueryTerm objects when available (non-compact), fall back to string terms (compact)
     expanded_terms_from_qt = _dedupe_keep_order(
         [qt.term for qt in combined_expanded if isinstance(qt.term, str) and qt.term]
@@ -1131,6 +1135,8 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
         "filters": filters,
         "source_engines": source_engines,
     }
-    if not compact:
+    if compact:
+        result_dict.pop("expanded_terms", None)
+    else:
         result_dict["expanded"] = _dedupe_query_terms(combined_expanded)
     return result_dict

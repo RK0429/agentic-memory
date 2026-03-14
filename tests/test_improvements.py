@@ -581,8 +581,8 @@ def test_search_global_mode_debug(tmp_memory_dir: Path) -> None:
     assert "expanded" in payload
 
 
-def test_search_global_expanded_terms_not_empty_in_compact(tmp_memory_dir: Path) -> None:
-    """search_global should return non-empty expanded_terms even in compact mode."""
+def test_search_global_compact_omits_expanded_terms(tmp_memory_dir: Path) -> None:
+    """search_global compact mode should omit expanded_terms."""
     from agentic_memory.core.search import search_global
 
     result = search_global(
@@ -590,9 +590,7 @@ def test_search_global_expanded_terms_not_empty_in_compact(tmp_memory_dir: Path)
         memory_dirs=[tmp_memory_dir],
         compact=True,
     )
-    # expanded_terms should be populated from sub-search expanded_terms
-    assert len(result["expanded_terms"]) > 0
-    assert "動作テスト" in result["expanded_terms"]
+    assert "expanded_terms" not in result
 
 
 def test_search_global_no_feedback_expand_kwarg(tmp_memory_dir: Path) -> None:
@@ -606,6 +604,25 @@ def test_search_global_no_feedback_expand_kwarg(tmp_memory_dir: Path) -> None:
         no_feedback_expand=True,
     )
     assert result["feedback_expand"] is False
+
+
+def test_compact_mode_omits_expanded_terms(tmp_memory_dir: Path) -> None:
+    """Compact mode should omit expanded_terms to save context."""
+    note_file = note.create_note(tmp_memory_dir, title="テスト")
+    note_path = Path(str(note_file))
+    note_path.write_text(
+        "# テスト\n\n- Tags: testing\n- Keywords: テスト\n\n## 作業ログ\n\n- テスト entry\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    result = search(query="テスト", memory_dir=tmp_memory_dir, compact=True)
+    assert "expanded_terms" not in result, "expanded_terms should be omitted in compact mode"
+    result_full = search(query="テスト", memory_dir=tmp_memory_dir, compact=False)
+    assert "expanded_terms" in result_full
 
 
 # ---------- v0.5.7: path doubling fix ----------
@@ -683,3 +700,18 @@ def test_search_global_total_found(tmp_memory_dir: Path) -> None:
     result = search_global(query="test", memory_dirs=[tmp_memory_dir])
     assert "total_found" in result
     assert isinstance(result["total_found"], int)
+
+
+def test_keywords_exclude_markdown_headers(tmp_path: Path) -> None:
+    """Keywords extraction should exclude markdown section headers."""
+    note = tmp_path / "2026-03-14" / "2200_test.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "# Test Note\n- Date: 2026-03-14\n- Keywords: ## Goals\n\n## Goals\n- goal1\n",
+        encoding="utf-8",
+    )
+
+    entry = index.build_entry(note, max_summary_chars=200, dailynote_dir=tmp_path)
+
+    for kw in entry["keywords"]:
+        assert not kw.startswith("#"), f"Markdown header in keywords: {kw}"

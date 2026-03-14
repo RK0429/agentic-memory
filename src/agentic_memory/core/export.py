@@ -54,6 +54,8 @@ def export_memory(memory_dir: Path, output_path: Path, fmt: str = "json") -> dic
             for file_path in sorted(memory_dir.rglob("*")):
                 if not file_path.is_file():
                     continue
+                if file_path.suffix == ".lock":
+                    continue
                 if file_path.resolve() == output_resolved:
                     continue
                 archive.write(file_path, arcname=str(file_path.relative_to(memory_dir.parent)))

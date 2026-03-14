@@ -455,7 +455,7 @@ def memory_search(
     no_prf: bool = False,
     default_date_range: int | None = None,
     compact: bool = False,
-    mode: Literal["quick", "detailed", "debug"] | None = None,
+    mode: Literal["quick", "detailed", "debug"] = "quick",
     memory_dir: str | None = None,
 ) -> str:
     """Search session notes by query.
@@ -465,15 +465,15 @@ def memory_search(
     `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
     `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
     from results to reduce response size.
-    `mode` preset: `quick` (compact, no explain, no feedback expand), `detailed` (default),
-    `debug` (explain, all fields).
+    `mode` preset: `quick` (default; compact, no explain, no feedback expand),
+    `detailed`, `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
     `total_found` indicates how many entries matched before `top` truncation
     (for index engine; non-index engines return post-truncation count).
 
     **Mode presets vs boolean parameters**: `mode` controls `compact`,
-    `explain`, and `no_feedback_expand` (quick sets it to True; explicit
-    `no_feedback_expand` is overridden when `mode` is set).
+    `explain`, and `no_feedback_expand`; the selected mode takes precedence
+    over those boolean parameters.
     The following boolean parameters are independent and can be combined
     freely with any mode:
 
@@ -670,7 +670,7 @@ def memory_search_global(
     compact: bool = False,
     no_cjk_expand: bool = False,
     no_feedback_expand: bool = False,
-    mode: Literal["quick", "detailed", "debug"] | None = None,
+    mode: Literal["quick", "detailed", "debug"] = "quick",
     memory_dir: str | None = None,
 ) -> str:
     """Search across multiple memory directories.
@@ -680,12 +680,13 @@ def memory_search_global(
     Each result includes a `source_dir` key identifying its origin.
     `compact` omits verbose index fields from results to reduce response size.
     `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
-    `mode` preset: `quick` (compact, no explain, no feedback expand), `detailed` (default),
-    `debug` (explain, all fields).
+    `mode` preset: `quick` (default; compact, no explain, no feedback expand),
+    `detailed`, `debug` (explain, all fields).
     Accepts the same query syntax as `memory_search`.
 
-    **Mode presets vs boolean parameters**: `mode` only controls `compact`,
-    `explain`, and `no_feedback_expand`. The `no_cjk_expand` parameter is
+    **Mode presets vs boolean parameters**: `mode` controls `compact`,
+    `explain`, and `no_feedback_expand`; the selected mode takes precedence
+    over those boolean parameters. The `no_cjk_expand` parameter is
     independent — for minimal context consumption, combine `mode="quick"`
     with `no_cjk_expand=True`.
     """

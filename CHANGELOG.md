@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-03-15
+
+### Changed
+
+- **Breaking**: `memory_search` and `memory_search_global` now default to `mode="quick"` (previously `None`, equivalent to `detailed`). This reduces context consumption for agent callers. To restore previous behavior, pass `mode="detailed"` explicitly
+- Compact mode (`mode="quick"` or `compact=True`) now omits `expanded_terms` from search results, further reducing response size
+
+### Fixed
+
+- `build_entry` now filters out markdown section headers (e.g., `## Goals`) from extracted `keywords` field, preventing index pollution when Keywords header is empty
+- ZIP export (`memory_export` with `fmt="zip"`) no longer includes `.lock` files (`_index.jsonl.lock`, `_state.md.lock`)
+
 ## [0.5.7] - 2026-03-14
 
 ### Added

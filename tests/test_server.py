@@ -12,6 +12,7 @@ from agentic_memory.server import (
     memory_init,
     memory_note_new,
     memory_search,
+    memory_search_global,
     memory_state_add,
     memory_state_from_note,
     memory_state_remove,
@@ -158,6 +159,26 @@ def test_memory_search(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert payload["query"] == "__no_result_expected__"
     assert isinstance(payload["results"], list)
+
+
+def test_memory_search_defaults_to_quick_mode(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    raw = memory_search(query="__no_result_expected__", engine="python", memory_dir=str(memory_dir))
+    payload = json.loads(raw)
+    assert payload["compact"] is True
+    assert payload["feedback_expand"] is False
+
+
+def test_memory_search_global_defaults_to_quick_mode(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    raw = memory_search_global(query="__no_result_expected__", memory_dirs=[str(memory_dir)])
+    payload = json.loads(raw)
+    assert payload["compact"] is True
+    assert payload["feedback_expand"] is False
 
 
 def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
