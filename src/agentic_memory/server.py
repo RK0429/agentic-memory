@@ -136,6 +136,14 @@ def _strip_compact_fields(result: dict) -> dict:
             stripped_results.append(item)
     result = dict(result)
     result["results"] = stripped_results
+    # Strip empty/null metadata fields to reduce context consumption
+    for key in ("feedback_source_note", "feedback_terms_used", "suggestions"):
+        val = result.get(key)
+        if val is None or val == []:
+            result.pop(key, None)
+    filters = result.get("filters")
+    if isinstance(filters, dict) and all(v is None for v in filters.values()):
+        result.pop("filters", None)
     return result
 
 
@@ -450,7 +458,7 @@ def memory_search(
     `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
     `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
     from results to reduce response size.
-    `mode` preset: `quick` (compact, no explain), `detailed` (default),
+    `mode` preset: `quick` (compact, no explain, no feedback expand), `detailed` (default),
     `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
 
@@ -469,6 +477,7 @@ def memory_search(
     if mode == "quick":
         compact = True
         explain = False
+        no_feedback_expand = True
     elif mode == "debug":
         compact = False
         explain = True

@@ -506,3 +506,52 @@ def test_feedback_terms_keep_descriptive_text(tmp_path: Path) -> None:
     assert "memory search optimization" in terms
     assert "memory" in terms
     assert "search" in terms
+
+
+def test_feedback_terms_skip_embedded_filenames_in_phrases(tmp_path: Path) -> None:
+    """Filenames embedded in descriptive phrases should be stripped before tokenization."""
+    note_path = tmp_path / "test_note.md"
+    note_path.write_text(
+        "# Test\n\n"
+        "## 想起フィードバック（任意）\n\n"
+        "- Query used: テスト\n"
+        "- Useful notes: 2157_agentic-memory-v0-3-0.md が v0.3.0 の比較基準として有用、"
+        "2349_agentic-memory-v0-4-1.md が v0.4.1 の比較基準として有用\n"
+        "- Missed notes / gaps: なし\n",
+        encoding="utf-8",
+    )
+    terms = _extract_recall_feedback_terms(note_path)
+    # Filename fragments should NOT appear
+    assert "2157" not in terms
+    assert "2349" not in terms
+    assert "2157_agentic-memory-v0-3-0.md" not in terms
+    assert "agentic-memory-v0-3-0.md" not in terms
+    assert "0.md" not in terms
+    # Descriptive text should be preserved
+    assert any("v0.3.0" in t for t in terms)
+
+
+# ---------- Quick mode: no_feedback_expand and compact metadata ----------
+
+
+def test_search_mode_quick_disables_feedback_expand(tmp_memory_dir: Path) -> None:
+    """mode='quick' should disable feedback expansion."""
+    from agentic_memory.server import memory_search
+
+    raw = memory_search(query="test", mode="quick", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert payload.get("feedback_expand") is False
+
+
+def test_search_mode_quick_strips_empty_metadata(tmp_memory_dir: Path) -> None:
+    """mode='quick' should omit empty feedback_source_note, feedback_terms_used, etc."""
+    from agentic_memory.server import memory_search
+
+    raw = memory_search(query="test", mode="quick", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    # Empty/null fields should be stripped
+    assert "feedback_source_note" not in payload
+    assert "feedback_terms_used" not in payload
+    assert "suggestions" not in payload
+    # All-null filters should be stripped
+    assert "filters" not in payload

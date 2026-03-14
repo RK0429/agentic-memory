@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-03-14
+
+### Fixed
+
+- `_extract_recall_feedback_terms` now strips embedded note filenames from phrases (e.g., `2157_xxx.md が v0.3.0 の比較基準として有用`) before tokenization, preventing slug fragments from leaking into `feedback_terms_used`
+- `mode:quick` now defaults `no_feedback_expand=True` to reduce context consumption
+- `_strip_compact_fields` now omits empty/null metadata fields (`feedback_source_note`, `feedback_terms_used`, `suggestions`, all-null `filters`) in compact mode
+
 ## [0.5.3] - 2026-03-14
 
 ### Fixed
