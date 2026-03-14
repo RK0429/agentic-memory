@@ -78,6 +78,12 @@ Or with `uvx`:
 }
 ```
 
+### Upgrading
+
+After upgrading the package, reconnect the MCP server to pick up new tool
+parameters and schema changes. In Claude Code, run `/mcp` and select
+reconnect; other MCP hosts may require restarting the server process.
+
 ## Memory Directory Structure
 
 ```

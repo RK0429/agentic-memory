@@ -152,6 +152,10 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
       - ``created``: directory did not exist; created with all files.
       - ``initialized``: directory existed but one or more files were missing and created.
       - ``already_exists``: directory and all files already existed.
+
+    ``state_content`` is included only for ``created`` and ``initialized``
+    statuses.  When ``already_exists``, it is omitted to reduce context
+    consumption; use ``memory_state_show`` to read the current state.
     """
     state_path = memory_dir / "_state.md"
     index_path = memory_dir / "_index.jsonl"
@@ -193,14 +197,17 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
     else:
         status = "already_exists"
 
-    return {
+    result: dict[str, str] = {
         "status": status,
         "memory_dir": str(memory_dir),
         "state_path": str(state_path),
-        "state_content": template_content,
         "index_path": str(index_path),
         "config_path": str(config_path),
     }
+    # Include state_content only for new/partial init (not for already_exists)
+    if status != "already_exists":
+        result["state_content"] = template_content
+    return result
 
 
 def update_weights(memory_dir: Path, updates: dict[str, float]) -> dict[str, Any]:

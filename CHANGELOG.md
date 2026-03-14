@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-03-14
+
+### Changed
+
+- `memory_init` no longer returns `state_content` when status is `already_exists`, reducing context consumption; use `memory_state_show` to read current state
+
+### Improved
+
+- `memory_search_global` docstring now documents that `mode` and `no_cjk_expand` are independent — combine `mode="quick"` with `no_cjk_expand=True` for minimal context
+- `memory_search` docstring corrected: `no_feedback_expand` is controlled by `mode` presets (not independent)
+- README: added "Upgrading" section documenting the need to reconnect the MCP server after package updates
+
 ## [0.5.5] - 2026-03-14
 
 ### Added

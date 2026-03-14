@@ -462,14 +462,13 @@ def memory_search(
     `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
 
-    **Mode presets vs boolean parameters**: `mode` only controls `compact` and
-    `explain`. The following boolean parameters are independent and can be
-    combined freely with any mode:
+    **Mode presets vs boolean parameters**: `mode` controls `compact`,
+    `explain`, and `no_feedback_expand`. The following boolean parameters are
+    independent and can be combined freely with any mode:
 
     - `no_expand`: disables all query term expansion.
     - `no_cjk_expand`: suppresses CJK n-gram expansion to reduce context consumption.
     - `no_fuzzy`: disables fuzzy (edit-distance) matching.
-    - `no_feedback_expand`: disables recall-feedback term expansion.
     - `no_prf`: disables pseudo-relevance feedback scoring.
     - `no_rerank`: disables result reranking.
     """
@@ -673,6 +672,11 @@ def memory_search_global(
     `mode` preset: `quick` (compact, no explain, no feedback expand), `detailed` (default),
     `debug` (explain, all fields).
     Accepts the same query syntax as `memory_search`.
+
+    **Mode presets vs boolean parameters**: `mode` only controls `compact`,
+    `explain`, and `no_feedback_expand`. The `no_cjk_expand` parameter is
+    independent — for minimal context consumption, combine `mode="quick"`
+    with `no_cjk_expand=True`.
     """
     # Apply mode presets ("detailed" uses defaults — no overrides needed)
     if mode == "quick":

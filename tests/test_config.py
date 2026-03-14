@@ -77,6 +77,17 @@ def test_init_memory_dir_already_exists(tmp_path: Path) -> None:
     result = config.init_memory_dir(memory_dir)
 
     assert result["status"] == "already_exists"
+    assert "state_content" not in result
+
+
+def test_init_memory_dir_created_includes_state_content(tmp_path: Path) -> None:
+    """Newly created directory includes state_content in result."""
+    memory_dir = tmp_path / "new_memory"
+    result = config.init_memory_dir(memory_dir)
+
+    assert result["status"] == "created"
+    assert "state_content" in result
+    assert len(result["state_content"]) > 0
 
 
 def test_load_template() -> None:
