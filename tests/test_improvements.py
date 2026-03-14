@@ -606,3 +606,80 @@ def test_search_global_no_feedback_expand_kwarg(tmp_memory_dir: Path) -> None:
         no_feedback_expand=True,
     )
     assert result["feedback_expand"] is False
+
+
+# ---------- v0.5.7: path doubling fix ----------
+
+
+def test_resolve_paths_no_doubling_for_memory_prefixed_path() -> None:
+    """Paths starting with memory_dir name should not get double-prefixed."""
+    from agentic_memory.server import _resolve_paths
+
+    memory_dir = Path("memory")
+    # Path that looks like a search result (relative to project root)
+    paths = ["memory/2026-03-14/nonexistent-test-file.md"]
+    resolved = _resolve_paths(paths, memory_dir)
+    # Should NOT produce memory/memory/...
+    assert "memory/memory" not in str(resolved[0])
+    assert str(resolved[0]) == "memory/2026-03-14/nonexistent-test-file.md"
+
+
+def test_resolve_note_path_no_doubling() -> None:
+    """_resolve_note_path should not double the memory_dir prefix."""
+    from agentic_memory.server import _resolve_note_path
+
+    memory_dir = Path("memory")
+    result = _resolve_note_path("memory/2026-03-14/nonexistent.md", memory_dir)
+    assert "memory/memory" not in str(result)
+
+
+def test_resolve_paths_still_prepends_for_relative_to_memdir() -> None:
+    """Paths relative to memory_dir (no memory/ prefix) should still be resolved."""
+    from agentic_memory.server import _resolve_paths
+
+    memory_dir = Path("memory")
+    paths = ["2026-03-14/some-note.md"]
+    resolved = _resolve_paths(paths, memory_dir)
+    assert str(resolved[0]) == "memory/2026-03-14/some-note.md"
+
+
+# ---------- v0.5.7: total_found in search results ----------
+
+
+def test_search_total_found(tmp_memory_dir: Path) -> None:
+    """Search results should include total_found count."""
+    result = search(query="test", memory_dir=tmp_memory_dir)
+    assert "total_found" in result
+    assert isinstance(result["total_found"], int)
+    assert result["total_found"] >= 0
+
+
+def test_search_total_found_with_notes(tmp_memory_dir: Path) -> None:
+    """total_found should reflect actual matches before top truncation."""
+    # Create test notes
+    for i in range(5):
+        note_file = note.create_note(tmp_memory_dir, title=f"test note {i}")
+        note_path = Path(str(note_file))
+        content = (
+            f"# test note {i}\n\n- Tags: testing\n- Keywords: test\n\n"
+            f"## 作業ログ\n\n- test entry {i}\n"
+        )
+        note_path.write_text(content)
+        index.index_note(
+            note_path=note_path,
+            index_path=tmp_memory_dir / "_index.jsonl",
+            dailynote_dir=tmp_memory_dir,
+        )
+
+    result = search(query="test", memory_dir=tmp_memory_dir, top=2)
+    assert result["total_found"] >= 2
+    assert len(result["results"]) <= 2
+
+
+def test_search_global_total_found(tmp_memory_dir: Path) -> None:
+    """search_global results should include total_found."""
+    from agentic_memory.core.search import search_global
+
+    result = search_global(query="test", memory_dirs=[tmp_memory_dir])
+    assert "total_found" in result
+    assert isinstance(result["total_found"], int)

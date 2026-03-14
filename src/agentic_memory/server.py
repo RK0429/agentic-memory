@@ -102,6 +102,10 @@ def _resolve_note_path(note_path: str, memory_dir: Path) -> Path:
     parent_relative = memory_dir.parent / p
     if parent_relative.exists():
         return parent_relative
+    # Path already starts with memory_dir name (e.g., from search results) —
+    # return parent-relative form to avoid doubling (file may not exist yet)
+    if p.parts and p.parts[0] == memory_dir.name:
+        return parent_relative
     return memory_dir / p
 
 
@@ -112,6 +116,9 @@ def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
         if p.is_absolute() or p.exists():
             resolved.append(p)
         elif (memory_dir.parent / p).exists():
+            resolved.append(memory_dir.parent / p)
+        elif p.parts and p.parts[0] == memory_dir.name:
+            # Avoid path doubling (e.g., memory/memory/...)
             resolved.append(memory_dir.parent / p)
         else:
             resolved.append(memory_dir / p)
@@ -461,10 +468,14 @@ def memory_search(
     `mode` preset: `quick` (compact, no explain, no feedback expand), `detailed` (default),
     `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
+    `total_found` indicates how many entries matched before `top` truncation
+    (for index engine; non-index engines return post-truncation count).
 
     **Mode presets vs boolean parameters**: `mode` controls `compact`,
-    `explain`, and `no_feedback_expand`. The following boolean parameters are
-    independent and can be combined freely with any mode:
+    `explain`, and `no_feedback_expand` (quick sets it to True; explicit
+    `no_feedback_expand` is overridden when `mode` is set).
+    The following boolean parameters are independent and can be combined
+    freely with any mode:
 
     - `no_expand`: disables all query term expansion.
     - `no_cjk_expand`: suppresses CJK n-gram expansion to reduce context consumption.

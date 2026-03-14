@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-03-14
+
+### Added
+
+- `total_found` field in `memory_search` and `memory_search_global` results — indicates how many entries matched before `top` truncation (index engine only; non-index engines return post-truncation count)
+
+### Fixed
+
+- Path doubling in `memory_evidence` and related tools: paths from search results (e.g., `memory/2026-03-14/...`) no longer produce `memory/memory/...` when passed to `memory_evidence` or `memory_state_from_note`
+
+### Improved
+
+- `memory_search` docstring clarifies that `no_feedback_expand` is overridden when `mode` is set (not independently combinable)
+
 ## [0.5.6] - 2026-03-14
 
 ### Changed

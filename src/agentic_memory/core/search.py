@@ -972,18 +972,22 @@ def search(
                         results.append((score_value, entry, detail))
                 results.sort(key=lambda x: x[0], reverse=True)
 
+        total_found = len(results)
         results = results[:top_n]
 
     elif has_metadata_filters and not index_exists:
         results = []
+        total_found = 0
     else:
         results = _search_with_engine(used_engine, expanded, dn_dir, top_n, explain, has_rg)
+        total_found = len(results)  # post-slice for non-index engines
 
     if engine == "auto" and used_engine == "index" and not results and not has_metadata_filters:
         fallback_engine = "rg" if has_rg else "python"
         warnings.append(f"Index returned 0 results. Retrying with {fallback_engine} engine.")
         used_engine = fallback_engine
         results = _search_with_engine(used_engine, expanded, dn_dir, top_n, explain, has_rg)
+        total_found = len(results)
 
     # W38: rerank auto-enable based on index size
     rerank_auto_threshold = int(
@@ -1008,6 +1012,7 @@ def search(
     result_dict: dict = {
         "engine": used_engine,
         "query": query,
+        "total_found": total_found,
         "expanded_terms": [qt.term for qt in expanded],
         "feedback_source_note": str(feedback_note_path)
         if feedback_terms and feedback_note_path
@@ -1093,6 +1098,7 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
             )
 
     combined_results.sort(key=lambda item: item[0], reverse=True)
+    total_found = len(combined_results)
     if top_n is not None:
         combined_results = combined_results[:top_n]
 
@@ -1108,6 +1114,7 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
     result_dict: dict = {
         "engine": "global",
         "query": query,
+        "total_found": total_found,
         "expanded_terms": merged_expanded_terms,
         "feedback_source_note": _dedupe_keep_order(feedback_sources),
         "feedback_terms_used": _dedupe_keep_order(combined_feedback_terms),
