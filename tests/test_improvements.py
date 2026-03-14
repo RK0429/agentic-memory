@@ -555,3 +555,54 @@ def test_search_mode_quick_strips_empty_metadata(tmp_memory_dir: Path) -> None:
     assert "suggestions" not in payload
     # All-null filters should be stripped
     assert "filters" not in payload
+
+
+# ---------- v0.5.5: search_global mode parameter and expanded_terms fix ----------
+
+
+def test_search_global_mode_quick(tmp_memory_dir: Path) -> None:
+    """memory_search_global with mode='quick' should set compact and disable feedback."""
+    from agentic_memory.server import memory_search_global
+
+    raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="quick")
+    payload = json.loads(raw)
+    assert payload.get("compact") is True
+    assert payload.get("feedback_expand") is False
+
+
+def test_search_global_mode_debug(tmp_memory_dir: Path) -> None:
+    """memory_search_global with mode='debug' should enable explain and disable compact."""
+    from agentic_memory.server import memory_search_global
+
+    raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="debug")
+    payload = json.loads(raw)
+    assert payload.get("compact") is False
+    # debug mode should include full expanded QueryTerm objects
+    assert "expanded" in payload
+
+
+def test_search_global_expanded_terms_not_empty_in_compact(tmp_memory_dir: Path) -> None:
+    """search_global should return non-empty expanded_terms even in compact mode."""
+    from agentic_memory.core.search import search_global
+
+    result = search_global(
+        query="動作テスト",
+        memory_dirs=[tmp_memory_dir],
+        compact=True,
+    )
+    # expanded_terms should be populated from sub-search expanded_terms
+    assert len(result["expanded_terms"]) > 0
+    assert "動作テスト" in result["expanded_terms"]
+
+
+def test_search_global_no_feedback_expand_kwarg(tmp_memory_dir: Path) -> None:
+    """search_global should forward no_feedback_expand to sub-searches."""
+    from agentic_memory.core.search import search_global
+
+    result = search_global(
+        query="test",
+        memory_dirs=[tmp_memory_dir],
+        compact=True,
+        no_feedback_expand=True,
+    )
+    assert result["feedback_expand"] is False

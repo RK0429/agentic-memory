@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-03-14
+
+### Added
+
+- `mode` parameter for `memory_search_global` (`quick`/`detailed`/`debug` presets), matching `memory_search` API
+- `no_feedback_expand` parameter for `memory_search_global`
+- `Literal["quick", "detailed", "debug"]` type constraint on `mode` parameter for both `memory_search` and `memory_search_global`, providing enum hints in MCP tool schemas
+
+### Fixed
+
+- `search_global` now returns populated `expanded_terms` in compact mode (previously returned empty array because QueryTerm objects are excluded in compact mode; now falls back to string-based expanded terms from sub-searches)
+
 ## [0.5.4] - 2026-03-14
 
 ### Fixed

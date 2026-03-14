@@ -1038,6 +1038,7 @@ def search(
 def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **kwargs) -> dict:
     combined_results: list[tuple[float, IndexEntry, dict]] = []
     combined_expanded: list[QueryTerm] = []
+    combined_expanded_terms: list[str] = []
     combined_feedback_terms: list[str] = []
     combined_suggestions: list[str] = []
     warnings: list[str] = []
@@ -1075,6 +1076,7 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
         rerank_auto_enabled = rerank_auto_enabled or bool(payload.get("rerank_auto_enabled", False))
 
         combined_expanded.extend(payload.get("expanded", []))
+        combined_expanded_terms.extend(payload.get("expanded_terms", []))
         combined_feedback_terms.extend(payload.get("feedback_terms_used", []))
         combined_suggestions.extend(payload.get("suggestions", []))
 
@@ -1094,12 +1096,19 @@ def search_global(query: str, memory_dirs: list[Path], compact: bool = False, **
     if top_n is not None:
         combined_results = combined_results[:top_n]
 
+    # Use QueryTerm objects when available (non-compact), fall back to string terms (compact)
+    expanded_terms_from_qt = _dedupe_keep_order(
+        [qt.term for qt in combined_expanded if isinstance(qt.term, str) and qt.term]
+    )
+    merged_expanded_terms = (
+        expanded_terms_from_qt
+        if expanded_terms_from_qt
+        else _dedupe_keep_order(combined_expanded_terms)
+    )
     result_dict: dict = {
         "engine": "global",
         "query": query,
-        "expanded_terms": _dedupe_keep_order(
-            [qt.term for qt in combined_expanded if isinstance(qt.term, str) and qt.term]
-        ),
+        "expanded_terms": merged_expanded_terms,
         "feedback_source_note": _dedupe_keep_order(feedback_sources),
         "feedback_terms_used": _dedupe_keep_order(combined_feedback_terms),
         "warnings": warnings,

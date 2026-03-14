@@ -448,7 +448,7 @@ def memory_search(
     no_prf: bool = False,
     default_date_range: int | None = None,
     compact: bool = False,
-    mode: str | None = None,
+    mode: Literal["quick", "detailed", "debug"] | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Search session notes by query.
@@ -659,6 +659,8 @@ def memory_search_global(
     prefer_recent: bool = False,
     compact: bool = False,
     no_cjk_expand: bool = False,
+    no_feedback_expand: bool = False,
+    mode: Literal["quick", "detailed", "debug"] | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Search across multiple memory directories.
@@ -668,8 +670,19 @@ def memory_search_global(
     Each result includes a `source_dir` key identifying its origin.
     `compact` omits verbose index fields from results to reduce response size.
     `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
+    `mode` preset: `quick` (compact, no explain, no feedback expand), `detailed` (default),
+    `debug` (explain, all fields).
     Accepts the same query syntax as `memory_search`.
     """
+    # Apply mode presets ("detailed" uses defaults — no overrides needed)
+    if mode == "quick":
+        compact = True
+        explain = False
+        no_feedback_expand = True
+    elif mode == "debug":
+        compact = False
+        explain = True
+
     dirs = [Path(d) for d in memory_dirs]
     result = search.search_global(
         query=query,
@@ -679,6 +692,7 @@ def memory_search_global(
         explain=explain,
         prefer_recent=prefer_recent,
         no_cjk_expand=no_cjk_expand,
+        no_feedback_expand=no_feedback_expand,
     )
     if compact:
         result = _strip_compact_fields(result)
