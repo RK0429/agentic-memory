@@ -11,6 +11,7 @@ from agentic_memory.core import evidence, index, note, sections, state, tokenize
 from agentic_memory.core.query import expand_terms, parse_query
 from agentic_memory.core.search import (
     COMPACT_EXCLUDE_FIELDS,
+    _extract_recall_feedback_terms,
     search,
 )
 
@@ -449,3 +450,59 @@ def test_expire_stale_accepts_one_day(tmp_memory_dir: Path) -> None:
     result = state.expire_stale_items(state_path, stale_days=1)
     assert isinstance(result, dict)
     assert "count" in result
+
+
+# ---------- Feedback terms: note filename filtering ----------
+
+
+def test_feedback_terms_skip_note_filenames(tmp_path: Path) -> None:
+    """Note filenames in 'Useful notes' should be filtered out."""
+    note_path = tmp_path / "test_note.md"
+    note_path.write_text(
+        "# Test\n\n"
+        "## 想起フィードバック（任意）\n\n"
+        "- Query used: 動作テスト\n"
+        "- Useful notes: 2157_agentic-memory-v0-3-0.md, 2349_agentic-memory-v0-4-1\n"
+        "- Missed notes / gaps:\n"
+        "- Retrieval improvements:\n",
+        encoding="utf-8",
+    )
+    terms = _extract_recall_feedback_terms(note_path)
+    # Filename prefix and slug fragments should NOT appear
+    assert "2157" not in terms
+    assert "2349" not in terms
+    assert "v0" not in terms
+    assert "agentic" not in terms
+
+
+def test_feedback_terms_skip_path_prefixed_filenames(tmp_path: Path) -> None:
+    """Path-prefixed filenames like '2026-03-14/2157_slug' should also be filtered."""
+    note_path = tmp_path / "test_note.md"
+    note_path.write_text(
+        "# Test\n\n"
+        "## 想起フィードバック（任意）\n\n"
+        "- Query used: test\n"
+        "- Useful notes: 2026-03-14/2157_agentic-memory-v0-3-0.md\n"
+        "- Missed notes / gaps:\n",
+        encoding="utf-8",
+    )
+    terms = _extract_recall_feedback_terms(note_path)
+    assert "2157" not in terms
+    assert "2026-03-14" not in terms
+
+
+def test_feedback_terms_keep_descriptive_text(tmp_path: Path) -> None:
+    """Descriptive text in 'Useful notes' should be kept."""
+    note_path = tmp_path / "test_note.md"
+    note_path.write_text(
+        "# Test\n\n"
+        "## Recall feedback (optional)\n\n"
+        "- Query used: search test\n"
+        "- Useful notes: memory search optimization\n"
+        "- Missed notes / gaps:\n",
+        encoding="utf-8",
+    )
+    terms = _extract_recall_feedback_terms(note_path)
+    assert "memory search optimization" in terms
+    assert "memory" in terms
+    assert "search" in terms

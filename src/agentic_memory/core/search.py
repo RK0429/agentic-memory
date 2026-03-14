@@ -309,6 +309,12 @@ def _load_config(path: Path) -> tuple[dict, list[str]]:
 
 
 # ---------- Recall-feedback / vocab helpers ----------
+
+# Matches note filenames like "2157_agentic-memory-v0-3-0.md" or "0958_動作テスト用ノート".
+# Also matches path-prefixed forms like "2026-03-14/2157_slug.md".
+_NOTE_FILENAME_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}/)?\d{4}_\S+$")
+
+
 def _latest_note_path(memory_dir: Path) -> Path | None:
     if not memory_dir.exists():
         return None
@@ -367,6 +373,10 @@ def _extract_recall_feedback_terms(note_path: Path, max_terms: int = 30) -> list
         for part in parts:
             part = _normalize_text(part).strip("`'\" \t")
             if not part:
+                continue
+            # Skip note filename patterns (e.g. "2157_agentic-memory-v0-3-0.md")
+            # to avoid polluting feedback terms with slug fragments.
+            if _NOTE_FILENAME_RE.match(part):
                 continue
             if " " in part and len(part) <= 80:
                 extracted.append(part)

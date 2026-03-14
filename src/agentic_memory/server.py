@@ -450,10 +450,20 @@ def memory_search(
     `engine` options include `auto`, `index`, `hybrid`, `rg`, `python`.
     `compact` omits verbose index fields (auto_keywords, work_log_keywords, etc.)
     from results to reduce response size.
-    `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
     `mode` preset: `quick` (compact, no explain), `detailed` (default),
     `debug` (explain, all fields).
     Returns ranked results, warnings, expansions, and snippets settings as JSON.
+
+    **Mode presets vs boolean parameters**: `mode` only controls `compact` and
+    `explain`. The following boolean parameters are independent and can be
+    combined freely with any mode:
+
+    - `no_expand`: disables all query term expansion.
+    - `no_cjk_expand`: suppresses CJK n-gram expansion to reduce context consumption.
+    - `no_fuzzy`: disables fuzzy (edit-distance) matching.
+    - `no_feedback_expand`: disables recall-feedback term expansion.
+    - `no_prf`: disables pseudo-relevance feedback scoring.
+    - `no_rerank`: disables result reranking.
     """
     # Apply mode presets
     if mode == "quick":

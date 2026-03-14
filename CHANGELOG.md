@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-03-14
+
+### Fixed
+
+- `_extract_recall_feedback_terms` now filters out note filename patterns (e.g., `2157_agentic-memory-v0-3-0.md`) from feedback terms, preventing slug fragments from polluting `feedback_terms_used` in search results
+- `memory_search` docstring now documents all 6 boolean negation parameters (`no_expand`, `no_cjk_expand`, `no_fuzzy`, `no_feedback_expand`, `no_prf`, `no_rerank`) and their independence from `mode` presets
+
 ## [0.5.2] - 2026-03-14
 
 ### Added
