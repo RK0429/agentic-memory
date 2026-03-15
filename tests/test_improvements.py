@@ -721,3 +721,73 @@ def test_keywords_exclude_markdown_headers(tmp_path: Path) -> None:
 
     for kw in entry["keywords"]:
         assert not kw.startswith("#"), f"Markdown header in keywords: {kw}"
+
+
+# ---------- v0.5.10: compact empty warnings strip, expanded debug-only ----------
+
+
+def _create_indexed_note(tmp_memory_dir: Path) -> None:
+    """Helper: create and index a note so the index engine is used (avoids rg fallback)."""
+    note_file = note.create_note(tmp_memory_dir, title="test note")
+    note_path = Path(str(note_file))
+    note_path.write_text(
+        "# test note\n\n- Tags: testing\n- Keywords: test\n\n## 作業ログ\n\n- test entry\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+
+
+def test_search_quick_strips_empty_warnings(tmp_memory_dir: Path) -> None:
+    """mode='quick' should omit empty warnings list to save context."""
+    from agentic_memory.server import memory_search
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search(query="test", mode="quick", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert "warnings" not in payload
+
+
+def test_search_detailed_omits_expanded(tmp_memory_dir: Path) -> None:
+    """mode='detailed' should include expanded_terms but NOT verbose expanded QueryTerm objects."""
+    from agentic_memory.server import memory_search
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search(query="test", mode="detailed", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert "expanded" not in payload
+    assert "expanded_terms" in payload
+
+
+def test_search_debug_includes_expanded(tmp_memory_dir: Path) -> None:
+    """mode='debug' should include both expanded and expanded_terms."""
+    from agentic_memory.server import memory_search
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search(query="test", mode="debug", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert "expanded" in payload
+    assert "expanded_terms" in payload
+
+
+def test_search_global_quick_strips_empty_warnings(tmp_memory_dir: Path) -> None:
+    """search_global mode='quick' should omit empty warnings list."""
+    from agentic_memory.server import memory_search_global
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="quick")
+    payload = json.loads(raw)
+    assert "warnings" not in payload
+
+
+def test_search_global_detailed_omits_expanded(tmp_memory_dir: Path) -> None:
+    """search_global mode='detailed' should NOT include verbose expanded QueryTerm objects."""
+    from agentic_memory.server import memory_search_global
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="detailed")
+    payload = json.loads(raw)
+    assert "expanded" not in payload

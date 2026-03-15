@@ -175,6 +175,9 @@ def _strip_compact_fields(result: dict) -> dict:
         "compact",
     ):
         result.pop(key, None)
+    # Strip empty warnings list
+    if result.get("warnings") == []:
+        result.pop("warnings", None)
     return result
 
 
@@ -526,6 +529,10 @@ def memory_search(
     )
     if compact:
         result = _strip_compact_fields(result)
+    # Strip verbose expanded QueryTerm objects unless debug mode
+    if mode != "debug":
+        result = dict(result)
+        result.pop("expanded", None)
     return _serialize_json(result)
 
 
@@ -707,6 +714,9 @@ def memory_search_global(
     )
     if compact:
         result = _strip_compact_fields(result)
+    if mode != "debug":
+        result = dict(result)
+        result.pop("expanded", None)
     return _serialize_json(result)
 
 
