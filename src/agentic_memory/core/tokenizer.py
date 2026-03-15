@@ -81,16 +81,92 @@ def _get_tokenizer_backend(config: dict) -> str:
         if isinstance(raw_backend, str):
             backend = raw_backend.strip().lower() or "auto"
 
-    if backend not in {"sudachi", "ngram", "auto"}:
+    if backend not in {"sudachi", "ngram", "boundary", "auto"}:
         backend = "auto"
 
     if backend == "auto":
-        return "sudachi" if is_sudachi_available() else "ngram"
+        if is_sudachi_available():
+            return "sudachi"
+        return "boundary"
 
     if backend == "sudachi" and not is_sudachi_available():
-        return "ngram"
+        return "boundary"
 
     return backend
+
+
+def _cjk_char_class(c: str) -> str:
+    """Classify a CJK character by script type."""
+    cp = ord(c)
+    if 0x3040 <= cp <= 0x309F:
+        return "hiragana"
+    if 0x30A0 <= cp <= 0x30FF:
+        return "katakana"
+    # CJK Unified Ideographs + Extension A
+    if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+        return "kanji"
+    return "other"
+
+
+# Single-character hiragana that typically serve as particles/suffixes.
+_HIRAGANA_PARTICLES = frozenset("はがのをにへでともやかばけせてれさ")
+
+
+def _boundary_cjk_tokens(text: str) -> list[str]:
+    """Split CJK text at script boundaries to produce word-like tokens.
+
+    ~3-5x fewer tokens than n-gram expansion, while maintaining good recall.
+    Falls back gracefully: single-script chunks are kept whole (up to 8 chars),
+    longer same-class runs get n-gram treatment to maintain recall.
+    """
+    out: list[str] = []
+    for match in CJK_CHUNK_RE.finditer(text):
+        chunk = match.group(0)
+        if not chunk:
+            continue
+        # Always add the full chunk if short enough
+        if 2 <= len(chunk) <= 8:
+            out.append(chunk)
+
+        # Split at character class boundaries
+        segments: list[str] = []
+        current = [chunk[0]]
+        prev_cls = _cjk_char_class(chunk[0])
+
+        for c in chunk[1:]:
+            cls = _cjk_char_class(c)
+            if cls != prev_cls:
+                seg = "".join(current)
+                segments.append(seg)
+                current = [c]
+                prev_cls = cls
+            else:
+                current.append(c)
+        segments.append("".join(current))
+
+        for seg in segments:
+            if not seg:
+                continue
+            # Skip single-char hiragana particles
+            if len(seg) == 1 and seg in _HIRAGANA_PARTICLES:
+                continue
+            # Skip if same as the full chunk (already added)
+            if seg == chunk:
+                # For single-class runs > 4 chars, add bigrams for partial-match recall
+                if len(seg) > 4:
+                    for i in range(len(seg) - 1):
+                        out.append(seg[i : i + 2])
+                        if len(out) > 120:
+                            return out
+                continue
+            out.append(seg)
+            # For long segments of same class, add bigrams
+            if len(seg) > 4:
+                for i in range(len(seg) - 1):
+                    out.append(seg[i : i + 2])
+                    if len(out) > 120:
+                        return out
+    return out
 
 
 def _cjk_ngrams(text: str, min_n: int = 2, max_n: int = 3, max_terms: int = 120) -> list[str]:
@@ -192,6 +268,8 @@ def tokenize(
     backend = _get_tokenizer_backend(config or {})
     if backend == "sudachi":
         tokens.extend(_sudachi_tokenize(text_norm))
+    elif backend == "boundary":
+        tokens.extend(_boundary_cjk_tokens(text_norm))
     else:
         tokens.extend(_cjk_ngrams(text_norm, max_terms=max_cjk_terms))
 

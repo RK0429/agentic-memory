@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.11] - 2026-03-15
+
+### Added
+
+- `boundary` CJK tokenizer backend — splits Japanese text at script boundaries (kanji/hiragana/katakana transitions) instead of pure n-gram expansion, producing ~3-5x fewer tokens while maintaining search recall. Now the default backend when `sudachipy` is not installed
+- `fix` parameter for `memory_health_check` — when `True`, automatically re-indexes stale/unindexed notes and removes orphan index entries
+- `DETAILED_EXCLUDE_FIELDS` constant — `auto_keywords` and `work_log_keywords` are now excluded from `mode="detailed"` search results (kept in `mode="debug"`)
+
+### Changed
+
+- `memory_search` docstring now documents mode→behavior mapping (`quick`/`detailed`/`debug` presets and their effect on compact, feedback expansion, and explain settings)
+- `memory_state_add` docstring now includes `replace` parameter usage example and type clarification (`replace` must be a list, not a single string)
+- `memory_evidence` error message when both `paths` and `task_id` are omitted now suggests correct usage
+- `memory_health_check` annotation changed from `READONLY` to `IDEMPOTENT` to reflect the new `fix` parameter
+
 ## [0.5.10] - 2026-03-15
 
 ### Changed

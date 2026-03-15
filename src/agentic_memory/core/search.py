@@ -89,6 +89,10 @@ COMPACT_EXCLUDE_FIELDS = frozenset(
     }
 )
 
+# Fields excluded from detailed mode — verbose CJK n-gram arrays that are only
+# useful for debugging search scoring.  Kept in debug mode.
+DETAILED_EXCLUDE_FIELDS = frozenset({"auto_keywords", "work_log_keywords"})
+
 
 # ---------- Utilities ----------
 def _now_local() -> _dt.datetime:

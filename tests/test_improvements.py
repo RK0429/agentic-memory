@@ -791,3 +791,197 @@ def test_search_global_detailed_omits_expanded(tmp_memory_dir: Path) -> None:
     raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="detailed")
     payload = json.loads(raw)
     assert "expanded" not in payload
+
+
+# ---------- v0.5.11: detailed mode strips auto_keywords/work_log_keywords ----------
+
+
+def test_search_detailed_strips_auto_keywords(tmp_memory_dir: Path) -> None:
+    """mode='detailed' should strip auto_keywords and work_log_keywords."""
+    from agentic_memory.server import memory_search
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search(query="test", mode="detailed", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    for result_item in payload.get("results", []):
+        if isinstance(result_item, list) and len(result_item) >= 2:
+            entry = result_item[1]
+            assert "auto_keywords" not in entry
+            assert "work_log_keywords" not in entry
+
+
+def test_search_debug_keeps_auto_keywords(tmp_memory_dir: Path) -> None:
+    """mode='debug' should keep auto_keywords and work_log_keywords."""
+    from agentic_memory.server import memory_search
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search(query="test", mode="debug", memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    for result_item in payload.get("results", []):
+        if isinstance(result_item, list) and len(result_item) >= 2:
+            entry = result_item[1]
+            assert "auto_keywords" in entry
+
+
+def test_search_global_detailed_strips_auto_keywords(tmp_memory_dir: Path) -> None:
+    """search_global mode='detailed' should strip auto_keywords."""
+    from agentic_memory.server import memory_search_global
+
+    _create_indexed_note(tmp_memory_dir)
+    raw = memory_search_global(query="test", memory_dirs=[str(tmp_memory_dir)], mode="detailed")
+    payload = json.loads(raw)
+    for result_item in payload.get("results", []):
+        if isinstance(result_item, list) and len(result_item) >= 2:
+            entry = result_item[1]
+            assert "auto_keywords" not in entry
+
+
+# ---------- v0.5.11: evidence error message improvement ----------
+
+
+def test_evidence_missing_paths_and_task_id_error_message() -> None:
+    """evidence should give a helpful error when both paths and task_id are omitted."""
+    from agentic_memory.server import memory_evidence
+
+    with pytest.raises(ValueError, match="Either 'paths' or 'task_id' must be provided"):
+        memory_evidence(query="test")
+
+
+# ---------- v0.5.11: health_check fix parameter ----------
+
+
+def test_health_check_fix_reindexes_stale(tmp_memory_dir: Path) -> None:
+    """fix=True should re-index stale notes."""
+    from agentic_memory.core.health import fix_issues
+
+    # Create a note and index it
+    note_dir = tmp_memory_dir / "2026-03-15"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_fix-test.md"
+    note_path.write_text(
+        "# Fix Test\n\n- Date: 2026-03-15\n\n## 目標\n\n- test fix\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    # Touch the note to make it stale
+    import time
+
+    time.sleep(0.1)
+    note_path.write_text(
+        "# Fix Test Updated\n\n- Date: 2026-03-15\n\n## 目標\n\n- updated content\n",
+        encoding="utf-8",
+    )
+
+    result = fix_issues(tmp_memory_dir)
+    assert isinstance(result["reindexed"], list)
+    assert result["post_fix_summary"].startswith("正常")
+
+
+def test_health_check_fix_removes_orphans(tmp_memory_dir: Path) -> None:
+    """fix=True should remove orphan index entries."""
+    from agentic_memory.core.health import fix_issues
+
+    # Add an orphan entry to the index
+    index_path = tmp_memory_dir / "_index.jsonl"
+    with index_path.open("a", encoding="utf-8") as f:
+        f.write(
+            json.dumps({"path": "nonexistent/orphan.md", "title": "orphan"}, ensure_ascii=False)
+            + "\n"
+        )
+
+    result = fix_issues(tmp_memory_dir)
+    assert result["orphans_removed"] >= 1
+    assert result["post_fix_summary"].startswith("正常")
+
+
+def test_health_check_server_fix_false_returns_check(tmp_memory_dir: Path) -> None:
+    """memory_health_check(fix=False) should return the standard check report."""
+    from agentic_memory.server import memory_health_check
+
+    raw = memory_health_check(fix=False, memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert "summary" in payload
+    assert "orphan_entries" in payload
+
+
+def test_health_check_server_fix_true_returns_fix_report(tmp_memory_dir: Path) -> None:
+    """memory_health_check(fix=True) should return the fix report."""
+    from agentic_memory.server import memory_health_check
+
+    raw = memory_health_check(fix=True, memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert "reindexed" in payload
+    assert "post_fix_summary" in payload
+
+
+# ---------- v0.5.11: boundary CJK tokenizer ----------
+
+
+def test_boundary_cjk_tokens_basic() -> None:
+    """boundary tokenizer should split at script boundaries."""
+    from agentic_memory.core.tokenizer import _boundary_cjk_tokens
+
+    tokens = _boundary_cjk_tokens("動作テスト")
+    assert "動作" in tokens
+    assert "テスト" in tokens
+    # Should NOT have n-gram fragments like "作テ"
+    assert "作テ" not in tokens
+
+
+def test_boundary_cjk_tokens_fewer_than_ngrams() -> None:
+    """boundary tokenizer should produce significantly fewer tokens than n-grams."""
+    from agentic_memory.core.tokenizer import _boundary_cjk_tokens, _cjk_ngrams
+
+    text = "動作テストとユーザビリティレビュー"
+    boundary_tokens = _boundary_cjk_tokens(text)
+    ngram_tokens = _cjk_ngrams(text)
+    assert len(boundary_tokens) < len(ngram_tokens)
+
+
+def test_boundary_cjk_tokens_skips_particles() -> None:
+    """boundary tokenizer should skip single-char hiragana particles."""
+    from agentic_memory.core.tokenizer import _boundary_cjk_tokens
+
+    tokens = _boundary_cjk_tokens("検索と分析")
+    assert "と" not in tokens
+    assert "検索" in tokens
+    assert "分析" in tokens
+
+
+def test_tokenizer_boundary_backend_selected_by_default() -> None:
+    """Without sudachipy, the boundary backend should be selected."""
+    from agentic_memory.core.tokenizer import _get_tokenizer_backend, is_sudachi_available
+
+    if not is_sudachi_available():
+        assert _get_tokenizer_backend({}) == "boundary"
+
+
+def test_tokenizer_boundary_backend_explicit() -> None:
+    """Explicit boundary backend selection should work."""
+    from agentic_memory.core.tokenizer import _get_tokenizer_backend
+
+    assert _get_tokenizer_backend({"tokenizer": {"backend": "boundary"}}) == "boundary"
+
+
+def test_tokenize_with_boundary_backend() -> None:
+    """tokenize() with boundary backend should produce fewer CJK tokens."""
+    boundary_cfg = {"tokenizer": {"backend": "boundary"}}
+    ngram_cfg = {"tokenizer": {"backend": "ngram"}}
+    text = "メモリ検索の最適化テスト"
+    boundary_tokens = tokenizer.tokenize(text, config=boundary_cfg)
+    ngram_tokens = tokenizer.tokenize(text, config=ngram_cfg)
+    cjk_boundary = [t for t in boundary_tokens if not t.isascii()]
+    cjk_ngram = [t for t in ngram_tokens if not t.isascii()]
+    assert len(cjk_boundary) < len(cjk_ngram)
+
+
+def test_detailed_exclude_fields_defined() -> None:
+    """DETAILED_EXCLUDE_FIELDS should contain auto_keywords and work_log_keywords."""
+    from agentic_memory.core.search import DETAILED_EXCLUDE_FIELDS
+
+    assert "auto_keywords" in DETAILED_EXCLUDE_FIELDS
+    assert "work_log_keywords" in DETAILED_EXCLUDE_FIELDS

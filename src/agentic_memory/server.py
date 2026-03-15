@@ -181,6 +181,33 @@ def _strip_compact_fields(result: dict) -> dict:
     return result
 
 
+def _strip_detailed_fields(result: dict) -> dict:
+    """Remove verbose CJK n-gram arrays from detailed mode results."""
+    exclude = search.DETAILED_EXCLUDE_FIELDS
+    stripped_results = []
+    for item in result.get("results", []):
+        if isinstance(item, tuple | list) and len(item) >= 2:
+            score, entry, *rest = item
+            if dataclasses.is_dataclass(entry) and not isinstance(entry, type):
+                entry_dict = dataclasses.asdict(entry)
+                entry_dict = {k: v for k, v in entry_dict.items() if k not in exclude}
+            elif isinstance(entry, dict):
+                entry_dict = {k: v for k, v in entry.items() if k not in exclude}
+            else:
+                stripped_results.append(item)
+                continue
+            detail = rest[0] if rest else {}
+            if detail:
+                stripped_results.append((score, entry_dict, detail))
+            else:
+                stripped_results.append((score, entry_dict))
+        else:
+            stripped_results.append(item)
+    result = dict(result)
+    result["results"] = stripped_results
+    return result
+
+
 TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
 TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
 
@@ -344,8 +371,10 @@ def memory_state_add(
     Use this for incremental state updates. For full section replacement, use memory_state_set.
     `section` is the target state section key/name.
     `items` is a list of new bullet items to prepend and de-duplicate.
-    `replace` is an optional list of substring patterns; existing items matching any pattern
-    are removed before adding new items (upsert semantics: remove old + add new in one step).
+    `replace` is an optional list of substring patterns (e.g., `["old item", "pattern"]`);
+    existing items matching any pattern are removed before adding new items
+    (upsert semantics: remove old + add new in one step).
+    Note: `replace` must be a list, not a single string.
     Returns command output including updated state path.
     """
     resolved = _resolve_dir(memory_dir)
@@ -490,10 +519,15 @@ def memory_search(
     Do not use for full-text reading of a specific note — use memory_evidence instead.
     Supports quoted phrases, +must, -exclude, field:term (with aliases like tag:),
     and date-range filters.
-    `mode` controls output verbosity: `quick` (default; compact, minimal context),
-    `detailed` (full fields), `debug` (with scoring explanation).
-    `no_expand`, `no_cjk_expand`, `no_fuzzy`, `no_rerank` disable
-    individual search features independently of mode.
+    `mode` controls output verbosity and sets search defaults:
+      - `quick` (default): compact output, strips verbose fields and settings echo-back.
+        Sets: compact=True, no_feedback_expand=True.
+      - `detailed`: full metadata except auto_keywords and work_log_keywords.
+        Sets: compact=False, no_feedback_expand=False.
+      - `debug`: all fields + scoring explanation (explain_summary, expanded QueryTerm objects).
+        Sets: compact=False, no_feedback_expand=False, explain=True.
+    `no_expand`, `no_cjk_expand`, `no_fuzzy`, `no_rerank` override individual features
+    regardless of mode — use these only when mode presets are insufficient.
     Returns ranked results, warnings, and match metadata as JSON.
     """
     # Derive compact/explain/no_feedback_expand from mode
@@ -529,6 +563,8 @@ def memory_search(
     )
     if compact:
         result = _strip_compact_fields(result)
+    elif mode == "detailed":
+        result = _strip_detailed_fields(result)
     # Strip verbose expanded QueryTerm objects unless debug mode
     if mode != "debug":
         result = dict(result)
@@ -596,7 +632,11 @@ def memory_evidence(
     elif task_id is not None:
         resolved_paths = _resolve_paths_from_task_id(task_id, resolved)
     else:
-        raise ValueError("Either paths or task_id must be provided.")
+        raise ValueError(
+            "Either 'paths' or 'task_id' must be provided. "
+            "Use 'paths' to specify note file paths directly, "
+            "or 'task_id' to auto-resolve paths from the index."
+        )
 
     return evidence.generate_evidence_pack(query=query, paths=resolved_paths, max_lines=max_lines)
 
@@ -614,17 +654,22 @@ def memory_stats(memory_dir: str | None = None) -> str:
     return _serialize_json(result)
 
 
-@mcp.tool(annotations=_READONLY)
-def memory_health_check(memory_dir: str | None = None) -> str:
+@mcp.tool(annotations=_IDEMPOTENT)
+def memory_health_check(
+    fix: bool = False,
+    memory_dir: str | None = None,
+) -> str:
     """Check index integrity and consistency of the memory directory.
 
     Use this to diagnose index issues or verify memory directory health.
     Detects orphan index entries (no matching note file), unindexed notes (no index entry),
     stale entries (note newer than index), and validates state/config file parsability.
+    When `fix` is True, automatically repairs detected issues: re-indexes stale and
+    unindexed notes, removes orphan entries from the index.
     Returns a structured report with a human-readable summary.
     """
     resolved = _resolve_dir(memory_dir)
-    result = health.health_check(resolved)
+    result = health.fix_issues(resolved) if fix else health.health_check(resolved)
     return _serialize_json(result)
 
 
@@ -714,6 +759,8 @@ def memory_search_global(
     )
     if compact:
         result = _strip_compact_fields(result)
+    elif mode == "detailed":
+        result = _strip_detailed_fields(result)
     if mode != "debug":
         result = dict(result)
         result.pop("expanded", None)

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agentic_memory.core import index as index_module
 from agentic_memory.core import signals, state
 from agentic_memory.core.stats import _iter_note_paths, _normalize_note_path
 
@@ -172,3 +173,52 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
     if config_reason is not None:
         result["config_invalid_reason"] = config_reason
     return result
+
+
+def fix_issues(memory_dir: Path) -> dict[str, Any]:
+    """Re-index stale/unindexed notes and remove orphan index entries.
+
+    Returns a report with counts of fixed issues.
+    """
+    report = health_check(memory_dir)
+    index_path = memory_dir / "_index.jsonl"
+    fixed: dict[str, Any] = {
+        "reindexed": [],
+        "failed": [],
+        "orphans_removed": 0,
+    }
+
+    # Re-index stale entries
+    paths_to_reindex: list[str] = list(report["stale_entries"]) + list(report["unindexed_notes"])
+    for path_text in paths_to_reindex:
+        resolved = _resolve_note_path(path_text, memory_dir)
+        if not resolved.exists():
+            fixed["failed"].append({"path": path_text, "error": "file not found"})
+            continue
+        try:
+            index_module.index_note(
+                note_path=resolved,
+                index_path=index_path,
+                dailynote_dir=memory_dir,
+                no_dense=True,
+            )
+            fixed["reindexed"].append(path_text)
+        except Exception as exc:
+            fixed["failed"].append({"path": path_text, "error": str(exc)})
+
+    # Remove orphan entries using the index module's lock mechanism
+    orphans = set(report["orphan_entries"])
+    if orphans:
+        entries, _ = _load_index_entries(index_path)
+        kept: list[dict[str, Any]] = [
+            entry for entry in entries if str(entry.get("path", "")).strip() not in orphans
+        ]
+        removed = len(entries) - len(kept)
+        if removed > 0:
+            index_module._replace_all(index_path, kept)
+            fixed["orphans_removed"] = removed
+
+    # Re-run health check to get updated summary
+    post_check = health_check(memory_dir)
+    fixed["post_fix_summary"] = post_check["summary"]
+    return fixed
