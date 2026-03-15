@@ -111,6 +111,28 @@ def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
     assert "Task B" in output
 
 
+def test_memory_state_add_accepts_section_alias_and_string_replace(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    memory_state_add(section="open", items=["Old task"], memory_dir=str(memory_dir))
+    result = memory_state_add(
+        section="open_actions",
+        items=["New task"],
+        replace="Old task",
+        memory_dir=str(memory_dir),
+    )
+
+    payload = json.loads(result)
+    assert payload["removed"] == 1
+
+    output = memory_state_show(section="open", memory_dir=str(memory_dir))
+    assert "New task" in output
+    assert "Old task" not in output
+
+
 def test_memory_state_set(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir

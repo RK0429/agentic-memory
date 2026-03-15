@@ -537,6 +537,24 @@ def test_cmd_add_replace_multiple_patterns(sample_state_path: Path) -> None:
     assert items[1].text == "ドキュメント更新"
 
 
+def test_cmd_add_accepts_single_replace_string_and_section_alias(sample_state_path: Path) -> None:
+    """cmd_add accepts a single replace string and extra section aliases."""
+    assert state.cmd_set(sample_state_path, "open", ["legacy item"]) == 0
+
+    rc = state.cmd_add(
+        sample_state_path,
+        "open_actions",
+        ["replacement item"],
+        replace="legacy item",
+    )
+    loaded = state.load_state(sample_state_path)
+    items = loaded[state.STATE_SHORT_KEYS["open"]]
+
+    assert rc == 0
+    assert len(items) == 1
+    assert items[0].text == "replacement item"
+
+
 def test_expire_stale_items_dry_run(sample_state_path: Path) -> None:
     stale = (dt.datetime.now() - dt.timedelta(days=45)).strftime("%Y-%m-%d %H:%M")
     fresh = (dt.datetime.now() - dt.timedelta(days=5)).strftime("%Y-%m-%d %H:%M")

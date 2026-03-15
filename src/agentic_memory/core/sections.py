@@ -95,6 +95,47 @@ for _sk, _ja in STATE_SHORT_KEYS.items():
     if _en:
         _SHORT_KEY_REVERSE[_en] = _sk
 
+STATE_EXTRA_ALIASES: dict[str, str] = {
+    "current_focus": "focus",
+    "open_actions": "open",
+    "open_threads": "open",
+    "next_actions": "open",
+    "key_decisions": "decisions",
+    "skill_backlog": "skills",
+    "improvement_backlog": "improvements",
+}
+
+
+def _normalize_lookup_key(value: str) -> str:
+    """Normalize lookup keys for permissive snake/kebab/case-insensitive matching."""
+    return "".join(ch.lower() for ch in value if ch.isalnum())
+
+
+_NORMALIZED_SHORT_KEY_REVERSE: dict[str, str] = {}
+for _name, _sk in _SHORT_KEY_REVERSE.items():
+    _NORMALIZED_SHORT_KEY_REVERSE[_normalize_lookup_key(_name)] = _sk
+for _alias, _sk in STATE_EXTRA_ALIASES.items():
+    _NORMALIZED_SHORT_KEY_REVERSE[_normalize_lookup_key(_alias)] = _sk
+
+
+def _unknown_section_key_error(key: str) -> ValueError:
+    accepted = ", ".join(
+        [
+            "focus",
+            "open",
+            "decisions",
+            "pitfalls",
+            "skills",
+            "improvements",
+            "current_focus",
+            "open_actions",
+            "key_decisions",
+            "skill_backlog",
+            "improvement_backlog",
+        ]
+    )
+    return ValueError(f"Unknown section key: {key!r}. Use one of: {accepted}")
+
 
 def resolve_short_key(key: str) -> str:
     """ショートキー / 日本語名 / 英語エイリアスから日本語正規名に解決。
@@ -116,7 +157,11 @@ def resolve_short_key(key: str) -> str:
     for name, sk in _SHORT_KEY_REVERSE.items():
         if name.lower() == key_lower:
             return STATE_SHORT_KEYS[sk]
-    raise ValueError(f"Unknown section key: {key!r}")
+    normalized = _normalize_lookup_key(key)
+    if normalized in _NORMALIZED_SHORT_KEY_REVERSE:
+        sk = _NORMALIZED_SHORT_KEY_REVERSE[normalized]
+        return STATE_SHORT_KEYS[sk]
+    raise _unknown_section_key_error(key)
 
 
 def get_cap(key: str) -> int:
@@ -128,4 +173,8 @@ def get_cap(key: str) -> int:
     if key in _SHORT_KEY_REVERSE:
         sk = _SHORT_KEY_REVERSE[key]
         return STATE_CAPS[sk]
-    raise ValueError(f"Unknown section key: {key!r}")
+    normalized = _normalize_lookup_key(key)
+    if normalized in _NORMALIZED_SHORT_KEY_REVERSE:
+        sk = _NORMALIZED_SHORT_KEY_REVERSE[normalized]
+        return STATE_CAPS[sk]
+    raise _unknown_section_key_error(key)

@@ -606,7 +606,7 @@ def cmd_add(
     state_path: Path,
     section: str,
     items: list[str],
-    replace: list[str] | None = None,
+    replace: list[str] | str | None = None,
 ) -> int:
     try:
         section_name = _resolve_section_or_raise(section)
@@ -619,9 +619,12 @@ def cmd_add(
     existing = sections.get(section_name, [])
     before_count = len(existing)
     removed_count = 0
-    if replace:
+    replace_patterns = [replace] if isinstance(replace, str) else replace
+    if replace_patterns:
         filtered = [
-            item for item in existing if not any(p.lower() in item.text.lower() for p in replace)
+            item
+            for item in existing
+            if not any(p.lower() in item.text.lower() for p in replace_patterns)
         ]
         removed_count = before_count - len(filtered)
         existing = filtered

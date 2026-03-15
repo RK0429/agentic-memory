@@ -395,18 +395,19 @@ def memory_state_show(
 def memory_state_add(
     section: str,
     items: list[str],
-    replace: list[str] | None = None,
+    replace: list[str] | str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Add items to a state section with optional pattern-based replacement.
 
     Use this for incremental state updates. For full section replacement, use memory_state_set.
-    `section` is the target state section key/name.
+    `section` is the target state section key/name. Common aliases like `open_actions`
+    and `current_focus` are also accepted.
     `items` is a list of new bullet items to prepend and de-duplicate.
     `replace` is an optional list of substring patterns (e.g., `["old item", "pattern"]`);
     existing items matching any pattern are removed before adding new items
     (upsert semantics: remove old + add new in one step).
-    Note: `replace` must be a list, not a single string.
+    A single string is also accepted and treated as a one-item list.
     Returns command output including updated state path.
     """
     resolved = _resolve_dir(memory_dir)
