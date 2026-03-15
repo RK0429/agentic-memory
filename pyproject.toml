@@ -1,6 +1,6 @@
 [project]
 name = "agmemory"
-version = "0.6.1"
+version = "0.6.2"
 description = "Persistent memory system for AI agents — session notes, rolling state, and RAG search"
 readme = "README.md"
 license = "Apache-2.0"
