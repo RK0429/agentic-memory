@@ -468,14 +468,16 @@ def deduplicate(items: list[StateItem]) -> list[StateItem]:
     return out
 
 
-def enforce_cap(items: list[StateItem], cap: int) -> list[StateItem]:
-    """cap を超過する場合は末尾（最古=リスト末尾）を切り捨て"""
+def enforce_cap(items: list[StateItem], cap: int) -> tuple[list[StateItem], list[StateItem]]:
+    """cap を超過する場合は末尾（最古=リスト末尾）を切り捨て。
+
+    Returns:
+        (kept, dropped) tuple.
+    """
     safe_cap = max(cap, 0)
     if len(items) > safe_cap:
-        dropped = items[safe_cap:]
-        for item in dropped:
-            print(f"Cap exceeded, dropping: [{item.date}] {item.text}", file=sys.stderr)
-    return items[:safe_cap]
+        return items[:safe_cap], items[safe_cap:]
+    return items, []
 
 
 def is_stale(item: StateItem, stale_days: int) -> bool:
@@ -583,7 +585,7 @@ def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
 
     sections = load_state(state_path)
     before_count = len(sections.get(section_name, []))
-    sections[section_name] = enforce_cap(deduplicate(new_items), get_cap(section_name))
+    sections[section_name], _ = enforce_cap(deduplicate(new_items), get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
     summary = json.dumps(
@@ -624,7 +626,7 @@ def cmd_add(
         removed_count = before_count - len(filtered)
         existing = filtered
     merged = deduplicate(new_items + existing)
-    sections[section_name] = enforce_cap(merged, get_cap(section_name))
+    sections[section_name], _ = enforce_cap(merged, get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
     summary = json.dumps(
@@ -870,9 +872,13 @@ def cmd_cleanup(
     return 0
 
 
-def _auto_prune(sections: dict[str, list[StateItem]], max_entries: int = 20) -> None:
-    """Trim each rolling section to max_entries by dropping the oldest timestamps."""
+def _auto_prune(sections: dict[str, list[StateItem]], max_entries: int = 20) -> list[StateItem]:
+    """Trim each rolling section to max_entries by dropping the oldest timestamps.
+
+    Returns list of dropped items.
+    """
     safe_max = max(max_entries, 0)
+    all_dropped: list[StateItem] = []
     for sec in SECTION_ORDER:
         items = sections.get(sec, [])
         if len(items) <= safe_max:
@@ -884,9 +890,9 @@ def _auto_prune(sections: dict[str, list[StateItem]], max_entries: int = 20) -> 
         )
         keep_indices = {idx for idx, _ in ranked[:safe_max]}
         dropped = [item for idx, item in enumerate(items) if idx not in keep_indices]
-        for item in dropped:
-            print(f"Auto-prune, dropping: [{item.date}] {item.text}", file=sys.stderr)
+        all_dropped.extend(dropped)
         sections[sec] = [item for idx, item in enumerate(items) if idx in keep_indices]
+    return all_dropped
 
 
 def _extract_from_note(note_text: str) -> dict[str, list[str]]:
@@ -1040,10 +1046,16 @@ def _merge_from_note(
     no_auto_improve: bool = False,
     auto_improve_add: bool = False,
     max_entries: int = 20,
-) -> tuple[dict[str, list[StateItem]], list[str], int]:
+) -> tuple[dict[str, list[StateItem]], list[str], int, list[str]]:
+    """Merge note contents into rolling state.
+
+    Returns:
+        (sections, updated_sections, stale_count, warnings) tuple.
+    """
     note_text = note_path.read_text(encoding="utf-8", errors="ignore")
     sections = load_state(state_path)
     extracted = _extract_from_note(note_text)
+    merge_warnings: list[str] = []
 
     for sec in _FROM_NOTE_MERGE_TARGETS:
         new_items: list[StateItem] = []
@@ -1053,12 +1065,19 @@ def _merge_from_note(
             except ValueError:
                 continue
         merged = deduplicate(new_items + sections.get(sec, []))
-        sections[sec] = enforce_cap(merged, _FROM_NOTE_CAP_BY_SECTION[sec])
+        sections[sec], dropped = enforce_cap(merged, _FROM_NOTE_CAP_BY_SECTION[sec])
+        for item in dropped:
+            merge_warnings.append(f"Cap exceeded ({sec}), dropping: [{item.date}] {item.text}")
 
-    sections[STATE_SHORT_KEYS["improvements"]] = enforce_cap(
+    sections[STATE_SHORT_KEYS["improvements"]], dropped = enforce_cap(
         deduplicate(sections.get(STATE_SHORT_KEYS["improvements"], [])),
         _FROM_NOTE_CAP_BY_SECTION[STATE_SHORT_KEYS["improvements"]],
     )
+    for item in dropped:
+        merge_warnings.append(
+            f"Cap exceeded ({STATE_SHORT_KEYS['improvements']}), "
+            f"dropping: [{item.date}] {item.text}"
+        )
 
     # Auto-improve: analyze signals
     if not no_auto_improve:
@@ -1074,24 +1093,29 @@ def _merge_from_note(
                 merged = deduplicate(
                     auto_items + sections.get(STATE_SHORT_KEYS["improvements"], [])
                 )
-                sections[STATE_SHORT_KEYS["improvements"]] = enforce_cap(
+                sections[STATE_SHORT_KEYS["improvements"]], dropped = enforce_cap(
                     merged, _FROM_NOTE_CAP_BY_SECTION[STATE_SHORT_KEYS["improvements"]]
                 )
-                print(
-                    f"Auto-improve: {len(auto_items)} candidate(s) added to improvement backlog",
-                    file=sys.stderr,
+                for item in dropped:
+                    merge_warnings.append(
+                        f"Cap exceeded ({STATE_SHORT_KEYS['improvements']}), "
+                        f"dropping: [{item.date}] {item.text}"
+                    )
+                merge_warnings.append(
+                    f"Auto-improve: {len(auto_items)} candidate(s) added to improvement backlog"
                 )
             else:
                 # Default: report candidates without adding
-                print(
+                candidates = [item.text for item in auto_items]
+                merge_warnings.append(
                     f"Auto-improve: {len(auto_items)} candidate(s) detected "
-                    "(use --auto-improve-add to add):",
-                    file=sys.stderr,
+                    f"(use auto_improve_add to add): {candidates}"
                 )
-                for item in auto_items:
-                    print(f"  - {item.text}", file=sys.stderr)
 
-    _auto_prune(sections, max_entries=max_entries)
+    pruned = _auto_prune(sections, max_entries=max_entries)
+    for item in pruned:
+        merge_warnings.append(f"Auto-prune, dropping: [{item.date}] {item.text}")
+
     save_state(state_path, sections)
 
     stale_count = sum(
@@ -1100,7 +1124,7 @@ def _merge_from_note(
     updated_sections = list(extracted.keys())
     if STATE_SHORT_KEYS["improvements"] not in updated_sections:
         updated_sections.append(STATE_SHORT_KEYS["improvements"])
-    return sections, updated_sections, stale_count
+    return sections, updated_sections, stale_count, merge_warnings
 
 
 def cmd_from_note(
@@ -1116,7 +1140,7 @@ def cmd_from_note(
 
     try:
         _validate_non_negative("max-entries", max_entries)
-        sections_data, updated_sections, stale_count = _merge_from_note(
+        sections_data, updated_sections, stale_count, merge_warnings = _merge_from_note(
             state_path=state_path,
             note_path=note_path,
             no_auto_improve=no_auto_improve,
@@ -1131,18 +1155,18 @@ def cmd_from_note(
         return 2
 
     if stale_count > 0:
-        print(f"Warning: {stale_count} stale items found (7+ days old)", file=sys.stderr)
+        merge_warnings.append(f"{stale_count} stale items found (7+ days old)")
 
-    summary = json.dumps(
-        {
-            "path": str(state_path),
-            "note": str(note_path),
-            "updated_sections": updated_sections,
-            "stale_count": stale_count,
-            "section_counts": {sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER},
-        },
-        ensure_ascii=False,
-    )
+    result: dict[str, Any] = {
+        "path": str(state_path),
+        "note": str(note_path),
+        "updated_sections": updated_sections,
+        "stale_count": stale_count,
+        "section_counts": {sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER},
+    }
+    if merge_warnings:
+        result["warnings"] = merge_warnings
+    summary = json.dumps(result, ensure_ascii=False)
     print(summary)
     return 0
 

@@ -132,30 +132,68 @@ def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
     return resolved
 
 
-def _strip_compact_fields(result: dict) -> dict:
-    """Remove verbose index fields and settings echo-back from compact mode results."""
-    exclude = search.COMPACT_EXCLUDE_FIELDS
-    stripped_results = []
-    for item in result.get("results", []):
+def _entry_to_dict(entry: object, exclude: frozenset[str] = frozenset()) -> dict:
+    """Convert an IndexEntry (dataclass or dict) to a plain dict, excluding specified fields."""
+    if dataclasses.is_dataclass(entry) and not isinstance(entry, type):
+        entry_dict = dataclasses.asdict(entry)
+    elif isinstance(entry, dict):
+        entry_dict = dict(entry)
+    else:
+        return {}
+    if exclude:
+        entry_dict = {k: v for k, v in entry_dict.items() if k not in exclude}
+    return entry_dict
+
+
+def _strip_null_empty(d: dict) -> dict:
+    """Remove keys with None or empty string (``""``) values from a dict.
+
+    Empty lists and dicts are preserved intentionally — they carry semantic
+    meaning (e.g. ``tags: []`` means "no tags", not "unknown").
+    """
+    return {k: v for k, v in d.items() if v is not None and v != ""}
+
+
+def _flatten_results(
+    results: list,
+    exclude: frozenset[str] = frozenset(),
+    *,
+    strip_empty: bool = False,
+    include_detail: bool = False,
+) -> list[Any]:
+    """Convert (score, entry, detail?) tuples to flat {score, ...entry} objects.
+
+    Applied only at the MCP serialization boundary (server.py). Internal APIs
+    (search.search, search.search_global) continue to use tuple format.
+    """
+    flat: list[Any] = []
+    for item in results:
         if isinstance(item, tuple | list) and len(item) >= 2:
             score, entry, *rest = item
-            if dataclasses.is_dataclass(entry) and not isinstance(entry, type):
-                entry_dict = dataclasses.asdict(entry)
-                entry_dict = {k: v for k, v in entry_dict.items() if k not in exclude}
-            elif isinstance(entry, dict):
-                entry_dict = {k: v for k, v in entry.items() if k not in exclude}
-            else:
-                stripped_results.append(item)
+            entry_dict = _entry_to_dict(entry, exclude)
+            if not entry_dict:
+                flat.append(item)
                 continue
+            obj: dict[str, Any] = {"score": score, **entry_dict}
             detail = rest[0] if rest else {}
-            if detail:
-                stripped_results.append((score, entry_dict, detail))
-            else:
-                stripped_results.append((score, entry_dict))
+            if include_detail and detail:
+                obj["score_detail"] = detail
+            if strip_empty:
+                obj = _strip_null_empty(obj)
+            flat.append(obj)
         else:
-            stripped_results.append(item)
+            flat.append(item)
+    return flat
+
+
+def _strip_compact_fields(result: dict) -> dict:
+    """Remove verbose index fields and settings echo-back from compact mode results."""
     result = dict(result)
-    result["results"] = stripped_results
+    result["results"] = _flatten_results(
+        result.get("results", []),
+        search.COMPACT_EXCLUDE_FIELDS,
+        strip_empty=True,
+    )
     # Strip empty/null metadata fields
     for key in ("feedback_source_note", "feedback_terms_used", "suggestions"):
         val = result.get(key)
@@ -183,28 +221,22 @@ def _strip_compact_fields(result: dict) -> dict:
 
 def _strip_detailed_fields(result: dict) -> dict:
     """Remove verbose CJK n-gram arrays from detailed mode results."""
-    exclude = search.DETAILED_EXCLUDE_FIELDS
-    stripped_results = []
-    for item in result.get("results", []):
-        if isinstance(item, tuple | list) and len(item) >= 2:
-            score, entry, *rest = item
-            if dataclasses.is_dataclass(entry) and not isinstance(entry, type):
-                entry_dict = dataclasses.asdict(entry)
-                entry_dict = {k: v for k, v in entry_dict.items() if k not in exclude}
-            elif isinstance(entry, dict):
-                entry_dict = {k: v for k, v in entry.items() if k not in exclude}
-            else:
-                stripped_results.append(item)
-                continue
-            detail = rest[0] if rest else {}
-            if detail:
-                stripped_results.append((score, entry_dict, detail))
-            else:
-                stripped_results.append((score, entry_dict))
-        else:
-            stripped_results.append(item)
     result = dict(result)
-    result["results"] = stripped_results
+    result["results"] = _flatten_results(
+        result.get("results", []),
+        search.DETAILED_EXCLUDE_FIELDS,
+        include_detail=True,
+    )
+    return result
+
+
+def _strip_debug_fields(result: dict) -> dict:
+    """Flatten results for debug mode (include score_detail)."""
+    result = dict(result)
+    result["results"] = _flatten_results(
+        result.get("results", []),
+        include_detail=True,
+    )
     return result
 
 
@@ -565,6 +597,8 @@ def memory_search(
         result = _strip_compact_fields(result)
     elif mode == "detailed":
         result = _strip_detailed_fields(result)
+    else:
+        result = _strip_debug_fields(result)
     # Strip verbose expanded QueryTerm objects unless debug mode
     if mode != "debug":
         result = dict(result)
@@ -736,7 +770,9 @@ def memory_search_global(
 
     Use this to find notes across different projects or workspaces.
     For searching within a single memory directory, use memory_search instead.
-    `memory_dirs` is a list of memory directory paths to search.
+    `memory_dirs` is the list of memory directory paths to search.
+    `memory_dir`, if provided, is appended to `memory_dirs` for convenience
+    (allows searching a single directory without wrapping it in a list).
     Results are merged, scored, and sorted; each result includes `source_dir`.
     `mode` controls output verbosity: `quick` (default), `detailed`, `debug`.
     `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
@@ -747,6 +783,10 @@ def memory_search_global(
     no_feedback_expand = mode == "quick"
 
     dirs = [Path(d) for d in memory_dirs]
+    if memory_dir:
+        additional = Path(memory_dir)
+        if additional not in dirs:
+            dirs.append(additional)
     result = search.search_global(
         query=query,
         memory_dirs=dirs,
@@ -761,6 +801,8 @@ def memory_search_global(
         result = _strip_compact_fields(result)
     elif mode == "detailed":
         result = _strip_detailed_fields(result)
+    else:
+        result = _strip_debug_fields(result)
     if mode != "debug":
         result = dict(result)
         result.pop("expanded", None)

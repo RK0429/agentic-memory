@@ -990,7 +990,10 @@ def search(
         fallback_engine = "rg" if has_rg else "python"
         warnings.append(f"Index returned 0 results. Retrying with {fallback_engine} engine.")
         used_engine = fallback_engine
-        results = _search_with_engine(used_engine, expanded, dn_dir, top_n, explain, has_rg)
+        # Use original query terms (not expanded) for fallback to reduce noise
+        # from CJK n-gram fragments causing spurious matches.
+        fallback_terms = qterms if qterms else expanded
+        results = _search_with_engine(used_engine, fallback_terms, dn_dir, top_n, explain, has_rg)
         total_found = len(results)
 
     # W38: rerank auto-enable based on index size

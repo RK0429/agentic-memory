@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-15
+
+### Added
+
+- Search results are now returned as flat objects (`{"score": 77.9, "path": "...", ...}`) instead of `[score, entry]` tuples in MCP tool responses, improving agent ergonomics. Internal APIs retain tuple format for backward compatibility
+- `memory_search_global` now accepts `memory_dir` as a convenience fallback — if provided, it is appended to `memory_dirs`, allowing single-directory search without wrapping in a list
+- `memory_state_from_note` now includes a `warnings` field in JSON responses for cap-exceeded, auto-prune, auto-improve, and stale-item notifications
+
+### Changed
+
+- **Breaking (internal API)**: `enforce_cap()` now returns a `(kept, dropped)` tuple instead of just the kept list. All internal callers updated
+- `_auto_prune()` now returns a list of dropped items instead of printing to stderr
+- `memory_state_from_note` no longer emits warnings to stderr; all diagnostics (cap exceeded, auto-prune, auto-improve candidates, stale items) are included in the structured JSON response
+- Quick mode (`mode="quick"`) now strips `None` and empty-string (`""`) fields from each search result entry, further reducing context consumption
+- Fallback search (triggered when index returns 0 results) now uses original query terms instead of expanded terms, reducing noise from CJK n-gram fragment matches
+
 ## [0.5.11] - 2026-03-15
 
 ### Added

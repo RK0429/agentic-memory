@@ -174,8 +174,18 @@ def test_enforce_cap() -> None:
         state.StateItem(date="2026-01-01 09:01", text="b"),
         state.StateItem(date="2026-01-01 09:02", text="c"),
     ]
-    capped = state.enforce_cap(items, 2)
-    assert [item.text for item in capped] == ["a", "b"]
+    kept, dropped = state.enforce_cap(items, 2)
+    assert [item.text for item in kept] == ["a", "b"]
+    assert [item.text for item in dropped] == ["c"]
+
+
+def test_enforce_cap_no_overflow() -> None:
+    items = [
+        state.StateItem(date="2026-01-01 09:00", text="a"),
+    ]
+    kept, dropped = state.enforce_cap(items, 3)
+    assert [item.text for item in kept] == ["a"]
+    assert dropped == []
 
 
 def test_is_stale() -> None:
@@ -341,7 +351,7 @@ def test_cmd_cleanup_dry_run_keeps_files(tmp_memory_dir: Path, capsys) -> None:
     assert stale.exists()
 
 
-def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
+def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) -> None:
     rc = state.cmd_from_note(
         sample_state_path,
         sample_note_path,
@@ -349,6 +359,8 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
         max_entries=20,
     )
     loaded = state.load_state(sample_state_path)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
 
     assert rc == 0
     assert any(item.text == "Fix login failure" for item in loaded[state.STATE_SHORT_KEYS["focus"]])
@@ -363,6 +375,8 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path) -> None:
         item.text == "Monitor 401 spikes after deploy."
         for item in loaded[state.STATE_SHORT_KEYS["pitfalls"]]
     )
+    # Warnings are now in JSON, not stderr
+    assert "warnings" not in payload or isinstance(payload.get("warnings"), list)
 
 
 def test_extract_from_note_focus_no_next() -> None:
