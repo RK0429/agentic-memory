@@ -17,3 +17,4 @@ htmlcov/
 .venv/
 venv/
 tmp/
+memory/
