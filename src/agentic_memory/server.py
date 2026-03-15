@@ -476,9 +476,16 @@ def memory_state_from_note(
     """Update rolling state using a note file.
 
     `note_path` points to the source note.
-    Auto-improve behavior is controlled by `no_auto_improve` and `auto_improve_add`.
-    `max_entries` limits section lengths after merge.
-    Returns command output and warnings from merge processing.
+    After merging note sections into rolling state, SIGFB signals in the note are
+    analyzed to detect improvement candidates for the backlog:
+      - Default (`no_auto_improve=False, auto_improve_add=False`): candidates are
+        reported in `warnings` but not added to the backlog.
+      - `auto_improve_add=True`: candidates are added to the improvements backlog.
+      - `no_auto_improve=True`: skip signal analysis entirely.
+    `max_entries` limits section lengths after merge (excess items are auto-pruned
+    and reported in `warnings`).
+    Returns JSON with `updated_sections`, `section_counts`, `stale_count`,
+    and `warnings` (cap-exceeded, auto-prune, auto-improve candidates, stale items).
     """
     resolved = _resolve_dir(memory_dir)
     resolved_note = _resolve_note_path(note_path, resolved)
@@ -509,6 +516,11 @@ def memory_auto_restore(
     Priority: project_state > agent_state > evidence.
     When truncated, `truncated` and `truncated_reason` are included in the response.
     Convenience wrapper for session recovery.
+    Returns JSON with fields: `agent_id`, `relay_session_id`, `project_state`
+    (dict with focus/open/decisions/pitfalls/skills/improvements lists),
+    `agent_state` (same structure, or null), `agent_state_path`, `active_tasks`
+    (list of {task_id, related_notes, evidence_pack}), `restored_task_count`,
+    `total_notes_referenced`, `warnings`, `restored_at`.
     """
     resolved = _resolve_dir(memory_dir)
     payload = state.auto_restore(
@@ -647,7 +659,7 @@ def memory_evidence(
     query: str,
     paths: list[str] | None = None,
     task_id: str | None = None,
-    max_lines: int = 8,
+    max_lines: int = 12,
     memory_dir: str | None = None,
 ) -> str:
     """Generate a compact evidence pack from note paths.
@@ -657,7 +669,7 @@ def memory_evidence(
     `query` filters relevant lines from the selected notes.
     Either `paths` (note file paths) or `task_id` must be provided — omitting both
     raises an error. If only `task_id` is given, paths are auto-resolved from the index.
-    `max_lines` limits lines per section.
+    `max_lines` limits lines per section (default 12).
     Returns markdown evidence text with provenance per note.
     """
     resolved = _resolve_dir(memory_dir)
@@ -759,7 +771,7 @@ def memory_cleanup_notes(
 @mcp.tool(annotations=_READONLY)
 def memory_search_global(
     query: str,
-    memory_dirs: list[str],
+    memory_dirs: list[str] | None = None,
     mode: Literal["quick", "detailed", "debug"] = "quick",
     top: int | None = None,
     prefer_recent: bool = False,
@@ -770,9 +782,9 @@ def memory_search_global(
 
     Use this to find notes across different projects or workspaces.
     For searching within a single memory directory, use memory_search instead.
-    `memory_dirs` is the list of memory directory paths to search.
-    `memory_dir`, if provided, is appended to `memory_dirs` for convenience
-    (allows searching a single directory without wrapping it in a list).
+    `memory_dirs` is an optional list of memory directory paths to search.
+    `memory_dir`, if provided, is appended to `memory_dirs` for convenience.
+    At least one of `memory_dirs` or `memory_dir` must be provided.
     Results are merged, scored, and sorted; each result includes `source_dir`.
     `mode` controls output verbosity: `quick` (default), `detailed`, `debug`.
     `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
@@ -782,11 +794,13 @@ def memory_search_global(
     explain = mode == "debug"
     no_feedback_expand = mode == "quick"
 
-    dirs = [Path(d) for d in memory_dirs]
+    dirs = [Path(d) for d in (memory_dirs or []) if d]
     if memory_dir:
         additional = Path(memory_dir)
         if additional not in dirs:
             dirs.append(additional)
+    if not dirs:
+        raise ValueError("At least one of 'memory_dirs' or 'memory_dir' must be provided.")
     result = search.search_global(
         query=query,
         memory_dirs=dirs,

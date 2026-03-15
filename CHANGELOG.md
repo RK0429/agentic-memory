@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-03-15
+
+### Changed
+
+- `memory_search_global`: `memory_dirs` parameter is now optional (defaults to `None`). At least one of `memory_dirs` or `memory_dir` must be provided. Empty strings in `memory_dirs` are filtered out
+- `memory_evidence`: `max_lines` default increased from 8 to 12, reducing information loss for sections with longer content
+- `memory_state_from_note`: docstring now documents auto-improve behavior (`no_auto_improve`, `auto_improve_add`) and response fields (`updated_sections`, `section_counts`, `stale_count`, `warnings`)
+- `memory_auto_restore`: docstring now documents response structure fields (`project_state`, `agent_state`, `active_tasks`, etc.)
+
 ## [0.6.0] - 2026-03-15
 
 ### Added

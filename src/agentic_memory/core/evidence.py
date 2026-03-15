@@ -127,7 +127,7 @@ def filter_lines(lines: list[str], rx: re.Pattern, max_lines: int) -> list[str]:
     return kept
 
 
-def generate_evidence_pack(query: str, paths: Sequence[Path | str], max_lines: int = 8) -> str:
+def generate_evidence_pack(query: str, paths: Sequence[Path | str], max_lines: int = 12) -> str:
     """Generate markdown evidence pack from note paths."""
     rx = build_regex_from_query(query)
     out_lines: list[str] = []
