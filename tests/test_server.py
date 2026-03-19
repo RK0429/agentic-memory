@@ -434,6 +434,18 @@ def test_memory_note_new_rejects_unknown_task_id_with_format_hint(
         )
 
 
+def test_memory_search_rejects_invalid_query_task_id_with_format_hint(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    with pytest.raises(ValueError, match="relay task UUID"):
+        memory_search(
+            query="task_id:not-a-task-id",
+            memory_dir=str(tmp_memory_dir),
+        )
+
+
 def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir

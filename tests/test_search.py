@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentic_memory.core import config, index, note, query, search
 
 
@@ -129,6 +131,15 @@ def test_search_filters_by_metadata(tmp_memory_dir: Path, monkeypatch) -> None:
     )
     assert result["results"]
     assert len(result["results"]) == 1
+
+
+def test_search_rejects_invalid_query_task_id_filter(tmp_memory_dir: Path) -> None:
+    with pytest.raises(ValueError, match="relay task UUID"):
+        search.search(
+            query="task_id:not-a-task-id",
+            memory_dir=tmp_memory_dir,
+            engine="index",
+        )
 
 
 def test_search_backward_compatible_without_new_fields(tmp_memory_dir: Path) -> None:

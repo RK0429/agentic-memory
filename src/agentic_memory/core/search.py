@@ -135,7 +135,10 @@ def _extract_query_metadata_filters(
 
     for qt in qterms:
         if qt.field in METADATA_FIELD_NAMES and qt.term and not qt.exclude:
-            extracted[qt.field] = _normalize_metadata_filter(qt.field, qt.term)
+            normalized = _normalize_metadata_filter(qt.field, qt.term)
+            if normalized is None and qt.field == "task_id":
+                raise ValueError(invalid_task_id_message(qt.term))
+            extracted[qt.field] = normalized
             continue
         remaining.append(qt)
     return remaining, extracted
