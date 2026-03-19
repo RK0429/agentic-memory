@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-03-19
+
+### Fixed
+
+- `memory_evidence` now accepts `paths` as either a list of note paths or a single path string, matching common MCP client call patterns and avoiding avoidable validation friction.
+- `memory_state_from_note(auto_improve_add=True)` no longer re-adds improvement backlog items that were explicitly resolved and removed. Resolved entries are tracked separately, and `periodic_review` now respects a 14-day cooldown after closure.
+
 ## [0.6.2] - 2026-03-16
 
 ### Changed
