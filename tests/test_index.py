@@ -192,3 +192,22 @@ def test_index_note_overrides_identifier_fields(tmp_memory_dir: Path) -> None:
     assert entry["task_id"] == "TASK-123"
     assert entry["agent_id"] == "researcher"
     assert entry["relay_session_id"] == "relay-xyz"
+
+
+def test_index_note_accepts_relay_task_uuid(tmp_memory_dir: Path) -> None:
+    note_dir = tmp_memory_dir / "2026-01-12"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_uuid.md"
+    note_path.write_text(
+        ("# UUID Note\n\n- Date: 2026-01-12\n\n## 目標\n- verify relay task ids\n"),
+        encoding="utf-8",
+    )
+
+    entry = index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+        task_id="6F9619FF-8B86-D011-B42D-00C04FC964FF",
+        no_dense=True,
+    )
+    assert entry["task_id"] == "6f9619ff-8b86-d011-b42d-00c04fc964ff"

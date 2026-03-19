@@ -7,7 +7,6 @@ import datetime as _dt
 import io
 import json
 import os
-import re
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -29,6 +28,12 @@ from agentic_memory.core import (
     stats,
 )
 from agentic_memory.core.scorer import load_index
+from agentic_memory.core.task_ids import (
+    invalid_task_id_message,
+)
+from agentic_memory.core.task_ids import (
+    normalize_task_id as _normalize_task_id,
+)
 
 try:
     mcp = FastMCP(
@@ -247,24 +252,6 @@ def _strip_debug_fields(result: dict) -> dict:
     return result
 
 
-TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
-TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
-
-
-def _normalize_task_id(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip().upper()
-    if not normalized:
-        return None
-    if TASK_ID_PATTERN.fullmatch(normalized):
-        return normalized
-    match = TASK_ID_EXTRACT_PATTERN.search(normalized)
-    if match:
-        return match.group(1)
-    return None
-
-
 def _filter_notes_by_since(notes: list[Path], since: str | None) -> list[Path]:
     if since is None:
         return notes
@@ -289,7 +276,7 @@ def _filter_notes_by_since(notes: list[Path], since: str | None) -> list[Path]:
 def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
     normalized_task_id = _normalize_task_id(task_id)
     if normalized_task_id is None:
-        raise ValueError(f"Invalid task_id: {task_id!r}")
+        raise ValueError(invalid_task_id_message(task_id))
 
     entries = load_index(_index_path(memory_dir))
     resolved_paths: list[Path] = []
@@ -342,6 +329,7 @@ def memory_note_new(
     Do not use for updating existing notes — edit the note file directly instead.
     `title` is required. Optional `context`, `tags`, and `keywords` fill metadata fields.
     `task_id`, `agent_id`, and `relay_session_id` are stored in index metadata.
+    `task_id` accepts `TASK-123` / `GOAL-123` or a relay task UUID.
     `lang` selects the template language.
     Returns JSON with the created note path and metadata.
     """
@@ -677,7 +665,8 @@ def memory_evidence(
     `query` filters relevant lines from the selected notes.
     Either `paths` (note file paths; list or single string) or `task_id` must be
     provided — omitting both raises an error. If only `task_id` is given, paths are
-    auto-resolved from the index.
+    auto-resolved from the index. `task_id` accepts `TASK-123` / `GOAL-123` or a
+    relay task UUID.
     `max_lines` limits lines per section (default 12).
     Returns markdown evidence text with provenance per note.
     """

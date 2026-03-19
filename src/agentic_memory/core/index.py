@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import TextIO
 
 from agentic_memory.core import dense, sections, signals, tokenizer
+from agentic_memory.core.task_ids import (
+    invalid_task_id_message,
+)
+from agentic_memory.core.task_ids import (
+    normalize_task_id as _normalize_task_id,
+)
 
 ERROR_PATTERNS = [
     r"\b[A-Z]{2,}[A-Z0-9_]{2,}\b",  # ECONNRESET, ERR_FOO_BAR
@@ -151,9 +157,6 @@ _ERROR_EXCLUDE_TOKENS = {
     "SPAWN",
 }
 
-TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
-TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
-
 
 def now_iso() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
@@ -212,32 +215,20 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
-def _normalize_task_id(value: str | None) -> str | None:
-    normalized = _normalize_optional_text(value)
-    if not normalized:
-        return None
-    upper = normalized.upper()
-    if TASK_ID_PATTERN.fullmatch(upper):
-        return upper
-    match = TASK_ID_EXTRACT_PATTERN.search(upper)
-    if match:
-        return match.group(1)
-    return None
-
-
 def _resolve_task_id(task_id: str | None, md: str) -> str | None:
     explicit = _normalize_optional_text(task_id)
     if explicit is not None:
         resolved = _normalize_task_id(explicit)
         if resolved is None:
-            raise ValueError(f"Invalid task_id: {task_id!r}")
+            raise ValueError(invalid_task_id_message(task_id))
         return resolved
 
     header = _normalize_task_id(header_field(md, "Task-ID"))
     if header:
         return header
 
-    return _normalize_task_id(md)
+    # Free-form body scans stay conservative to avoid misclassifying unrelated UUIDs.
+    return _normalize_task_id(md, allow_uuid_embedded=False)
 
 
 def parse_list_field(v: str) -> list[str]:

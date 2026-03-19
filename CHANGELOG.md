@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.6.4] - 2026-03-19
+
+### Fixed
+
+- `memory_note_new`, `memory_search`, and `memory_evidence` now accept relay task UUIDs as `task_id`, in addition to legacy `TASK-123` / `GOAL-123` identifiers
+- Invalid `task_id` errors now explain the accepted formats, making recovery faster when a caller passes a relay task UUID or a malformed identifier
+
 ## [0.6.3] - 2026-03-19
 
 ### Fixed

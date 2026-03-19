@@ -46,10 +46,14 @@ from agentic_memory.core.scorer import (
     load_index,
     score_entry,
 )
+from agentic_memory.core.task_ids import (
+    invalid_task_id_message,
+)
+from agentic_memory.core.task_ids import (
+    normalize_task_id as _normalize_task_id,
+)
 
 CJK_CHUNK_RE = tokenizer.CJK_CHUNK_RE
-TASK_ID_PATTERN = re.compile(r"^(TASK|GOAL)-\d{3,}$")
-TASK_ID_EXTRACT_PATTERN = re.compile(r"\b((?:TASK|GOAL)-\d{3,})\b")
 METADATA_FIELD_NAMES = {"task_id", "agent_id", "relay_session_id"}
 
 DEFAULT_WEIGHTS = {
@@ -113,19 +117,6 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
-def _normalize_task_id(value: str | None) -> str | None:
-    normalized = _normalize_optional_text(value)
-    if not normalized:
-        return None
-    upper = normalized.upper()
-    if TASK_ID_PATTERN.fullmatch(upper):
-        return upper
-    match = TASK_ID_EXTRACT_PATTERN.search(upper)
-    if match:
-        return match.group(1)
-    return None
-
-
 def _normalize_metadata_filter(field: str, value: str | None) -> str | None:
     if field == "task_id":
         return _normalize_task_id(value)
@@ -160,6 +151,8 @@ def _resolve_metadata_filter(
     if explicit is not None:
         normalized = _normalize_metadata_filter(field, explicit)
         if normalized is None:
+            if field == "task_id":
+                raise ValueError(invalid_task_id_message(explicit))
             raise ValueError(f"Invalid {field}: {explicit!r}")
         if query_value is not None and query_value != normalized:
             warnings.append(

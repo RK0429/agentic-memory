@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentic_memory.core.search import COMPACT_EXCLUDE_FIELDS
 from agentic_memory.server import (
     _resolve_dir,
@@ -286,6 +288,25 @@ def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeyp
     assert note_path.name in output
 
 
+def test_memory_evidence_resolves_paths_by_relay_task_uuid(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+    task_id = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+
+    note_path = _note_path(
+        memory_note_new(title="Evidence by Relay Task", task_id=task_id, memory_dir=str(memory_dir))
+    )
+    output = memory_evidence(
+        query="Relay Task",
+        task_id=task_id.upper(),
+        memory_dir=str(memory_dir),
+    )
+    assert "# DailyNote Evidence Pack" in output
+    assert note_path.name in output
+
+
 def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
@@ -329,6 +350,47 @@ def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) 
     )
     payload = json.loads(raw)
     assert payload["results"]
+
+
+def test_memory_note_new_accepts_relay_task_uuid(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+    task_id = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+
+    created_path = _note_path(
+        memory_note_new(
+            title="Relay Metadata Note",
+            task_id=task_id.upper(),
+            agent_id="coder",
+            relay_session_id="relay-a",
+            memory_dir=str(memory_dir),
+        )
+    )
+    assert created_path.exists()
+
+    raw = memory_search(
+        query="Relay Metadata",
+        engine="index",
+        task_id=task_id,
+        agent_id="coder",
+        relay_session_id="relay-a",
+        memory_dir=str(memory_dir),
+    )
+    payload = json.loads(raw)
+    assert payload["results"]
+
+
+def test_memory_note_new_rejects_unknown_task_id_with_format_hint(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    with pytest.raises(ValueError, match="relay task UUID"):
+        memory_note_new(
+            title="Invalid Task Note",
+            task_id="not-a-task-id",
+            memory_dir=str(tmp_memory_dir),
+        )
 
 
 def test_memory_auto_restore(tmp_memory_dir: Path, monkeypatch) -> None:
