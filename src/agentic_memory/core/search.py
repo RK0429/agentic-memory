@@ -870,6 +870,7 @@ def search(
     has_scoring_terms = any(qt.term and not qt.exclude for qt in expanded)
 
     if used_engine == "index" and not has_scoring_terms:
+        total_found = len(entries)
         results = [(1.0, entry, {}) for entry in entries[:top_n]]
 
     elif used_engine == "index" and engine == "hybrid":

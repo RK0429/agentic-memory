@@ -380,6 +380,47 @@ def test_memory_note_new_accepts_relay_task_uuid(tmp_memory_dir: Path, monkeypat
     assert payload["results"]
 
 
+@pytest.mark.parametrize(
+    ("task_id", "query_task_id", "expected_task_id"),
+    [
+        ("TASK-222", "TASK-222", "TASK-222"),
+        (
+            "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+            "6F9619FF-8B86-D011-B42D-00C04FC964FF",
+            "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+        ),
+    ],
+)
+def test_memory_search_query_only_task_id_filter(
+    tmp_memory_dir: Path,
+    monkeypatch,
+    task_id: str,
+    query_task_id: str,
+    expected_task_id: str,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    _note_path(
+        memory_note_new(
+            title="Query Filter Note",
+            task_id=task_id,
+            memory_dir=str(memory_dir),
+        )
+    )
+
+    raw = memory_search(
+        query=f"task_id:{query_task_id}",
+        memory_dir=str(memory_dir),
+    )
+    payload = json.loads(raw)
+
+    assert payload["total_found"] == 1
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["task_id"] == expected_task_id
+    assert payload["filters"]["task_id"] == expected_task_id
+
+
 def test_memory_note_new_rejects_unknown_task_id_with_format_hint(
     tmp_memory_dir: Path, monkeypatch
 ) -> None:

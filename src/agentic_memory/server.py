@@ -559,6 +559,9 @@ def memory_search(
     Do not use for full-text reading of a specific note — use memory_evidence instead.
     Supports quoted phrases, +must, -exclude, field:term (with aliases like tag:),
     and date-range filters.
+    `task_id`, `agent_id`, and `relay_session_id` can be passed either as explicit
+    parameters or as query filters such as `task_id:TASK-123`.
+    `task_id` accepts `TASK-123` / `GOAL-123` or a relay task UUID.
     `mode` controls output verbosity and sets search defaults:
       - `quick` (default): compact output, strips verbose fields and settings echo-back.
         Sets: compact=True, no_feedback_expand=True.
