@@ -18,6 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
+        with:
+          cache-suffix: py${{ matrix.python-version }}
       - run: uv python install ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev
       - run: uv run ruff check .
@@ -33,6 +35,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
+        with:
+          cache-suffix: py3.12
       - run: uv python install 3.12
       - run: uv sync --all-extras --dev
       - run: uv build
