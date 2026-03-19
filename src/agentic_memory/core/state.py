@@ -38,6 +38,13 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _AGENT_STATE_FILE_RE = re.compile(
     r"^_state\.(?P<agent_id>[A-Za-z0-9_-]+)(?:\.[A-Za-z0-9_-]+)?\.md$"
 )
+_IMPROVEMENT_ITEM_RE = re.compile(
+    r"^\[severity:(?P<severity>[^\]]+)\]"
+    r"(?:\[(?P<trigger_type>[^\]]+)\])?\s+"
+    r"(?P<skill>.+?)(?:\s+\(score=\d+\))?\s+—\s+"
+)
+_PERIODIC_REVIEW_COOLDOWN_DAYS = 14
+_IMPROVEMENT_RESOLUTION_BASENAME = "_improvement_backlog_resolved.json"
 
 
 def now_stamp() -> str:
@@ -71,6 +78,127 @@ def _atomic_write_text(path: Path, content: str) -> None:
         with suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _improvement_resolution_path(state_path: Path) -> Path:
+    return state_path.parent / _IMPROVEMENT_RESOLUTION_BASENAME
+
+
+def _parse_improvement_item(text: str) -> dict[str, str | None]:
+    match = _IMPROVEMENT_ITEM_RE.match(text.strip())
+    if not match:
+        return {"severity": None, "trigger_type": None, "skill": None}
+    return {
+        "severity": match.group("severity"),
+        "trigger_type": match.group("trigger_type"),
+        "skill": match.group("skill").strip(),
+    }
+
+
+def _load_improvement_resolutions(state_path: Path) -> list[dict[str, str]]:
+    path = _improvement_resolution_path(state_path)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(payload, list):
+        return []
+
+    entries: list[dict[str, str]] = []
+    for raw in payload:
+        if not isinstance(raw, dict):
+            continue
+        key = raw.get("key")
+        resolved_at = raw.get("resolved_at")
+        text = raw.get("text")
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if not isinstance(resolved_at, str) or not resolved_at.strip():
+            continue
+        if not isinstance(text, str) or not text.strip():
+            continue
+        entry: dict[str, str] = {
+            "key": key,
+            "resolved_at": resolved_at,
+            "text": text,
+        }
+        for field in ("severity", "trigger_type", "skill"):
+            value = raw.get(field)
+            if isinstance(value, str) and value.strip():
+                entry[field] = value
+        entries.append(entry)
+    return entries
+
+
+def _save_improvement_resolutions(state_path: Path, entries: list[dict[str, str]]) -> None:
+    path = _improvement_resolution_path(state_path)
+    if not entries:
+        with suppress(FileNotFoundError):
+            path.unlink()
+        return
+    _atomic_write_text(path, json.dumps(entries, ensure_ascii=False, indent=2) + "\n")
+
+
+def _remember_resolved_improvements(state_path: Path, removed_items: list[StateItem]) -> None:
+    if not removed_items:
+        return
+    existing = _load_improvement_resolutions(state_path)
+    by_key = {entry["key"]: entry for entry in existing}
+    for item in removed_items:
+        meta = _parse_improvement_item(item.text)
+        entry: dict[str, str] = {
+            "key": item.normalize_key(),
+            "resolved_at": now_stamp(),
+            "text": item.text,
+        }
+        for field in ("severity", "trigger_type", "skill"):
+            value = meta.get(field)
+            if isinstance(value, str) and value:
+                entry[field] = value
+        by_key[entry["key"]] = entry
+    _save_improvement_resolutions(state_path, list(by_key.values()))
+
+
+def _forget_resolved_improvements(state_path: Path, items: list[StateItem]) -> None:
+    if not items:
+        return
+    existing = _load_improvement_resolutions(state_path)
+    if not existing:
+        return
+    keys = {item.normalize_key() for item in items}
+    filtered = [entry for entry in existing if entry.get("key") not in keys]
+    if len(filtered) != len(existing):
+        _save_improvement_resolutions(state_path, filtered)
+
+
+def _resolved_improvement_key_set(state_path: Path) -> set[str]:
+    return {
+        entry["key"]
+        for entry in _load_improvement_resolutions(state_path)
+        if isinstance(entry.get("key"), str)
+    }
+
+
+def _has_recently_resolved_periodic_review(
+    state_path: Path,
+    *,
+    today: _dt.date | None = None,
+) -> bool:
+    now = today or _dt.date.today()
+    for entry in _load_improvement_resolutions(state_path):
+        if entry.get("trigger_type") != "periodic_review":
+            continue
+        resolved_at = entry.get("resolved_at")
+        if not isinstance(resolved_at, str):
+            continue
+        resolved_dt = _parse_datetime(resolved_at)
+        if resolved_dt is None:
+            continue
+        if (now - resolved_dt.date()).days < _PERIODIC_REVIEW_COOLDOWN_DAYS:
+            return True
+    return False
 
 
 @dataclass
@@ -588,6 +716,8 @@ def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
     sections[section_name], _ = enforce_cap(deduplicate(new_items), get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
+    if section_name == STATE_SHORT_KEYS["improvements"]:
+        _forget_resolved_improvements(state_path, new_items)
     summary = json.dumps(
         {
             "path": str(state_path),
@@ -632,6 +762,8 @@ def cmd_add(
     sections[section_name], _ = enforce_cap(merged, get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
+    if section_name == STATE_SHORT_KEYS["improvements"]:
+        _forget_resolved_improvements(state_path, new_items)
     summary = json.dumps(
         {
             "path": str(state_path),
@@ -665,6 +797,7 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
     sections = load_state(state_path)
     kept: list[StateItem] = []
     removed_items: list[str] = []
+    removed_state_items: list[StateItem] = []
     for item in sections.get(section_name, []):
         matched = (
             bool(matcher.search(item.text))
@@ -673,6 +806,7 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
         )
         if matched:
             removed_items.append(f"[{item.date}] {item.text}")
+            removed_state_items.append(item)
         else:
             kept.append(item)
 
@@ -680,6 +814,8 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
     if removed_count > 0:
         sections[section_name] = kept
         save_state(state_path, sections)
+        if section_name == STATE_SHORT_KEYS["improvements"]:
+            _remember_resolved_improvements(state_path, removed_state_items)
     summary = json.dumps(
         {
             "path": str(state_path),
@@ -953,6 +1089,7 @@ def _ensure_note_index_entry(
 
 
 def _auto_improve_from_signals(
+    state_path: Path,
     index_path: Path,
     sections: dict[str, list[StateItem]],
     threshold: int = 3,
@@ -983,6 +1120,7 @@ def _auto_improve_from_signals(
     existing_keys = {
         item.normalize_key() for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
     }
+    resolved_keys = _resolved_improvement_key_set(state_path)
 
     new_items: list[StateItem] = []
 
@@ -995,7 +1133,7 @@ def _auto_improve_from_signals(
         suggestion = cand.get("suggestion", "")
         text = f"[severity:high] {skill} (score={score}) — {suggestion}"
         item = StateItem.from_text(text)
-        if item.normalize_key() not in existing_keys:
+        if item.normalize_key() not in existing_keys and item.normalize_key() not in resolved_keys:
             new_items.append(item)
             existing_keys.add(item.normalize_key())
 
@@ -1011,6 +1149,10 @@ def _auto_improve_from_signals(
         severity = trig.get("severity", "medium")
         text = f"[severity:{severity}][{ttype}] {skill} — {detail}"
         item = StateItem.from_text(text)
+        if item.normalize_key() in resolved_keys:
+            continue
+        if ttype == "periodic_review" and _has_recently_resolved_periodic_review(state_path):
+            continue
         if item.normalize_key() not in existing_keys:
             new_items.append(item)
             existing_keys.add(item.normalize_key())
@@ -1086,6 +1228,7 @@ def _merge_from_note(
     if not no_auto_improve:
         index_path = _resolve_index_path_for_note(note_path, state_path)
         auto_items = _auto_improve_from_signals(
+            state_path,
             index_path,
             sections,
             note_path=note_path,

@@ -116,9 +116,16 @@ def _resolve_note_path(note_path: str, memory_dir: Path) -> Path:
     return memory_dir / p
 
 
-def _resolve_paths(paths: list[str], memory_dir: Path) -> list[Path]:
+def _normalize_paths_arg(paths: list[str] | str) -> list[str]:
+    if isinstance(paths, str):
+        return [paths]
+    return paths
+
+
+def _resolve_paths(paths: list[str] | str, memory_dir: Path) -> list[Path]:
+    normalized_paths = _normalize_paths_arg(paths)
     resolved: list[Path] = []
-    for raw in paths:
+    for raw in normalized_paths:
         p = Path(raw)
         if p.is_absolute() or p.exists():
             resolved.append(p)
@@ -658,7 +665,7 @@ def memory_index_upsert(
 @mcp.tool(annotations=_READONLY)
 def memory_evidence(
     query: str,
-    paths: list[str] | None = None,
+    paths: list[str] | str | None = None,
     task_id: str | None = None,
     max_lines: int = 12,
     memory_dir: str | None = None,
@@ -668,8 +675,9 @@ def memory_evidence(
     Use this to read relevant sections from specific notes. For searching notes
     by keyword, use memory_search instead.
     `query` filters relevant lines from the selected notes.
-    Either `paths` (note file paths) or `task_id` must be provided — omitting both
-    raises an error. If only `task_id` is given, paths are auto-resolved from the index.
+    Either `paths` (note file paths; list or single string) or `task_id` must be
+    provided — omitting both raises an error. If only `task_id` is given, paths are
+    auto-resolved from the index.
     `max_lines` limits lines per section (default 12).
     Returns markdown evidence text with provenance per note.
     """

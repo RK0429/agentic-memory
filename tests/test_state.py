@@ -379,6 +379,96 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) 
     assert "warnings" not in payload or isinstance(payload.get("warnings"), list)
 
 
+def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir: Path) -> None:
+    note_dir = tmp_memory_dir / "2026-03-19"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_sigfb-high.md"
+    note_path.write_text(
+        "# High Severity\n\n"
+        "- Date: 2026-03-19\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: spawn_agents | failure | one\n"
+        "- SIGFB: spawn_agents | failure | two\n"
+        "- SIGFB: spawn_agents | failure | three\n",
+        encoding="utf-8",
+    )
+    state_path = tmp_memory_dir / "_state.md"
+
+    rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    assert rc == 0
+    loaded = state.load_state(state_path)
+    assert any(
+        "spawn_agents" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+
+    rc = state.cmd_remove(state_path, "improvements", "spawn_agents")
+    assert rc == 0
+    loaded = state.load_state(state_path)
+    assert not any(
+        "spawn_agents" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+
+    rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    assert rc == 0
+    loaded = state.load_state(state_path)
+    assert not any(
+        "spawn_agents" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+
+
+def test_auto_improve_respects_recent_periodic_review_resolution(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    state_path = tmp_memory_dir / "_state.md"
+    index_path = tmp_memory_dir / "_index.jsonl"
+    seed_dir = tmp_memory_dir / "2026-03-18"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    for idx in range(10):
+        note_path = seed_dir / f"{idx:04d}_seed-{idx}.md"
+        note_path.write_text(
+            f"# Seed {idx}\n\n- Date: 2026-03-18\n\n## 目標\n\n- item {idx}\n",
+            encoding="utf-8",
+        )
+        index.index_note(note_path=note_path, index_path=index_path, dailynote_dir=tmp_memory_dir)
+
+    first_note = tmp_memory_dir / "2026-03-19" / "1200_periodic.md"
+    first_note.parent.mkdir(parents=True, exist_ok=True)
+    first_note.write_text(
+        "# Periodic\n\n- Date: 2026-03-19\n\n## 目標\n\n- trigger periodic review\n",
+        encoding="utf-8",
+    )
+    rc = state.cmd_from_note(state_path, first_note, auto_improve_add=True)
+    assert rc == 0
+    loaded = state.load_state(state_path)
+    assert any(
+        "[periodic_review]" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+
+    monkeypatch.setattr(state, "now_stamp", lambda: "2026-03-19 12:00")
+    rc = state.cmd_remove(state_path, "improvements", "[periodic_review]")
+    assert rc == 0
+
+    class FrozenDate(dt.date):
+        @classmethod
+        def today(cls) -> FrozenDate:
+            return cls(2026, 3, 19)
+
+    monkeypatch.setattr(state._dt, "date", FrozenDate)
+
+    second_note = tmp_memory_dir / "2026-03-19" / "1201_periodic.md"
+    second_note.write_text(
+        "# Periodic Again\n\n- Date: 2026-03-19\n\n## 目標\n\n- trigger periodic review again\n",
+        encoding="utf-8",
+    )
+    rc = state.cmd_from_note(state_path, second_note, auto_improve_add=True)
+    assert rc == 0
+    loaded = state.load_state(state_path)
+    assert not any(
+        "[periodic_review]" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+
+
 def test_extract_from_note_focus_no_next() -> None:
     note_text = "# Note\n\n## 次のアクション\n- next item\n"
 

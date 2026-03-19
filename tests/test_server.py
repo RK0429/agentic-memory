@@ -264,6 +264,16 @@ def test_memory_evidence(tmp_memory_dir: Path, monkeypatch) -> None:
     assert str(note_path) in output
 
 
+def test_memory_evidence_accepts_single_string_path(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    note_path = _write_note(memory_dir, name="single-evidence.md")
+    output = memory_evidence(query="validate", paths=str(note_path), memory_dir=str(memory_dir))
+    assert "# DailyNote Evidence Pack" in output
+    assert str(note_path) in output
+
+
 def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
