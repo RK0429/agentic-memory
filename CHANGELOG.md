@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `memory_evidence(task_id=...)` now raises a recovery-guided error when the `task_id` format is valid but no indexed notes match, instead of returning an ambiguous empty evidence pack
+
 ## [0.6.6] - 2026-03-19
 
 ### Fixed

@@ -307,6 +307,15 @@ def test_memory_evidence_resolves_paths_by_relay_task_uuid(
     assert note_path.name in output
 
 
+def test_memory_evidence_rejects_task_id_without_indexed_notes(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    with pytest.raises(ValueError, match="No notes found for task_id"):
+        memory_evidence(query="missing", task_id="TASK-999", memory_dir=str(tmp_memory_dir))
+
+
 def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir

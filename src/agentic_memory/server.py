@@ -289,6 +289,12 @@ def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
             continue
         seen.add(resolved_path)
         resolved_paths.append(resolved_path)
+    if not resolved_paths:
+        raise ValueError(
+            f"No notes found for task_id: {task_id!r}. "
+            "Run memory_search(query='task_id:...') to inspect matches "
+            "or memory_index_upsert(...) to add/update the note index."
+        )
     return resolved_paths
 
 
@@ -669,7 +675,8 @@ def memory_evidence(
     Either `paths` (note file paths; list or single string) or `task_id` must be
     provided — omitting both raises an error. If only `task_id` is given, paths are
     auto-resolved from the index. `task_id` accepts `TASK-123` / `GOAL-123` or a
-    relay task UUID.
+    relay task UUID. A valid `task_id` with no indexed notes raises `ValueError`
+    with recovery guidance.
     `max_lines` limits lines per section (default 12).
     Returns markdown evidence text with provenance per note.
     """
