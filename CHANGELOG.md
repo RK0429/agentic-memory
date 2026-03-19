@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-03-19
+
+### Fixed
+
+- `memory_search` no longer crashes on metadata-only queries such as `task_id:TASK-123` or `task_id:<relay-uuid>`; `total_found` is now populated correctly for index-backed filter-only results
+
+### Changed
+
+- `memory_search` tool description now documents that `task_id`, `agent_id`, and `relay_session_id` can be passed either as explicit parameters or as query filters, and clarifies accepted `task_id` formats
+
 ## [0.6.4] - 2026-03-19
 
 ### Fixed
