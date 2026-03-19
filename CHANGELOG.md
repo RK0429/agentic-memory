@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-03-19
+
+### Fixed
+
+- `memory_search` now rejects malformed query filters such as `task_id:not-a-task-id` with the same format hint used for explicit `task_id` parameters, avoiding false-positive matches
+
 ## [0.6.5] - 2026-03-19
 
 ### Fixed
