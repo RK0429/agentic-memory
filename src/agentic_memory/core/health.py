@@ -175,13 +175,40 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
     return result
 
 
-def fix_issues(memory_dir: Path) -> dict[str, Any]:
+def fix_issues(
+    memory_dir: Path,
+    *,
+    force_reindex: bool = False,
+) -> dict[str, Any]:
     """Re-index stale/unindexed notes and remove orphan index entries.
+
+    When ``force_reindex`` is True, rebuilds the entire index from scratch
+    instead of incrementally fixing stale/unindexed entries.  Use this after
+    breaking schema changes (e.g. new index fields) that require all entries
+    to be regenerated.
 
     Returns a report with counts of fixed issues.
     """
-    report = health_check(memory_dir)
     index_path = memory_dir / "_index.jsonl"
+
+    if force_reindex:
+        notes = index_module.list_notes(memory_dir)
+        entries = index_module.rebuild_index(
+            index_path=index_path,
+            dailynote_dir=memory_dir,
+            no_dense=True,
+        )
+        post_check = health_check(memory_dir)
+        return {
+            "reindexed": [_normalize_note_path(p, memory_dir) for p in notes],
+            "failed": [],
+            "orphans_removed": 0,
+            "force_reindex": True,
+            "total_entries": len(entries),
+            "post_fix_summary": post_check["summary"],
+        }
+
+    report = health_check(memory_dir)
     fixed: dict[str, Any] = {
         "reindexed": [],
         "failed": [],

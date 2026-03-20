@@ -711,6 +711,7 @@ def memory_stats(memory_dir: str | None = None) -> str:
 @mcp.tool(annotations=_IDEMPOTENT)
 def memory_health_check(
     fix: bool = False,
+    force_reindex: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Check index integrity and consistency of the memory directory.
@@ -720,10 +721,18 @@ def memory_health_check(
     stale entries (note newer than index), and validates state/config file parsability.
     When `fix` is True, automatically repairs detected issues: re-indexes stale and
     unindexed notes, removes orphan entries from the index.
+    When `force_reindex` is True (implies `fix`), rebuilds the entire index from
+    scratch. Use after breaking schema changes that require all entries to be
+    regenerated (e.g. after a major version upgrade).
     Returns a structured report with a human-readable summary.
     """
     resolved = _resolve_dir(memory_dir)
-    result = health.fix_issues(resolved) if fix else health.health_check(resolved)
+    if force_reindex:
+        result = health.fix_issues(resolved, force_reindex=True)
+    elif fix:
+        result = health.fix_issues(resolved)
+    else:
+        result = health.health_check(resolved)
     return _serialize_json(result)
 
 

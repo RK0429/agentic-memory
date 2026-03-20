@@ -898,6 +898,42 @@ def test_health_check_fix_removes_orphans(tmp_memory_dir: Path) -> None:
     assert result["post_fix_summary"].startswith("正常")
 
 
+def test_health_check_force_reindex_rebuilds_all(tmp_memory_dir: Path) -> None:
+    """force_reindex=True should rebuild the entire index from scratch."""
+    from agentic_memory.core.health import fix_issues
+
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        note_path = note_dir / f"120{i}_force-test-{i}.md"
+        note_path.write_text(
+            f"# Force Test {i}\n\n- Date: 2026-03-20\n\n## 目標\n\n- item {i}\n",
+            encoding="utf-8",
+        )
+        index.index_note(
+            note_path=note_path,
+            index_path=tmp_memory_dir / "_index.jsonl",
+            dailynote_dir=tmp_memory_dir,
+        )
+
+    result = fix_issues(tmp_memory_dir, force_reindex=True)
+    assert result["force_reindex"] is True
+    assert result["total_entries"] == 3
+    assert len(result["reindexed"]) == 3
+    assert result["post_fix_summary"].startswith("正常")
+
+
+def test_health_check_server_force_reindex(tmp_memory_dir: Path) -> None:
+    """memory_health_check(force_reindex=True) should return full rebuild report."""
+    from agentic_memory.server import memory_health_check
+
+    raw = memory_health_check(force_reindex=True, memory_dir=str(tmp_memory_dir))
+    payload = json.loads(raw)
+    assert payload["force_reindex"] is True
+    assert "total_entries" in payload
+    assert "post_fix_summary" in payload
+
+
 def test_health_check_server_fix_false_returns_check(tmp_memory_dir: Path) -> None:
     """memory_health_check(fix=False) should return the standard check report."""
     from agentic_memory.server import memory_health_check

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-20
+
+### Added
+
+- `memory_health_check(force_reindex=True)` rebuilds the entire index from scratch, useful after breaking schema changes that require all entries to be regenerated
+
 ## [0.7.0] - 2026-03-20
 
 ### Changed
