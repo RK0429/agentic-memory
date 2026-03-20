@@ -45,8 +45,18 @@ def load_index(index_path: Path) -> list[dict]:
     return entries
 
 
-def aggregate_signals(entries: list[dict], since: str | None = None) -> dict:
-    """Aggregate skill feedback signals by skill and type."""
+def aggregate_signals(
+    entries: list[dict],
+    since: str | None = None,
+    resolved_ids: set[str] | None = None,
+) -> dict:
+    """Aggregate skill feedback signals by skill and type.
+
+    Args:
+        entries: Index entries from _index.jsonl.
+        since: Optional date filter (YYYY-MM-DD).
+        resolved_ids: Signal IDs to exclude (already resolved).
+    """
     since_date = _parse_date(since) if since else None
 
     skills: dict[str, dict] = {}
@@ -78,6 +88,12 @@ def aggregate_signals(entries: list[dict], since: str | None = None) -> dict:
             if not isinstance(signal_type, str) or not signal_type.strip():
                 continue
 
+            signal_id = fb.get("id")
+            if not signal_id:
+                continue  # ID なし信号はスキップ（要再インデックス）
+            if resolved_ids and signal_id in resolved_ids:
+                continue  # resolved 信号はスキップ
+
             skill = skill.strip()
             signal_type = signal_type.strip()
             desc = fb.get("desc")
@@ -105,6 +121,7 @@ def aggregate_signals(entries: list[dict], since: str | None = None) -> dict:
                     "type": signal_type,
                     "desc": desc_text,
                     "note": note_path,
+                    "id": signal_id,
                 }
             )
 
@@ -185,6 +202,12 @@ def analyze_signals(aggregated: dict, threshold: int = 3) -> list[dict]:
         detail_parts = [f"{signal_type}({count}件)" for signal_type, count in breakdown.items()]
         detail_text = " + ".join(detail_parts) if detail_parts else "no-negative-signals(0件)"
 
+        contributor_ids = [
+            e["id"]
+            for e in data.get("entries", [])
+            if e.get("type") in NEGATIVE_TYPES and e.get("id")
+        ]
+
         candidates.append(
             {
                 "skill": skill,
@@ -194,6 +217,7 @@ def analyze_signals(aggregated: dict, threshold: int = 3) -> list[dict]:
                 "breakdown": breakdown,
                 "top_issues": issue_list,
                 "suggestion": f"{detail_text} — {_action_for_severity(severity)}",
+                "contributor_ids": contributor_ids,
             }
         )
 

@@ -380,6 +380,8 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) 
 
 
 def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir: Path) -> None:
+    """Resolved signals are marked via _sigfb_resolved.json; re-running from_note
+    should not regenerate the backlog item because the contributor signals are filtered."""
     note_dir = tmp_memory_dir / "2026-03-19"
     note_dir.mkdir(parents=True, exist_ok=True)
     note_path = note_dir / "1200_sigfb-high.md"
@@ -391,6 +393,12 @@ def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir:
         "- SIGFB: spawn_agents | failure | two\n"
         "- SIGFB: spawn_agents | failure | three\n",
         encoding="utf-8",
+    )
+    # Index the note so skill_feedback entries have IDs
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
     )
     state_path = tmp_memory_dir / "_state.md"
 
@@ -408,6 +416,10 @@ def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir:
         "spawn_agents" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
     )
 
+    # Verify signals are marked resolved
+    resolved = state._load_sigfb_resolved(state_path)
+    assert len(resolved) >= 3
+
     rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
     assert rc == 0
     loaded = state.load_state(state_path)
@@ -420,17 +432,18 @@ def test_auto_improve_respects_recent_periodic_review_resolution(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
+    """periodic_review trigger uses _trigger_cooldown.json instead of old resolved mechanism."""
     state_path = tmp_memory_dir / "_state.md"
     index_path = tmp_memory_dir / "_index.jsonl"
     seed_dir = tmp_memory_dir / "2026-03-18"
     seed_dir.mkdir(parents=True, exist_ok=True)
     for idx in range(10):
-        note_path = seed_dir / f"{idx:04d}_seed-{idx}.md"
-        note_path.write_text(
+        np = seed_dir / f"{idx:04d}_seed-{idx}.md"
+        np.write_text(
             f"# Seed {idx}\n\n- Date: 2026-03-18\n\n## 目標\n\n- item {idx}\n",
             encoding="utf-8",
         )
-        index.index_note(note_path=note_path, index_path=index_path, dailynote_dir=tmp_memory_dir)
+        index.index_note(note_path=np, index_path=index_path, dailynote_dir=tmp_memory_dir)
 
     first_note = tmp_memory_dir / "2026-03-19" / "1200_periodic.md"
     first_note.parent.mkdir(parents=True, exist_ok=True)
@@ -448,6 +461,10 @@ def test_auto_improve_respects_recent_periodic_review_resolution(
     monkeypatch.setattr(state, "now_stamp", lambda: "2026-03-19 12:00")
     rc = state.cmd_remove(state_path, "improvements", "[periodic_review]")
     assert rc == 0
+
+    # Verify cooldown was recorded
+    cooldown = state._load_trigger_cooldown(state_path)
+    assert "periodic_review" in cooldown
 
     class FrozenDate(dt.date):
         @classmethod
@@ -738,3 +755,302 @@ def test_expire_stale_items_focus_preserved(sample_state_path: Path, tmp_memory_
     loaded = state.load_state(sample_state_path)
     assert [item.text for item in loaded[state.STATE_SHORT_KEYS["focus"]]] == ["stale focus item"]
     assert not archive_path.exists()
+
+
+# ---------- SIGFB signal status management ----------
+
+
+def test_signal_event_id_deterministic() -> None:
+    """Same input produces the same ID."""
+    from agentic_memory.core.index import _signal_event_id
+
+    id1 = _signal_event_id("note/a.md", "tool", "friction", "desc", 0)
+    id2 = _signal_event_id("note/a.md", "tool", "friction", "desc", 0)
+    assert id1 == id2
+    assert len(id1) == 12
+
+
+def test_signal_event_id_unique_across_notes() -> None:
+    """Different note paths with same signal text produce different IDs."""
+    from agentic_memory.core.index import _signal_event_id
+
+    id1 = _signal_event_id("note/a.md", "tool", "friction", "desc", 0)
+    id2 = _signal_event_id("note/b.md", "tool", "friction", "desc", 0)
+    assert id1 != id2
+
+
+def test_build_entry_adds_signal_id(tmp_memory_dir: Path) -> None:
+    """build_entry() should add 'id' to each skill_feedback entry."""
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_sigfb-id.md"
+    note_path.write_text(
+        "# ID Test\n\n"
+        "- Date: 2026-03-20\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_a | friction | desc_a\n"
+        "- SIGFB: tool_b | failure | desc_b\n",
+        encoding="utf-8",
+    )
+    entry = index.build_entry(note_path, max_summary_chars=280, dailynote_dir=tmp_memory_dir)
+    for fb in entry["skill_feedback"]:
+        assert "id" in fb
+        assert len(fb["id"]) == 12
+
+
+def test_aggregate_skips_signals_without_id() -> None:
+    """Signals without 'id' should be skipped in aggregation."""
+    from agentic_memory.core.signals import aggregate_signals
+
+    entries = [
+        {
+            "date": "2026-03-20",
+            "path": "note/a.md",
+            "skill_feedback": [
+                {"skill": "tool", "type": "friction", "desc": "no id"},
+                {"skill": "tool", "type": "friction", "desc": "has id", "id": "abc123def456"},
+            ],
+        }
+    ]
+    result = aggregate_signals(entries)
+    skills = result["skills"]
+    assert skills["tool"]["total"] == 1
+    assert skills["tool"]["entries"][0]["id"] == "abc123def456"
+
+
+def test_aggregate_filters_resolved_signals() -> None:
+    """Resolved signals should not be counted in aggregation."""
+    from agentic_memory.core.signals import aggregate_signals
+
+    entries = [
+        {
+            "date": "2026-03-20",
+            "path": "note/a.md",
+            "skill_feedback": [
+                {"skill": "tool", "type": "failure", "desc": "a", "id": "id_resolved"},
+                {"skill": "tool", "type": "failure", "desc": "b", "id": "id_open"},
+            ],
+        }
+    ]
+    result = aggregate_signals(entries, resolved_ids={"id_resolved"})
+    skills = result["skills"]
+    assert skills["tool"]["total"] == 1
+    assert skills["tool"]["failure"] == 1
+    assert skills["tool"]["entries"][0]["id"] == "id_open"
+
+
+def test_analyze_includes_contributor_ids() -> None:
+    """analyze_signals should include contributor_ids in candidates."""
+    from agentic_memory.core.signals import aggregate_signals, analyze_signals
+
+    entries = [
+        {
+            "date": "2026-03-20",
+            "path": "note/a.md",
+            "skill_feedback": [
+                {"skill": "tool", "type": "failure", "desc": "a", "id": "id1"},
+                {"skill": "tool", "type": "failure", "desc": "b", "id": "id2"},
+                {"skill": "tool", "type": "failure", "desc": "c", "id": "id3"},
+            ],
+        }
+    ]
+    aggregated = aggregate_signals(entries)
+    candidates = analyze_signals(aggregated, threshold=3)
+    assert len(candidates) == 1
+    assert set(candidates[0]["contributor_ids"]) == {"id1", "id2", "id3"}
+
+
+def test_auto_improve_saves_contributor_snapshot(tmp_memory_dir: Path) -> None:
+    """Backlog generation should save contributor snapshot."""
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_snapshot.md"
+    note_path.write_text(
+        "# Snapshot\n\n"
+        "- Date: 2026-03-20\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_x | failure | one\n"
+        "- SIGFB: tool_x | failure | two\n"
+        "- SIGFB: tool_x | failure | three\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    state_path = tmp_memory_dir / "_state.md"
+    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+
+    snapshot = state._load_contributor_snapshot(state_path)
+    assert len(snapshot) >= 1
+    # At least one backlog key should have contributor IDs
+    all_ids = [sid for ids in snapshot.values() for sid in ids]
+    assert len(all_ids) >= 3
+
+
+def test_cmd_remove_marks_signals_resolved(tmp_memory_dir: Path) -> None:
+    """Removing a backlog item should mark contributor signals as resolved."""
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_resolve.md"
+    note_path.write_text(
+        "# Resolve\n\n"
+        "- Date: 2026-03-20\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_r | failure | one\n"
+        "- SIGFB: tool_r | failure | two\n"
+        "- SIGFB: tool_r | failure | three\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    state_path = tmp_memory_dir / "_state.md"
+    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+
+    # Before removal: no resolved signals
+    resolved_before = state._load_sigfb_resolved(state_path)
+    assert len(resolved_before) == 0
+
+    state.cmd_remove(state_path, "improvements", "tool_r")
+
+    # After removal: signals should be resolved
+    resolved_after = state._load_sigfb_resolved(state_path)
+    assert len(resolved_after) >= 3
+
+
+def test_resolved_signals_not_recounted(tmp_memory_dir: Path) -> None:
+    """Core test: resolved signals should not regenerate backlog items."""
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_recount.md"
+    note_path.write_text(
+        "# Recount\n\n"
+        "- Date: 2026-03-20\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_rc | failure | one\n"
+        "- SIGFB: tool_rc | failure | two\n"
+        "- SIGFB: tool_rc | failure | three\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    state_path = tmp_memory_dir / "_state.md"
+
+    # Generate backlog
+    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    loaded = state.load_state(state_path)
+    assert any("tool_rc" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]])
+
+    # Remove (marks signals as resolved)
+    state.cmd_remove(state_path, "improvements", "tool_rc")
+
+    # Re-run from_note — should NOT regenerate
+    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    loaded = state.load_state(state_path)
+    assert not any(
+        "tool_rc" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+
+
+def test_new_signals_after_resolve_detected(tmp_memory_dir: Path) -> None:
+    """New signals after resolve should correctly generate new backlog items."""
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+
+    # First note with 3 failures
+    note1 = note_dir / "1200_first.md"
+    note1.write_text(
+        "# First\n\n"
+        "- Date: 2026-03-20\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_new | failure | old_one\n"
+        "- SIGFB: tool_new | failure | old_two\n"
+        "- SIGFB: tool_new | failure | old_three\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note1,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    state_path = tmp_memory_dir / "_state.md"
+
+    # Generate and resolve
+    state.cmd_from_note(state_path, note1, auto_improve_add=True)
+    state.cmd_remove(state_path, "improvements", "tool_new")
+
+    # Second note with 3 NEW failures (different desc -> different IDs)
+    note2_dir = tmp_memory_dir / "2026-03-21"
+    note2_dir.mkdir(parents=True, exist_ok=True)
+    note2 = note2_dir / "1200_second.md"
+    note2.write_text(
+        "# Second\n\n"
+        "- Date: 2026-03-21\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_new | failure | new_one\n"
+        "- SIGFB: tool_new | failure | new_two\n"
+        "- SIGFB: tool_new | failure | new_three\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note2,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+
+    state.cmd_from_note(state_path, note2, auto_improve_add=True)
+    loaded = state.load_state(state_path)
+    assert any("tool_new" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]])
+
+
+def test_trigger_cooldown_periodic_review(tmp_memory_dir: Path) -> None:
+    """Trigger cooldown should prevent periodic_review from being re-added."""
+    state_path = tmp_memory_dir / "_state.md"
+
+    # Record cooldown
+    state._record_trigger_cooldown(state_path, "periodic_review")
+
+    # Should be within cooldown
+    assert state._has_recent_trigger_cooldown(state_path, "periodic_review", 14) is True
+
+    # Unknown trigger should not be in cooldown
+    assert state._has_recent_trigger_cooldown(state_path, "unknown_trigger", 14) is False
+
+
+def test_trigger_contributor_inheritance(tmp_memory_dir: Path) -> None:
+    """pattern_escalation/gap_expansion triggers should inherit contributor_ids from candidates."""
+    note_dir = tmp_memory_dir / "2026-03-20"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1200_trigger.md"
+    # 3 friction + 1 workaround = pattern_escalation at medium severity
+    note_path.write_text(
+        "# Trigger\n\n"
+        "- Date: 2026-03-20\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: tool_t | friction | f1\n"
+        "- SIGFB: tool_t | friction | f2\n"
+        "- SIGFB: tool_t | friction | f3\n"
+        "- SIGFB: tool_t | workaround | w1\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+    state_path = tmp_memory_dir / "_state.md"
+    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+
+    snapshot = state._load_contributor_snapshot(state_path)
+    # Should have at least one entry with contributor_ids inherited from the candidate
+    trigger_keys = [k for k in snapshot if "pattern_escalation" in k or "tool_t" in k]
+    assert len(trigger_keys) >= 1
+    for key in trigger_keys:
+        assert len(snapshot[key]) >= 1

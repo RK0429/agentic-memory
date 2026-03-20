@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -169,6 +170,12 @@ def _normalize_note_path(note_path: Path, dailynote_dir: Path) -> str:
     except ValueError:
         # If path cannot be made relative, use as-is
         return str(note_path)
+
+
+def _signal_event_id(note_path: str, skill: str, signal_type: str, desc: str, seq: int) -> str:
+    """Deterministic ID from note path + signal content + ordinal."""
+    raw = f"{note_path}|{skill}|{signal_type}|{desc}|{seq}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -819,6 +826,11 @@ def build_entry(
     errs = extract_errors(md)
     skc = extract_skill_candidates(sections.get_section(secs, "スキル候補"))
     skfb = extract_skill_feedback(sections.get_section(secs, "スキルフィードバック"))
+    normalized_path = _normalize_note_path(note_path, dailynote_dir)
+    for seq, fb in enumerate(skfb):
+        fb["id"] = _signal_event_id(
+            normalized_path, fb.get("skill", ""), fb.get("type", ""), fb.get("desc", ""), seq
+        )
     sigfb_status = detect_sigfb_status(sections.get_section(secs, "スキルフィードバック"))
 
     decisions_text = "\n".join(bullets(sections.get_section(secs, "判断"))[:12])
@@ -832,7 +844,7 @@ def build_entry(
     )
 
     return {
-        "path": _normalize_note_path(note_path, dailynote_dir),
+        "path": normalized_path,
         "task_id": resolved_task_id,
         "agent_id": resolved_agent_id,
         "relay_session_id": resolved_relay_session_id,

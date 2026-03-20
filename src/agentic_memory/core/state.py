@@ -44,7 +44,9 @@ _IMPROVEMENT_ITEM_RE = re.compile(
     r"(?P<skill>.+?)(?:\s+\(score=\d+\))?\s+—\s+"
 )
 _PERIODIC_REVIEW_COOLDOWN_DAYS = 14
-_IMPROVEMENT_RESOLUTION_BASENAME = "_improvement_backlog_resolved.json"
+_SIGFB_RESOLVED_BASENAME = "_sigfb_resolved.json"
+_BACKLOG_CONTRIBUTORS_BASENAME = "_backlog_contributors.json"
+_TRIGGER_COOLDOWN_BASENAME = "_trigger_cooldown.json"
 
 
 def now_stamp() -> str:
@@ -80,10 +82,6 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
-def _improvement_resolution_path(state_path: Path) -> Path:
-    return state_path.parent / _IMPROVEMENT_RESOLUTION_BASENAME
-
-
 def _parse_improvement_item(text: str) -> dict[str, str | None]:
     match = _IMPROVEMENT_ITEM_RE.match(text.strip())
     if not match:
@@ -95,110 +93,141 @@ def _parse_improvement_item(text: str) -> dict[str, str | None]:
     }
 
 
-def _load_improvement_resolutions(state_path: Path) -> list[dict[str, str]]:
-    path = _improvement_resolution_path(state_path)
+# --- _sigfb_resolved.json sidecar ---
+
+
+def _sigfb_resolved_path(state_path: Path) -> Path:
+    return state_path.parent / _SIGFB_RESOLVED_BASENAME
+
+
+def _load_sigfb_resolved(state_path: Path) -> dict[str, dict]:
+    path = _sigfb_resolved_path(state_path)
     if not path.exists():
-        return []
+        return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return []
-    if not isinstance(payload, list):
-        return []
-
-    entries: list[dict[str, str]] = []
-    for raw in payload:
-        if not isinstance(raw, dict):
-            continue
-        key = raw.get("key")
-        resolved_at = raw.get("resolved_at")
-        text = raw.get("text")
-        if not isinstance(key, str) or not key.strip():
-            continue
-        if not isinstance(resolved_at, str) or not resolved_at.strip():
-            continue
-        if not isinstance(text, str) or not text.strip():
-            continue
-        entry: dict[str, str] = {
-            "key": key,
-            "resolved_at": resolved_at,
-            "text": text,
-        }
-        for field in ("severity", "trigger_type", "skill"):
-            value = raw.get(field)
-            if isinstance(value, str) and value.strip():
-                entry[field] = value
-        entries.append(entry)
-    return entries
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
 
-def _save_improvement_resolutions(state_path: Path, entries: list[dict[str, str]]) -> None:
-    path = _improvement_resolution_path(state_path)
-    if not entries:
+def _save_sigfb_resolved(state_path: Path, data: dict[str, dict]) -> None:
+    path = _sigfb_resolved_path(state_path)
+    if not data:
         with suppress(FileNotFoundError):
             path.unlink()
         return
-    _atomic_write_text(path, json.dumps(entries, ensure_ascii=False, indent=2) + "\n")
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
-def _remember_resolved_improvements(state_path: Path, removed_items: list[StateItem]) -> None:
-    if not removed_items:
+def _resolved_signal_id_set(state_path: Path) -> set[str]:
+    return set(_load_sigfb_resolved(state_path).keys())
+
+
+def _mark_signals_resolved(state_path: Path, signal_ids: list[str]) -> None:
+    if not signal_ids:
         return
-    existing = _load_improvement_resolutions(state_path)
-    by_key = {entry["key"]: entry for entry in existing}
+    data = _load_sigfb_resolved(state_path)
+    stamp = now_stamp()
+    for sid in signal_ids:
+        data[sid] = {"resolved_at": stamp}
+    _save_sigfb_resolved(state_path, data)
+
+
+# --- _backlog_contributors.json sidecar ---
+
+
+def _contributor_snapshot_path(state_path: Path) -> Path:
+    return state_path.parent / _BACKLOG_CONTRIBUTORS_BASENAME
+
+
+def _load_contributor_snapshot(state_path: Path) -> dict[str, list[str]]:
+    path = _contributor_snapshot_path(state_path)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _save_contributor_snapshot(state_path: Path, data: dict[str, list[str]]) -> None:
+    path = _contributor_snapshot_path(state_path)
+    if not data:
+        with suppress(FileNotFoundError):
+            path.unlink()
+        return
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+# --- _trigger_cooldown.json sidecar ---
+
+
+def _trigger_cooldown_path(state_path: Path) -> Path:
+    return state_path.parent / _TRIGGER_COOLDOWN_BASENAME
+
+
+def _load_trigger_cooldown(state_path: Path) -> dict[str, str]:
+    path = _trigger_cooldown_path(state_path)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _save_trigger_cooldown(state_path: Path, data: dict[str, str]) -> None:
+    path = _trigger_cooldown_path(state_path)
+    if not data:
+        with suppress(FileNotFoundError):
+            path.unlink()
+        return
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def _record_trigger_cooldown(state_path: Path, trigger_type: str) -> None:
+    data = _load_trigger_cooldown(state_path)
+    data[trigger_type] = now_stamp()
+    _save_trigger_cooldown(state_path, data)
+
+
+def _has_recent_trigger_cooldown(state_path: Path, trigger_type: str, days: int) -> bool:
+    data = _load_trigger_cooldown(state_path)
+    stamp = data.get(trigger_type)
+    if not isinstance(stamp, str):
+        return False
+    dt = _parse_datetime(stamp)
+    if dt is None:
+        return False
+    now = _dt.date.today()
+    return (now - dt.date()).days < days
+
+
+# --- Backlog signal resolution ---
+
+
+def _resolve_backlog_signals(state_path: Path, removed_items: list[StateItem]) -> None:
+    snapshot = _load_contributor_snapshot(state_path)
+    all_signal_ids: list[str] = []
     for item in removed_items:
+        key = item.normalize_key()
+        contributor_ids = snapshot.pop(key, [])
+        all_signal_ids.extend(contributor_ids)
         meta = _parse_improvement_item(item.text)
-        entry: dict[str, str] = {
-            "key": item.normalize_key(),
-            "resolved_at": now_stamp(),
-            "text": item.text,
-        }
-        for field in ("severity", "trigger_type", "skill"):
-            value = meta.get(field)
-            if isinstance(value, str) and value:
-                entry[field] = value
-        by_key[entry["key"]] = entry
-    _save_improvement_resolutions(state_path, list(by_key.values()))
-
-
-def _forget_resolved_improvements(state_path: Path, items: list[StateItem]) -> None:
-    if not items:
-        return
-    existing = _load_improvement_resolutions(state_path)
-    if not existing:
-        return
-    keys = {item.normalize_key() for item in items}
-    filtered = [entry for entry in existing if entry.get("key") not in keys]
-    if len(filtered) != len(existing):
-        _save_improvement_resolutions(state_path, filtered)
-
-
-def _resolved_improvement_key_set(state_path: Path) -> set[str]:
-    return {
-        entry["key"]
-        for entry in _load_improvement_resolutions(state_path)
-        if isinstance(entry.get("key"), str)
-    }
-
-
-def _has_recently_resolved_periodic_review(
-    state_path: Path,
-    *,
-    today: _dt.date | None = None,
-) -> bool:
-    now = today or _dt.date.today()
-    for entry in _load_improvement_resolutions(state_path):
-        if entry.get("trigger_type") != "periodic_review":
-            continue
-        resolved_at = entry.get("resolved_at")
-        if not isinstance(resolved_at, str):
-            continue
-        resolved_dt = _parse_datetime(resolved_at)
-        if resolved_dt is None:
-            continue
-        if (now - resolved_dt.date()).days < _PERIODIC_REVIEW_COOLDOWN_DAYS:
-            return True
-    return False
+        if meta.get("trigger_type") == "periodic_review":
+            _record_trigger_cooldown(state_path, "periodic_review")
+    if all_signal_ids:
+        _mark_signals_resolved(state_path, all_signal_ids)
+    _save_contributor_snapshot(state_path, snapshot)
 
 
 @dataclass
@@ -716,8 +745,6 @@ def cmd_set(state_path: Path, section: str, items: list[str]) -> int:
     sections[section_name], _ = enforce_cap(deduplicate(new_items), get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
-    if section_name == STATE_SHORT_KEYS["improvements"]:
-        _forget_resolved_improvements(state_path, new_items)
     summary = json.dumps(
         {
             "path": str(state_path),
@@ -762,8 +789,6 @@ def cmd_add(
     sections[section_name], _ = enforce_cap(merged, get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
-    if section_name == STATE_SHORT_KEYS["improvements"]:
-        _forget_resolved_improvements(state_path, new_items)
     summary = json.dumps(
         {
             "path": str(state_path),
@@ -815,7 +840,7 @@ def cmd_remove(state_path: Path, section: str, pattern: str, regex: bool = False
         sections[section_name] = kept
         save_state(state_path, sections)
         if section_name == STATE_SHORT_KEYS["improvements"]:
-            _remember_resolved_improvements(state_path, removed_state_items)
+            _resolve_backlog_signals(state_path, removed_state_items)
     summary = json.dumps(
         {
             "path": str(state_path),
@@ -1112,7 +1137,8 @@ def _auto_improve_from_signals(
             index_path=index_path,
             max_summary_chars=max_summary_chars,
         )
-        aggregated = signals.aggregate_signals(entries)
+        resolved_ids = _resolved_signal_id_set(state_path)
+        aggregated = signals.aggregate_signals(entries, resolved_ids=resolved_ids)
         candidates = signals.analyze_signals(aggregated, threshold=threshold)
     except Exception:
         return []
@@ -1120,9 +1146,14 @@ def _auto_improve_from_signals(
     existing_keys = {
         item.normalize_key() for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
     }
-    resolved_keys = _resolved_improvement_key_set(state_path)
 
     new_items: list[StateItem] = []
+    snapshot = _load_contributor_snapshot(state_path)
+
+    # skill -> contributor_ids mapping (for triggers)
+    skill_contributors: dict[str, list[str]] = {
+        cand["skill"]: cand.get("contributor_ids", []) for cand in candidates
+    }
 
     # High-severity candidates from analyze_signals
     for cand in candidates:
@@ -1133,9 +1164,10 @@ def _auto_improve_from_signals(
         suggestion = cand.get("suggestion", "")
         text = f"[severity:high] {skill} (score={score}) — {suggestion}"
         item = StateItem.from_text(text)
-        if item.normalize_key() not in existing_keys and item.normalize_key() not in resolved_keys:
+        if item.normalize_key() not in existing_keys:
             new_items.append(item)
             existing_keys.add(item.normalize_key())
+            snapshot[item.normalize_key()] = cand.get("contributor_ids", [])
 
     # Additional triggers (periodic_review, pattern_escalation, gap_expansion)
     existing_backlog_texts = [
@@ -1149,14 +1181,19 @@ def _auto_improve_from_signals(
         severity = trig.get("severity", "medium")
         text = f"[severity:{severity}][{ttype}] {skill} — {detail}"
         item = StateItem.from_text(text)
-        if item.normalize_key() in resolved_keys:
-            continue
-        if ttype == "periodic_review" and _has_recently_resolved_periodic_review(state_path):
+        if ttype == "periodic_review" and _has_recent_trigger_cooldown(
+            state_path, "periodic_review", _PERIODIC_REVIEW_COOLDOWN_DAYS
+        ):
             continue
         if item.normalize_key() not in existing_keys:
             new_items.append(item)
             existing_keys.add(item.normalize_key())
+            # periodic_review 以外の trigger は candidate の contributor_ids を継承
+            if ttype != "periodic_review" and skill in skill_contributors:
+                snapshot[item.normalize_key()] = skill_contributors[skill]
 
+    if new_items:
+        _save_contributor_snapshot(state_path, snapshot)
     return new_items
 
 

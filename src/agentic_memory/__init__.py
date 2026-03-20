@@ -1,3 +1,3 @@
 """agentic-memory — Persistent memory system for AI agents."""
 
-__version__ = "0.6.7"
+__version__ = "0.7.0"

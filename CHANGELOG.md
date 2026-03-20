@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-20
+
+### Changed
+
+- **Breaking**: SIGFB signals now require `id` field in `_index.jsonl`; existing indices must be rebuilt via `memory_health_check(fix=True)` or `memory_index_upsert`
+- **Breaking**: Replaced `_improvement_backlog_resolved.json` with three new sidecars: `_sigfb_resolved.json`, `_backlog_contributors.json`, `_trigger_cooldown.json`
+- `aggregate_signals()` accepts `resolved_ids` parameter to exclude resolved signals from aggregation
+- `analyze_signals()` now includes `contributor_ids` in each candidate for signal-level tracking
+- `cmd_remove()` on improvements section now marks contributor signals as resolved via `_sigfb_resolved.json`
+- `_auto_improve_from_signals()` filters resolved signals before aggregation, preventing re-generation of resolved backlog items
+- Trigger cooldown (e.g. `periodic_review`) is now managed via `_trigger_cooldown.json` instead of text-based resolution records
+
+### Added
+
+- `_signal_event_id()` generates deterministic 12-char IDs for each SIGFB signal based on note path, skill, type, description, and ordinal
+- `build_entry()` assigns `id` to each `skill_feedback` entry during indexing
+
+### Removed
+
+- `_improvement_backlog_resolved.json` sidecar and all associated functions (`_load_improvement_resolutions`, `_save_improvement_resolutions`, `_remember_resolved_improvements`, `_forget_resolved_improvements`, `_resolved_improvement_key_set`, `_has_recently_resolved_periodic_review`)
+
 ## [0.6.7] - 2026-03-19
 
 ### Fixed
