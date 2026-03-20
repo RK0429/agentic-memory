@@ -64,7 +64,7 @@ def extract_header(md: str) -> dict[str, str]:
     for line in md.splitlines():
         if line.startswith("# ") and not title:
             title = line[2:].strip()
-        m = re.match(r"^- (\w+):\s*(.*)$", line)
+        m = re.match(r"^- (\w+):[ \t]*(.*)$", line)
         if m:
             meta[m.group(1)] = m.group(2).strip()
         # stop early after first big section

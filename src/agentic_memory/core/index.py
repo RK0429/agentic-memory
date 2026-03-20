@@ -208,7 +208,7 @@ def first_h1(md: str) -> str:
 
 def header_field(md: str, label: str) -> str:
     # matches "- Label: value" before the first "##"
-    rx = re.compile(rf"^- {re.escape(label)}:\s*(.*)\s*$", re.MULTILINE)
+    rx = re.compile(rf"^- {re.escape(label)}:[ \t]*(.*)$", re.MULTILINE)
     m = rx.search(md)
     if not m:
         return ""

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import agentic_memory.server as server_module
-from agentic_memory.core.search import COMPACT_EXCLUDE_FIELDS
+from agentic_memory.core.search import COMPACT_EXCLUDE_FIELDS, GLOBAL_COMPACT_EXCLUDE_FIELDS
 from agentic_memory.server import (
     _capture_state_cmd,
     _resolve_dir,
@@ -34,6 +34,10 @@ def _note_path(raw: str) -> Path:
 
 def _state_show_payload(**kwargs: object) -> dict[str, object]:
     return json.loads(memory_state_show(**kwargs))
+
+
+def _evidence_payload(**kwargs: object) -> dict[str, object]:
+    return json.loads(memory_evidence(**kwargs))
 
 
 def _write_note(memory_dir: Path, name: str = "source.md") -> Path:
@@ -97,15 +101,47 @@ def test_memory_note_new(tmp_memory_dir: Path, monkeypatch) -> None:
     assert created_path.suffix == ".md"
 
 
+def test_memory_note_new_keeps_blank_header_fields_empty(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_note_new(title="Blank Header Fields", memory_dir=str(tmp_memory_dir))
+    )
+    created_path = Path(payload["path"])
+    index_path = tmp_memory_dir / "_index.jsonl"
+    entries = [
+        json.loads(line)
+        for line in index_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    entry = next(item for item in entries if item["title"] == "Blank Header Fields")
+
+    assert entry["path"].endswith(created_path.name)
+    assert entry["context"] == ""
+    assert entry["tags"] == []
+    assert entry["keywords"] == []
+
+
 def test_memory_state_show(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
     payload = _state_show_payload(memory_dir=str(memory_dir))
     assert payload["ok"] is True
+    assert "sections" in payload
+    assert "現在のフォーカス" in payload["sections"]
+    assert "output" not in payload
+
+
+def test_memory_state_show_as_json_false_includes_rendered_output(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = _state_show_payload(memory_dir=str(tmp_memory_dir), as_json=False)
+    assert payload["ok"] is True
     assert "現在のフォーカス" in str(payload["output"])
     assert "- (empty)" in str(payload["output"])
-    assert "sections" in payload
 
 
 def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -121,7 +157,7 @@ def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
     assert result_data["added"] == 2
     assert result_data["after"] == 2
 
-    payload = _state_show_payload(section="focus", memory_dir=str(memory_dir))
+    payload = _state_show_payload(section="focus", as_json=False, memory_dir=str(memory_dir))
     assert "Task A" in str(payload["output"])
     assert "Task B" in str(payload["output"])
 
@@ -144,7 +180,7 @@ def test_memory_state_add_accepts_section_alias_and_string_replace(
     assert payload["ok"] is True
     assert payload["removed"] == 1
 
-    payload = _state_show_payload(section="open", memory_dir=str(memory_dir))
+    payload = _state_show_payload(section="open", as_json=False, memory_dir=str(memory_dir))
     assert "New task" in str(payload["output"])
     assert "Old task" not in str(payload["output"])
 
@@ -162,7 +198,7 @@ def test_memory_state_set(tmp_memory_dir: Path, monkeypatch) -> None:
     assert parsed["before"] == 1
     assert parsed["after"] == 1
 
-    payload = _state_show_payload(section="focus", memory_dir=str(memory_dir))
+    payload = _state_show_payload(section="focus", as_json=False, memory_dir=str(memory_dir))
     assert "New" in str(payload["output"])
     assert "Old" not in str(payload["output"])
 
@@ -177,7 +213,7 @@ def test_memory_state_remove(tmp_memory_dir: Path, monkeypatch) -> None:
     assert removed_data["ok"] is True
     assert removed_data["removed"] == 1
 
-    payload = _state_show_payload(section="focus", memory_dir=str(memory_dir))
+    payload = _state_show_payload(section="focus", as_json=False, memory_dir=str(memory_dir))
     assert "Keep" in str(payload["output"])
     assert "Drop" not in str(payload["output"])
 
@@ -199,7 +235,7 @@ def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
     assert isinstance(result_data["section_counts"], dict)
     assert result_data["auto_improve"]["mode"] == "skip"
 
-    payload = _state_show_payload(section="open", memory_dir=str(memory_dir))
+    payload = _state_show_payload(section="open", as_json=False, memory_dir=str(memory_dir))
     assert "write assertions" in str(payload["output"])
 
 
@@ -397,6 +433,51 @@ def test_memory_search_global_defaults_to_quick_mode(tmp_memory_dir: Path, monke
     assert "feedback_expand" not in payload
 
 
+def test_memory_search_global_quick_strips_global_verbose_fields(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    note_path = memory_dir / "global-compact.md"
+    note_path.write_text(
+        (
+            "# Global Compact\n\n"
+            "- Date: 2026-03-20\n"
+            "- Time: 12:00 - 12:30\n"
+            "- Context: cross workspace check\n"
+            "- Tags: search,compact\n"
+            "- Keywords: validate,global\n\n"
+            "## 変更点\n"
+            "- Files:\n"
+            "  - src/agentic_memory/server.py\n\n"
+            "## 判断\n"
+            "- keep quick payload small\n\n"
+            "## 次のアクション\n"
+            "- add regression coverage\n\n"
+            "## 注意点・残課題\n"
+            "- source_engines is too verbose\n"
+        ),
+        encoding="utf-8",
+    )
+    memory_index_upsert(note_path=str(note_path), no_dense=True, memory_dir=str(memory_dir))
+
+    payload = json.loads(
+        memory_search_global(
+            query="Global Compact",
+            memory_dirs=[str(memory_dir)],
+            mode="quick",
+        )
+    )
+
+    assert payload["ok"] is True
+    assert "source_engines" not in payload
+    assert payload["results"]
+    result = payload["results"][0]
+    for field in GLOBAL_COMPACT_EXCLUDE_FIELDS:
+        assert field not in result
+
+
 def test_memory_search_global_accepts_single_string_dir(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
@@ -495,9 +576,14 @@ def test_memory_evidence(tmp_memory_dir: Path, monkeypatch) -> None:
     memory_dir = tmp_memory_dir
 
     note_path = _write_note(memory_dir, name="evidence.md")
-    output = memory_evidence(query="validate", paths=[str(note_path)], memory_dir=str(memory_dir))
-    assert "# DailyNote Evidence Pack" in output
-    assert str(note_path) in output
+    payload = _evidence_payload(
+        query="validate",
+        paths=[str(note_path)],
+        memory_dir=str(memory_dir),
+    )
+    assert payload["ok"] is True
+    assert "# DailyNote Evidence Pack" in str(payload["markdown"])
+    assert str(note_path) in str(payload["markdown"])
 
 
 def test_memory_evidence_accepts_single_string_path(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -505,9 +591,10 @@ def test_memory_evidence_accepts_single_string_path(tmp_memory_dir: Path, monkey
     memory_dir = tmp_memory_dir
 
     note_path = _write_note(memory_dir, name="single-evidence.md")
-    output = memory_evidence(query="validate", paths=str(note_path), memory_dir=str(memory_dir))
-    assert "# DailyNote Evidence Pack" in output
-    assert str(note_path) in output
+    payload = _evidence_payload(query="validate", paths=str(note_path), memory_dir=str(memory_dir))
+    assert payload["ok"] is True
+    assert "# DailyNote Evidence Pack" in str(payload["markdown"])
+    assert str(note_path) in str(payload["markdown"])
 
 
 def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -517,9 +604,10 @@ def test_memory_evidence_resolves_paths_by_task_id(tmp_memory_dir: Path, monkeyp
     note_path = _note_path(
         memory_note_new(title="Evidence by Task", task_id="TASK-401", memory_dir=str(memory_dir))
     )
-    output = memory_evidence(query="Evidence", task_id="TASK-401", memory_dir=str(memory_dir))
-    assert "# DailyNote Evidence Pack" in output
-    assert note_path.name in output
+    payload = _evidence_payload(query="Evidence", task_id="TASK-401", memory_dir=str(memory_dir))
+    assert payload["ok"] is True
+    assert "# DailyNote Evidence Pack" in str(payload["markdown"])
+    assert note_path.name in str(payload["markdown"])
 
 
 def test_memory_state_show_preserves_warnings_from_state_command(
@@ -601,13 +689,14 @@ def test_memory_evidence_resolves_paths_by_relay_task_uuid(
     note_path = _note_path(
         memory_note_new(title="Evidence by Relay Task", task_id=task_id, memory_dir=str(memory_dir))
     )
-    output = memory_evidence(
+    payload = _evidence_payload(
         query="Relay Task",
         task_id=task_id.upper(),
         memory_dir=str(memory_dir),
     )
-    assert "# DailyNote Evidence Pack" in output
-    assert note_path.name in output
+    assert payload["ok"] is True
+    assert "# DailyNote Evidence Pack" in str(payload["markdown"])
+    assert note_path.name in str(payload["markdown"])
 
 
 def test_memory_evidence_rejects_task_id_without_indexed_notes(
@@ -630,14 +719,15 @@ def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkey
         memory_note_new(title="Ignored Task Note", task_id="TASK-501", memory_dir=str(memory_dir))
     )
     explicit_path = _write_note(memory_dir, name="explicit-evidence.md")
-    output = memory_evidence(
+    payload = _evidence_payload(
         query="validate",
         paths=[str(explicit_path)],
         task_id="TASK-501",
         memory_dir=str(memory_dir),
     )
-    assert str(explicit_path) in output
-    assert "Ignored Task Note" not in output
+    assert payload["ok"] is True
+    assert str(explicit_path) in str(payload["markdown"])
+    assert "Ignored Task Note" not in str(payload["markdown"])
 
 
 def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) -> None:

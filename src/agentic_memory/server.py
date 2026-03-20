@@ -385,6 +385,37 @@ def _strip_compact_fields(result: dict) -> dict:
     return result
 
 
+def _strip_global_compact_fields(result: dict) -> dict:
+    """Apply tighter compact projection for global search results."""
+    result = dict(result)
+    result["results"] = _flatten_results(
+        result.get("results", []),
+        search.GLOBAL_COMPACT_EXCLUDE_FIELDS,
+        strip_empty=True,
+    )
+    for key in ("feedback_source_note", "feedback_terms_used", "suggestions"):
+        val = result.get(key)
+        if val is None or val == []:
+            result.pop(key, None)
+    filters = result.get("filters")
+    if isinstance(filters, dict) and all(v is None for v in filters.values()):
+        result.pop("filters", None)
+    for key in (
+        "expand_enabled",
+        "feedback_expand",
+        "top",
+        "snippets",
+        "rerank_enabled",
+        "rerank_auto_enabled",
+        "compact",
+        "source_engines",
+    ):
+        result.pop(key, None)
+    if result.get("warnings") == []:
+        result.pop("warnings", None)
+    return result
+
+
 def _strip_detailed_fields(result: dict) -> dict:
     """Remove verbose CJK n-gram arrays from detailed mode results."""
     result = dict(result)
@@ -521,17 +552,17 @@ def memory_note_new(
 def memory_state_show(
     section: str | None = None,
     stale_days: int = 0,
-    as_json: bool = False,
+    as_json: bool = True,
     memory_dir: str | None = None,
 ) -> str:
     """Show rolling state sections.
 
     Use this to check current focus, open actions, decisions, and pitfalls.
-    `section` filters one state section, `stale_days` marks stale items,
-    and `as_json` uses JSON output.
+    `section` filters one state section, `stale_days` marks stale items.
+    `as_json` defaults to True (structured sections only). Set to False
+    to also include rendered markdown under `output`.
     `memory_dir` selects the state file location.
-    Returns JSON. When `as_json=True`, the payload contains structured sections only.
-    Otherwise it also includes rendered markdown under `output`.
+    Returns JSON.
     """
     resolved = _resolve_dir(memory_dir)
     structured_output = _capture_state_cmd(
@@ -861,7 +892,7 @@ def memory_evidence(
     relay task UUID. A valid `task_id` with no indexed notes raises `ValueError`
     with recovery guidance.
     `max_lines` limits lines per section (default 12).
-    Returns markdown evidence text with provenance per note.
+    Returns JSON with the generated markdown under `markdown`.
     """
     resolved = _resolve_dir(memory_dir)
     try:
@@ -875,11 +906,12 @@ def memory_evidence(
                 "Use 'paths' to specify note file paths directly, "
                 "or 'task_id' to auto-resolve paths from the index."
             )
-        return evidence.generate_evidence_pack(
+        pack = evidence.generate_evidence_pack(
             query=query,
             paths=resolved_paths,
             max_lines=max_lines,
         )
+        return _success_payload({"markdown": pack})
     except ValueError as exc:
         return _validation_error_payload(
             str(exc),
@@ -1028,7 +1060,7 @@ def memory_search_global(
             default_hint="Pass one or more memory directories and retry.",
         )
     if compact:
-        result = _strip_compact_fields(result)
+        result = _strip_global_compact_fields(result)
     elif mode == "detailed":
         result = _strip_detailed_fields(result)
     else:

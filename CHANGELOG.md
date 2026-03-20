@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-20
+
+### Changed
+
+- **Breaking**: `memory_evidence` now returns a JSON success envelope with generated Markdown under `markdown`, aligning success and error payloads
+- **Breaking**: `memory_state_show` now defaults to `as_json=True`, returning structured sections by default; pass `as_json=False` to include rendered markdown under `output`
+- `memory_search_global` now applies a tighter compact projection in `quick` mode so cross-workspace searches return smaller default payloads
+
+### Added
+
+- Added end-to-end regression coverage for `memory_note_new` blank-header indexing and updated server tests for the new response contracts
+
+### Fixed
+
+- Blank `Context` / `Tags` / `Keywords` header lines in newly created notes no longer bleed into adjacent header fields during indexing or evidence header extraction
+
 ## [0.10.0] - 2026-03-20
 
 ### Changed

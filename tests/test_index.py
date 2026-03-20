@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentic_memory.core import index
+from agentic_memory.core import evidence, index
 
 
 def test_build_entry(sample_note_path: Path, tmp_memory_dir: Path) -> None:
@@ -17,6 +17,36 @@ def test_build_entry(sample_note_path: Path, tmp_memory_dir: Path) -> None:
     assert "uv run pytest tests/test_auth.py" in entry["commands"]
     assert any(err == "AuthError" for err in entry["errors"])
     assert entry["path"].startswith("memory/2026-01-01/")
+
+
+def test_header_field_does_not_bleed_into_adjacent_empty_headers() -> None:
+    md = (
+        "# Empty Headers\n\n"
+        "- Context: \n"
+        "- Tags: \n"
+        "- Keywords: \n\n"
+        "## 目標\n- keep fields isolated\n"
+    )
+
+    assert index.header_field(md, "Context") == ""
+    assert index.header_field(md, "Tags") == ""
+    assert index.header_field(md, "Keywords") == ""
+
+
+def test_extract_header_keeps_empty_header_lines_isolated() -> None:
+    md = (
+        "# Empty Headers\n\n"
+        "- Context: \n"
+        "- Tags: \n"
+        "- Keywords: \n\n"
+        "## Goal\n- keep fields isolated\n"
+    )
+
+    meta = evidence.extract_header(md)
+
+    assert meta["Context"] == ""
+    assert meta["Tags"] == ""
+    assert meta["Keywords"] == ""
 
 
 def test_upsert_new(sample_index_path: Path) -> None:

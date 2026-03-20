@@ -93,6 +93,22 @@ COMPACT_EXCLUDE_FIELDS = frozenset(
     }
 )
 
+# Additional fields excluded from global compact mode results.
+GLOBAL_COMPACT_EXCLUDE_FIELDS = COMPACT_EXCLUDE_FIELDS | frozenset(
+    {
+        "decisions",
+        "next",
+        "pitfalls",
+        "context",
+        "tags",
+        "keywords",
+        "files",
+        "sigfb_status",
+        "indexed_at",
+        "time",
+    }
+)
+
 # Fields excluded from detailed mode — verbose CJK n-gram arrays that are only
 # useful for debugging search scoring.  Kept in debug mode.
 DETAILED_EXCLUDE_FIELDS = frozenset({"auto_keywords", "work_log_keywords"})
