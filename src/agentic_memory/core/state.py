@@ -43,7 +43,10 @@ _IMPROVEMENT_ITEM_RE = re.compile(
     r"(?:\[(?P<trigger_type>[^\]]+)\])?\s+"
     r"(?P<skill>.+?)(?:\s+\(score=\d+\))?\s+—\s+"
 )
+_TIME_PREFIX_RE = re.compile(r"^(?P<start>\d{2}:\d{2})(?:\s*-\s*.*)?$")
+_FILENAME_TIME_PREFIX_RE = re.compile(r"^(?P<hour>\d{2})(?P<minute>\d{2})(?:_|$)")
 _PERIODIC_REVIEW_COOLDOWN_DAYS = 14
+_LEGACY_IMPROVEMENT_RESOLVED_BASENAME = "_improvement_backlog_resolved.json"
 _SIGFB_RESOLVED_BASENAME = "_sigfb_resolved.json"
 _BACKLOG_CONTRIBUTORS_BASENAME = "_backlog_contributors.json"
 _TRIGGER_COOLDOWN_BASENAME = "_trigger_cooldown.json"
@@ -93,6 +96,35 @@ def _parse_improvement_item(text: str) -> dict[str, str | None]:
     }
 
 
+# --- legacy _improvement_backlog_resolved.json sidecar ---
+
+
+def _legacy_improvement_resolved_path(state_path: Path) -> Path:
+    return state_path.parent / _LEGACY_IMPROVEMENT_RESOLVED_BASENAME
+
+
+def _load_legacy_improvement_resolved(state_path: Path) -> list[dict[str, Any]]:
+    path = _legacy_improvement_resolved_path(state_path)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _save_legacy_improvement_resolved(state_path: Path, data: list[dict[str, Any]]) -> None:
+    path = _legacy_improvement_resolved_path(state_path)
+    if not data:
+        with suppress(FileNotFoundError):
+            path.unlink()
+        return
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
 # --- _sigfb_resolved.json sidecar ---
 
 
@@ -126,13 +158,18 @@ def _resolved_signal_id_set(state_path: Path) -> set[str]:
     return set(_load_sigfb_resolved(state_path).keys())
 
 
-def _mark_signals_resolved(state_path: Path, signal_ids: list[str]) -> None:
+def _mark_signals_resolved(
+    state_path: Path,
+    signal_ids: list[str],
+    *,
+    resolved_at: str | None = None,
+) -> None:
     if not signal_ids:
         return
     data = _load_sigfb_resolved(state_path)
-    stamp = now_stamp()
+    stamp = resolved_at or now_stamp()
     for sid in signal_ids:
-        data[sid] = {"resolved_at": stamp}
+        data.setdefault(sid, {"resolved_at": stamp})
     _save_sigfb_resolved(state_path, data)
 
 
@@ -194,10 +231,19 @@ def _save_trigger_cooldown(state_path: Path, data: dict[str, str]) -> None:
     _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
-def _record_trigger_cooldown(state_path: Path, trigger_type: str) -> None:
+def _set_trigger_cooldown(state_path: Path, trigger_type: str, stamp: str) -> None:
     data = _load_trigger_cooldown(state_path)
-    data[trigger_type] = now_stamp()
+    current = data.get(trigger_type)
+    current_dt = _parse_datetime(current) if isinstance(current, str) else None
+    next_dt = _parse_datetime(stamp)
+    if current_dt is not None and next_dt is not None and current_dt >= next_dt:
+        return
+    data[trigger_type] = stamp
     _save_trigger_cooldown(state_path, data)
+
+
+def _record_trigger_cooldown(state_path: Path, trigger_type: str) -> None:
+    _set_trigger_cooldown(state_path, trigger_type, now_stamp())
 
 
 def _has_recent_trigger_cooldown(state_path: Path, trigger_type: str, days: int) -> bool:
@@ -228,6 +274,175 @@ def _resolve_backlog_signals(state_path: Path, removed_items: list[StateItem]) -
     if all_signal_ids:
         _mark_signals_resolved(state_path, all_signal_ids)
     _save_contributor_snapshot(state_path, snapshot)
+
+
+def _entry_start_datetime(entry: dict[str, Any]) -> _dt.datetime | None:
+    raw_date = entry.get("date")
+    if not isinstance(raw_date, str) or not raw_date.strip():
+        return None
+
+    raw_time = entry.get("time")
+    if isinstance(raw_time, str):
+        match = _TIME_PREFIX_RE.match(raw_time.strip())
+        if match is not None:
+            entry_dt = _parse_datetime(f"{raw_date} {match.group('start')}")
+            if entry_dt is not None:
+                return entry_dt
+
+    raw_path = entry.get("path")
+    if isinstance(raw_path, str):
+        match = _FILENAME_TIME_PREFIX_RE.match(Path(raw_path).name)
+        if match is not None:
+            entry_dt = _parse_datetime(f"{raw_date} {match.group('hour')}:{match.group('minute')}")
+            if entry_dt is not None:
+                return entry_dt
+
+    return None
+
+
+def _entry_happened_before_resolution(entry: dict[str, Any], resolved_at: _dt.datetime) -> bool:
+    raw_date = entry.get("date")
+    if not isinstance(raw_date, str) or not raw_date.strip():
+        return False
+    entry_date = _parse_datetime(raw_date)
+    if entry_date is None:
+        return False
+    if entry_date.date() < resolved_at.date():
+        return True
+    if entry_date.date() > resolved_at.date():
+        return False
+
+    entry_dt = _entry_start_datetime(entry)
+    if entry_dt is None:
+        return False
+    return entry_dt <= resolved_at
+
+
+def _legacy_snapshot_for_resolution(
+    entries: list[dict[str, Any]],
+    resolved_at: _dt.datetime,
+    *,
+    threshold: int,
+) -> tuple[list[dict[str, Any]], dict[str, list[str]], list[dict[str, Any]]]:
+    prior_entries = [
+        entry for entry in entries if _entry_happened_before_resolution(entry, resolved_at)
+    ]
+    aggregated = signals.aggregate_signals(prior_entries)
+    candidates = signals.analyze_signals(aggregated, threshold=threshold)
+    skill_contributors = {
+        str(cand.get("skill", "")): [
+            sid for sid in cand.get("contributor_ids", []) if isinstance(sid, str) and sid
+        ]
+        for cand in candidates
+    }
+    triggers = signals.check_improvement_triggers(prior_entries, candidates, [])
+    return candidates, skill_contributors, triggers
+
+
+def _migrate_legacy_improvement_resolutions(
+    state_path: Path,
+    entries: list[dict[str, Any]],
+    *,
+    threshold: int,
+) -> None:
+    legacy_entries = _load_legacy_improvement_resolved(state_path)
+    if not legacy_entries:
+        return
+
+    snapshot_cache: dict[
+        str,
+        tuple[list[dict[str, Any]], dict[str, list[str]], list[dict[str, Any]]],
+    ] = {}
+    remaining: list[dict[str, Any]] = []
+    resolved_data = _load_sigfb_resolved(state_path)
+    trigger_cooldown = _load_trigger_cooldown(state_path)
+    resolved_changed = False
+    cooldown_changed = False
+
+    def snapshot_for(
+        stamp: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, list[str]], list[dict[str, Any]]]:
+        cached = snapshot_cache.get(stamp)
+        if cached is not None:
+            return cached
+        resolved_at = _parse_datetime(stamp)
+        if resolved_at is None:
+            empty: tuple[list[dict[str, Any]], dict[str, list[str]], list[dict[str, Any]]] = (
+                [],
+                {},
+                [],
+            )
+            snapshot_cache[stamp] = empty
+            return empty
+        built = _legacy_snapshot_for_resolution(entries, resolved_at, threshold=threshold)
+        snapshot_cache[stamp] = built
+        return built
+
+    sorted_entries = sorted(
+        legacy_entries,
+        key=lambda item: str(item.get("resolved_at", "")),
+    )
+    for legacy in sorted_entries:
+        resolved_at = legacy.get("resolved_at")
+        if not isinstance(resolved_at, str) or _parse_datetime(resolved_at) is None:
+            remaining.append(legacy)
+            continue
+
+        trigger_type = legacy.get("trigger_type")
+        skill = legacy.get("skill")
+        if trigger_type == "periodic_review":
+            current = trigger_cooldown.get("periodic_review")
+            current_dt = _parse_datetime(current) if isinstance(current, str) else None
+            next_dt = _parse_datetime(resolved_at)
+            if current_dt is None or (next_dt is not None and next_dt > current_dt):
+                trigger_cooldown["periodic_review"] = resolved_at
+                cooldown_changed = True
+            continue
+
+        if not isinstance(skill, str) or not skill.strip():
+            remaining.append(legacy)
+            continue
+        skill = skill.strip()
+
+        candidates, skill_contributors, triggers = snapshot_for(resolved_at)
+        signal_ids: list[str] = []
+        if trigger_type in {"pattern_escalation", "gap_expansion"}:
+            trigger_exists = any(
+                trig.get("type") == trigger_type and trig.get("skill") == skill for trig in triggers
+            )
+            if trigger_exists:
+                signal_ids = skill_contributors.get(skill, [])
+        else:
+            matched = next(
+                (
+                    cand
+                    for cand in candidates
+                    if cand.get("skill") == skill and cand.get("severity") == "high"
+                ),
+                None,
+            )
+            if matched is not None:
+                signal_ids = [
+                    sid
+                    for sid in matched.get("contributor_ids", [])
+                    if isinstance(sid, str) and sid
+                ]
+
+        if not signal_ids:
+            remaining.append(legacy)
+            continue
+
+        for sid in signal_ids:
+            if sid not in resolved_data:
+                resolved_data[sid] = {"resolved_at": resolved_at}
+                resolved_changed = True
+
+    if resolved_changed:
+        _save_sigfb_resolved(state_path, resolved_data)
+    if cooldown_changed:
+        _save_trigger_cooldown(state_path, trigger_cooldown)
+    if resolved_changed or cooldown_changed or len(remaining) != len(legacy_entries):
+        _save_legacy_improvement_resolved(state_path, remaining)
 
 
 @dataclass
@@ -1136,6 +1351,11 @@ def _auto_improve_from_signals(
             note_path=note_path,
             index_path=index_path,
             max_summary_chars=max_summary_chars,
+        )
+        _migrate_legacy_improvement_resolutions(
+            state_path,
+            entries,
+            threshold=threshold,
         )
         resolved_ids = _resolved_signal_id_set(state_path)
         aggregated = signals.aggregate_signals(entries, resolved_ids=resolved_ids)

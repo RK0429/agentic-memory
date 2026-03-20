@@ -428,6 +428,196 @@ def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir:
     )
 
 
+def test_auto_improve_migrates_legacy_resolved_high_severity_item(tmp_memory_dir: Path) -> None:
+    legacy_text = (
+        "[severity:high] spawn_agents (score=9) — "
+        "friction(0件) + failure(3件) — "
+        "スキル定義またはガイドラインの見直しを推奨"
+    )
+    note_dir = tmp_memory_dir / "2026-03-19"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1100_sigfb-high.md"
+    note_path.write_text(
+        "# High Severity\n\n"
+        "- Date: 2026-03-19\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: spawn_agents | failure | one\n"
+        "- SIGFB: spawn_agents | failure | two\n"
+        "- SIGFB: spawn_agents | failure | three\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+
+    legacy_path = tmp_memory_dir / "_improvement_backlog_resolved.json"
+    legacy_path.write_text(
+        json.dumps(
+            [
+                {
+                    "key": legacy_text,
+                    "resolved_at": "2026-03-19 12:00",
+                    "text": legacy_text,
+                    "severity": "high",
+                    "skill": "spawn_agents",
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    state_path = tmp_memory_dir / "_state.md"
+    followup_note = tmp_memory_dir / "2026-03-20" / "1200_followup.md"
+    followup_note.parent.mkdir(parents=True, exist_ok=True)
+    followup_note.write_text(
+        "# Followup\n\n- Date: 2026-03-20\n\n## 目標\n\n- keep working\n",
+        encoding="utf-8",
+    )
+
+    rc = state.cmd_from_note(state_path, followup_note, auto_improve_add=True)
+    assert rc == 0
+
+    loaded = state.load_state(state_path)
+    assert not any(
+        "spawn_agents" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+    resolved = state._load_sigfb_resolved(state_path)
+    assert len(resolved) == 3
+    assert not legacy_path.exists()
+
+
+def test_auto_improve_migrates_legacy_pattern_escalation_resolution(
+    tmp_memory_dir: Path,
+) -> None:
+    legacy_text = (
+        "[severity:medium][pattern_escalation] memory_state_add — "
+        "friction(4)+workaround(0)の蓄積パターンを検出"
+    )
+    note_dir = tmp_memory_dir / "2026-03-19"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1100_pattern.md"
+    note_path.write_text(
+        "# Pattern Escalation\n\n"
+        "- Date: 2026-03-19\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: memory_state_add | friction | one\n"
+        "- SIGFB: memory_state_add | friction | two\n"
+        "- SIGFB: memory_state_add | friction | three\n"
+        "- SIGFB: memory_state_add | friction | four\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+
+    legacy_path = tmp_memory_dir / "_improvement_backlog_resolved.json"
+    legacy_path.write_text(
+        json.dumps(
+            [
+                {
+                    "key": legacy_text,
+                    "resolved_at": "2026-03-19 12:00",
+                    "text": legacy_text,
+                    "severity": "medium",
+                    "trigger_type": "pattern_escalation",
+                    "skill": "memory_state_add",
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    state_path = tmp_memory_dir / "_state.md"
+    followup_note = tmp_memory_dir / "2026-03-20" / "1200_followup.md"
+    followup_note.parent.mkdir(parents=True, exist_ok=True)
+    followup_note.write_text(
+        "# Followup\n\n- Date: 2026-03-20\n\n## 目標\n\n- keep working\n",
+        encoding="utf-8",
+    )
+
+    rc = state.cmd_from_note(state_path, followup_note, auto_improve_add=True)
+    assert rc == 0
+
+    loaded = state.load_state(state_path)
+    assert not any(
+        "memory_state_add" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+    resolved = state._load_sigfb_resolved(state_path)
+    assert len(resolved) == 4
+    assert not legacy_path.exists()
+
+
+def test_auto_improve_migrates_legacy_gap_expansion_resolution(tmp_memory_dir: Path) -> None:
+    legacy_text = "[severity:medium][gap_expansion] _missing_ — gap(4件) — 新モジュール拡張の候補"
+    note_dir = tmp_memory_dir / "2026-03-19"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    note_path = note_dir / "1100_gap.md"
+    note_path.write_text(
+        "# Gap Expansion\n\n"
+        "- Date: 2026-03-19\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: _missing_ | gap | one\n"
+        "- SIGFB: _missing_ | gap | two\n"
+        "- SIGFB: _missing_ | gap | three\n"
+        "- SIGFB: _missing_ | gap | four\n",
+        encoding="utf-8",
+    )
+    index.index_note(
+        note_path=note_path,
+        index_path=tmp_memory_dir / "_index.jsonl",
+        dailynote_dir=tmp_memory_dir,
+    )
+
+    legacy_path = tmp_memory_dir / "_improvement_backlog_resolved.json"
+    legacy_path.write_text(
+        json.dumps(
+            [
+                {
+                    "key": legacy_text,
+                    "resolved_at": "2026-03-19 12:00",
+                    "text": legacy_text,
+                    "severity": "medium",
+                    "trigger_type": "gap_expansion",
+                    "skill": "_missing_",
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    state_path = tmp_memory_dir / "_state.md"
+    followup_note = tmp_memory_dir / "2026-03-20" / "1200_followup.md"
+    followup_note.parent.mkdir(parents=True, exist_ok=True)
+    followup_note.write_text(
+        "# Followup\n\n- Date: 2026-03-20\n\n## 目標\n\n- keep working\n",
+        encoding="utf-8",
+    )
+
+    rc = state.cmd_from_note(state_path, followup_note, auto_improve_add=True)
+    assert rc == 0
+
+    loaded = state.load_state(state_path)
+    assert not any(
+        "_missing_" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+    resolved = state._load_sigfb_resolved(state_path)
+    assert len(resolved) == 4
+    assert not legacy_path.exists()
+
+
 def test_auto_improve_respects_recent_periodic_review_resolution(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -484,6 +674,72 @@ def test_auto_improve_respects_recent_periodic_review_resolution(
     assert not any(
         "[periodic_review]" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
     )
+
+
+def test_auto_improve_migrates_legacy_periodic_review_resolution(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    legacy_text = (
+        "[severity:medium][periodic_review] * — "
+        "インデックスに10件のエントリ — "
+        "全スキル定期レビューを推奨"
+    )
+    state_path = tmp_memory_dir / "_state.md"
+    index_path = tmp_memory_dir / "_index.jsonl"
+    seed_dir = tmp_memory_dir / "2026-03-18"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    for idx in range(10):
+        np = seed_dir / f"{idx:04d}_seed-{idx}.md"
+        np.write_text(
+            f"# Seed {idx}\n\n- Date: 2026-03-18\n\n## 目標\n\n- item {idx}\n",
+            encoding="utf-8",
+        )
+        index.index_note(note_path=np, index_path=index_path, dailynote_dir=tmp_memory_dir)
+
+    legacy_path = tmp_memory_dir / "_improvement_backlog_resolved.json"
+    legacy_path.write_text(
+        json.dumps(
+            [
+                {
+                    "key": legacy_text,
+                    "resolved_at": "2026-03-19 12:00",
+                    "text": legacy_text,
+                    "severity": "medium",
+                    "trigger_type": "periodic_review",
+                    "skill": "*",
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FrozenDate(dt.date):
+        @classmethod
+        def today(cls) -> FrozenDate:
+            return cls(2026, 3, 20)
+
+    monkeypatch.setattr(state._dt, "date", FrozenDate)
+
+    note_path = tmp_memory_dir / "2026-03-20" / "1200_periodic.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(
+        "# Periodic\n\n- Date: 2026-03-20\n\n## 目標\n\n- trigger periodic review\n",
+        encoding="utf-8",
+    )
+    rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    assert rc == 0
+
+    loaded = state.load_state(state_path)
+    assert not any(
+        "[periodic_review]" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
+    )
+    cooldown = state._load_trigger_cooldown(state_path)
+    assert cooldown["periodic_review"] == "2026-03-19 12:00"
+    assert not legacy_path.exists()
 
 
 def test_extract_from_note_focus_no_next() -> None:

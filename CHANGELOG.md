@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-03-20
+
+### Fixed
+
+- Upgrading from pre-0.7 improvement backlog resolution now migrates legacy `_improvement_backlog_resolved.json` entries into the 0.7.x sidecars during `auto_improve`, preventing previously resolved backlog items from resurfacing after upgrade
+
 ## [0.7.1] - 2026-03-20
 
 ### Added
