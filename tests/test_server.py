@@ -859,6 +859,114 @@ def test_memory_note_new_rejects_unknown_task_id_with_format_hint(
     assert list(tmp_memory_dir.glob("*/*.md")) == []
 
 
+def test_memory_note_new_rolls_back_created_note_when_index_write_fails(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    def _raise_oserror(**_: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(server_module.index, "index_note", _raise_oserror)
+
+    payload = json.loads(
+        memory_note_new(
+            title="Rollback On Index Failure",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "io_error"
+    assert payload["message"] == "disk full"
+    assert list(tmp_memory_dir.glob("*/*.md")) == []
+    assert [path for path in tmp_memory_dir.iterdir() if path.is_dir()] == []
+
+
+def test_memory_note_new_rolls_back_created_note_when_index_validation_fails(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    def _raise_value_error(**_: object) -> None:
+        raise ValueError("bad metadata")
+
+    monkeypatch.setattr(server_module.index, "index_note", _raise_value_error)
+
+    payload = json.loads(
+        memory_note_new(
+            title="Rollback On Validation Failure",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"] == "bad metadata"
+    assert list(tmp_memory_dir.glob("*/*.md")) == []
+    assert [path for path in tmp_memory_dir.iterdir() if path.is_dir()] == []
+
+
+def test_memory_note_new_reports_cleanup_failure_after_index_write_error(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    def _raise_oserror(**_: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(server_module.index, "index_note", _raise_oserror)
+    monkeypatch.setattr(
+        server_module,
+        "_rollback_created_note",
+        lambda note_path, memory_dir: "permission denied",
+    )
+
+    payload = json.loads(
+        memory_note_new(
+            title="Rollback Failure Reporting",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "io_error"
+    assert "disk full" in payload["message"]
+    assert "permission denied" in payload["message"]
+    assert "inspect and remove it manually" in payload["hint"]
+    assert list(tmp_memory_dir.glob("*/*.md")) != []
+
+
+def test_memory_note_new_reports_cleanup_failure_after_index_validation_error(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    def _raise_value_error(**_: object) -> None:
+        raise ValueError("bad metadata")
+
+    monkeypatch.setattr(server_module.index, "index_note", _raise_value_error)
+    monkeypatch.setattr(
+        server_module,
+        "_rollback_created_note",
+        lambda note_path, memory_dir: "permission denied",
+    )
+
+    payload = json.loads(
+        memory_note_new(
+            title="Rollback Failure Reporting Validation",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "io_error"
+    assert "bad metadata" in payload["message"]
+    assert "permission denied" in payload["message"]
+    assert "inspect and remove it manually" in payload["hint"]
+    assert list(tmp_memory_dir.glob("*/*.md")) != []
+
+
 def test_memory_search_rejects_invalid_query_task_id_with_format_hint(
     tmp_memory_dir: Path, monkeypatch
 ) -> None:

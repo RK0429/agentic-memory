@@ -8,7 +8,7 @@ import io
 import json
 import os
 from collections.abc import Callable
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout, suppress
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -72,6 +72,40 @@ def _state_path(memory_dir: Path) -> Path:
 
 def _index_path(memory_dir: Path) -> Path:
     return memory_dir / "_index.jsonl"
+
+
+def _rollback_created_note(note_path: Path, memory_dir: Path) -> str | None:
+    try:
+        note_path.unlink(missing_ok=True)
+    except OSError as exc:
+        return str(exc)
+    parent = note_path.parent
+    if parent != memory_dir and parent.parent == memory_dir:
+        with suppress(OSError):
+            parent.rmdir()
+    return None
+
+
+def _rollback_indexing_failure(
+    note_path: Path,
+    memory_dir: Path,
+    *,
+    payload_factory: Callable[[], str],
+    original_message: str,
+) -> str:
+    rollback_error = _rollback_created_note(note_path, memory_dir)
+    if rollback_error is None:
+        return payload_factory()
+    return _error_payload(
+        error_type="io_error",
+        message=(
+            f"{original_message} Note rollback also failed for '{note_path}': {rollback_error}"
+        ),
+        hint=(
+            "Check filesystem permissions. The note may have been created but not "
+            "indexed; inspect and remove it manually if needed."
+        ),
+    )
 
 
 def _serialize_json(value: Any) -> str:
@@ -533,6 +567,7 @@ def memory_note_new(
     `task_id`, `agent_id`, and `relay_session_id` are stored in index metadata.
     `task_id` accepts `TASK-123` / `GOAL-123` or a relay task UUID.
     The created note is indexed immediately after it is written.
+    If indexing fails, the created note is rolled back before returning an error.
     `lang` selects the template language.
     Returns JSON with the created note path and metadata.
     """
@@ -559,12 +594,24 @@ def memory_note_new(
             no_dense=True,
         )
     except ValueError as exc:
-        return _index_upsert_error_payload(str(exc))
+        message = str(exc)
+        return _rollback_indexing_failure(
+            created,
+            resolved,
+            payload_factory=lambda: _index_upsert_error_payload(message),
+            original_message=message,
+        )
     except OSError as exc:
-        return _error_payload(
-            error_type="io_error",
-            message=str(exc),
-            hint="Check filesystem permissions and retry.",
+        message = str(exc)
+        return _rollback_indexing_failure(
+            created,
+            resolved,
+            payload_factory=lambda: _error_payload(
+                error_type="io_error",
+                message=message,
+                hint="Check filesystem permissions and retry.",
+            ),
+            original_message=message,
         )
     return _success_payload(
         {"path": str(created), "title": title, "date": str(created.parent.name)}
