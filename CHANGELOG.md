@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-20
+
+### Changed
+
+- **Breaking**: `memory_state_show` now returns JSON on success as well as failure; default mode includes rendered markdown under `output`, and `as_json=True` returns structured sections only
+- **Breaking**: `memory_state_from_note` MCP/CLI interfaces now accept only `auto_improve_mode=detect|add|skip`; legacy boolean aliases are no longer exposed
+- `memory_state_from_note` now reports `auto_improve.candidates`, `cap_exceeded`, and `auto_pruned` as structured fields instead of relying on free-form warning strings
+- `memory_state_from_note` is now marked as destructive in MCP annotations, matching its real side effects such as auto-prune and legacy sidecar migration
+- `memory_index_upsert` now returns a specific recovery hint for invalid `task_id` values
+- `memory_evidence` and `memory_search_global` now return structured JSON error payloads instead of raw `ValueError` exceptions
+- `memory_state_show` now renders its `output` from the structured snapshot it already read, removing the second state read and avoiding TOCTOU drift
+
 ## [0.8.0] - 2026-03-20
 
 ### Changed

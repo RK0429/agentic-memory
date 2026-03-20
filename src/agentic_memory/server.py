@@ -140,6 +140,81 @@ def _state_command_error_payload(message: str, *, exit_code: int) -> str:
     return _error_payload(error_type="command_error", message=text, exit_code=exit_code)
 
 
+def _index_upsert_error_payload(message: str) -> str:
+    text = message.strip() or "Index upsert failed"
+    if text.startswith(f"{state.NOTE_NOT_FOUND_PREFIX}:"):
+        return _error_payload(
+            error_type="not_found",
+            message=text,
+            hint="Verify `note_path` exists. Use `memory_note_new` to create a note first.",
+        )
+    if text.startswith("Invalid task_id:"):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Pass `task_id` as TASK-123 / GOAL-123 or a relay task UUID, or omit it.",
+        )
+    return _error_payload(
+        error_type="validation_error",
+        message=text,
+        hint="Check the input parameters and retry.",
+    )
+
+
+def _validation_error_payload(message: str, *, default_hint: str) -> str:
+    text = message.strip() or "Validation failed"
+    if text.startswith("Invalid task_id:"):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Pass `task_id` as TASK-123 / GOAL-123 or a relay task UUID, or omit it.",
+        )
+    if text.startswith("Either 'paths' or 'task_id' must be provided"):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Pass explicit `paths` or one valid `task_id` to resolve note paths.",
+        )
+    if text.startswith("No notes found for task_id"):
+        return _error_payload(
+            error_type="not_found",
+            message=text,
+            hint="Index a note with the matching `task_id`, or pass explicit `paths`.",
+        )
+    if text.startswith("At least one of 'memory_dirs' or 'memory_dir' must be provided"):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Pass one or more memory directories via `memory_dirs` or `memory_dir`.",
+        )
+    return _error_payload(
+        error_type="validation_error",
+        message=text,
+        hint=default_hint,
+    )
+
+
+def _render_state_show_output(sections_payload: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for section_name, rows in sections_payload.items():
+        cap = state.get_cap(section_name)
+        row_list = rows if isinstance(rows, list) else []
+        lines.append(f"## {section_name} ({len(row_list)}/{cap})")
+        if not row_list:
+            lines.append("- (empty)")
+            lines.append("")
+            continue
+        for row in row_list:
+            if not isinstance(row, dict):
+                continue
+            date = row.get("date", "")
+            text = row.get("text", "")
+            stale_mark = " [STALE]" if row.get("stale") else ""
+            lines.append(f"- [{date}] {text}{stale_mark}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def _capture_state_cmd(func: Callable[..., int], *args: Any, **kwargs: Any) -> str:
     out = io.StringIO()
     err = io.StringIO()
@@ -429,22 +504,33 @@ def memory_state_show(
     `section` filters one state section, `stale_days` marks stale items,
     and `as_json` uses JSON output.
     `memory_dir` selects the state file location.
-    Returns formatted state text, or JSON string when `as_json=True`.
+    Returns JSON. When `as_json=True`, the payload contains structured sections only.
+    Otherwise it also includes rendered markdown under `output`.
     """
     resolved = _resolve_dir(memory_dir)
-    output = _capture_state_cmd(
+    structured_output = _capture_state_cmd(
         state.cmd_show,
         _state_path(resolved),
         section=section,
         stale_days=stale_days,
-        as_json=as_json,
+        as_json=True,
     )
-    if as_json:
-        try:
-            return _serialize_json(json.loads(output))
-        except json.JSONDecodeError:
-            return output
-    return output
+    try:
+        parsed = json.loads(structured_output)
+    except json.JSONDecodeError:
+        return structured_output
+    if isinstance(parsed, dict) and parsed.get("ok") is False:
+        return _serialize_json(parsed)
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "section": section,
+        "stale_days": stale_days,
+        "sections": parsed.get("sections", {}) if isinstance(parsed, dict) else parsed,
+    }
+    if not as_json:
+        payload["output"] = _render_state_show_output(cast(dict[str, Any], payload["sections"]))
+    return _serialize_json(payload)
 
 
 @mcp.tool(annotations=_ADDITIVE)
@@ -522,12 +608,10 @@ def memory_state_remove(
     )
 
 
-@mcp.tool(annotations=_ADDITIVE)
+@mcp.tool(annotations=_DESTRUCTIVE)
 def memory_state_from_note(
     note_path: str,
-    auto_improve_mode: Literal["detect", "add", "skip"] | None = None,
-    no_auto_improve: bool = False,
-    auto_improve_add: bool = False,
+    auto_improve_mode: Literal["detect", "add", "skip"] = "detect",
     max_entries: int = 20,
     memory_dir: str | None = None,
 ) -> str:
@@ -536,17 +620,13 @@ def memory_state_from_note(
     `note_path` points to the source note.
     After merging note sections into rolling state, SIGFB signals in the note are
     analyzed to detect improvement candidates for the backlog.
-    Prefer `auto_improve_mode`: `detect` reports candidates only, `add` appends them
+    `auto_improve_mode`: `detect` reports candidates only, `add` appends them
     to the improvement backlog, and `skip` disables analysis entirely.
-    Legacy flags `no_auto_improve` and `auto_improve_add` remain as compatibility aliases;
-    conflicting combinations are rejected with a structured validation error.
     When legacy `_improvement_backlog_resolved.json` entries are present, this path also
     migrates them into the 0.7.x sidecars and reports a migration summary in the response.
-    `max_entries` limits section lengths after merge (excess items are auto-pruned
-    and reported in `warnings`).
+    `max_entries` limits section lengths after merge.
     Returns JSON with `updated_sections`, `section_counts`, `stale_count`,
-    `auto_improve`, and optional `warnings` (cap-exceeded, auto-prune, auto-improve
-    candidates, stale items, incomplete legacy migration).
+    `auto_improve`, and optional structured `cap_exceeded` / `auto_pruned` details.
     """
     resolved = _resolve_dir(memory_dir)
     resolved_note = _resolve_note_path(note_path, resolved)
@@ -555,8 +635,6 @@ def memory_state_from_note(
         _state_path(resolved),
         note_path=resolved_note,
         auto_improve_mode=auto_improve_mode,
-        no_auto_improve=no_auto_improve,
-        auto_improve_add=auto_improve_add,
         max_entries=max_entries,
     )
 
@@ -723,11 +801,7 @@ def memory_index_upsert(
             hint="Verify `note_path` exists. Use `memory_note_new` to create a note first.",
         )
     except ValueError as exc:
-        return _error_payload(
-            error_type="validation_error",
-            message=str(exc),
-            hint="Check the input parameters and retry.",
-        )
+        return _index_upsert_error_payload(str(exc))
     except OSError as exc:
         return _error_payload(
             error_type="io_error",
@@ -762,18 +836,27 @@ def memory_evidence(
     Returns markdown evidence text with provenance per note.
     """
     resolved = _resolve_dir(memory_dir)
-    if paths is not None:
-        resolved_paths = _resolve_paths(paths, resolved)
-    elif task_id is not None:
-        resolved_paths = _resolve_paths_from_task_id(task_id, resolved)
-    else:
-        raise ValueError(
-            "Either 'paths' or 'task_id' must be provided. "
-            "Use 'paths' to specify note file paths directly, "
-            "or 'task_id' to auto-resolve paths from the index."
+    try:
+        if paths is not None:
+            resolved_paths = _resolve_paths(paths, resolved)
+        elif task_id is not None:
+            resolved_paths = _resolve_paths_from_task_id(task_id, resolved)
+        else:
+            raise ValueError(
+                "Either 'paths' or 'task_id' must be provided. "
+                "Use 'paths' to specify note file paths directly, "
+                "or 'task_id' to auto-resolve paths from the index."
+            )
+        return evidence.generate_evidence_pack(
+            query=query,
+            paths=resolved_paths,
+            max_lines=max_lines,
         )
-
-    return evidence.generate_evidence_pack(query=query, paths=resolved_paths, max_lines=max_lines)
+    except ValueError as exc:
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Pass explicit note paths or a valid task_id and retry.",
+        )
 
 
 @mcp.tool(annotations=_READONLY)
@@ -892,23 +975,29 @@ def memory_search_global(
     explain = mode == "debug"
     no_feedback_expand = mode == "quick"
 
-    dirs = [Path(d) for d in (memory_dirs or []) if d]
-    if memory_dir:
-        additional = Path(memory_dir)
-        if additional not in dirs:
-            dirs.append(additional)
-    if not dirs:
-        raise ValueError("At least one of 'memory_dirs' or 'memory_dir' must be provided.")
-    result = search.search_global(
-        query=query,
-        memory_dirs=dirs,
-        compact=compact,
-        top=top,
-        explain=explain,
-        prefer_recent=prefer_recent,
-        no_cjk_expand=no_cjk_expand,
-        no_feedback_expand=no_feedback_expand,
-    )
+    try:
+        dirs = [Path(d) for d in (memory_dirs or []) if d]
+        if memory_dir:
+            additional = Path(memory_dir)
+            if additional not in dirs:
+                dirs.append(additional)
+        if not dirs:
+            raise ValueError("At least one of 'memory_dirs' or 'memory_dir' must be provided.")
+        result = search.search_global(
+            query=query,
+            memory_dirs=dirs,
+            compact=compact,
+            top=top,
+            explain=explain,
+            prefer_recent=prefer_recent,
+            no_cjk_expand=no_cjk_expand,
+            no_feedback_expand=no_feedback_expand,
+        )
+    except ValueError as exc:
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Pass one or more memory directories and retry.",
+        )
     if compact:
         result = _strip_compact_fields(result)
     elif mode == "detailed":

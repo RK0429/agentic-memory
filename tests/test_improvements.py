@@ -843,8 +843,9 @@ def test_evidence_missing_paths_and_task_id_error_message() -> None:
     """evidence should give a helpful error when both paths and task_id are omitted."""
     from agentic_memory.server import memory_evidence
 
-    with pytest.raises(ValueError, match="Either 'paths' or 'task_id' must be provided"):
-        memory_evidence(query="test")
+    payload = json.loads(memory_evidence(query="test"))
+    assert payload["error_type"] == "validation_error"
+    assert "Either 'paths' or 'task_id' must be provided" in payload["message"]
 
 
 # ---------- v0.5.11: health_check fix parameter ----------

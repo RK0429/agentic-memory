@@ -28,6 +28,10 @@ def _note_path(raw: str) -> Path:
     return Path(json.loads(raw)["path"])
 
 
+def _state_show_payload(**kwargs: object) -> dict[str, object]:
+    return json.loads(memory_state_show(**kwargs))
+
+
 def _write_note(memory_dir: Path, name: str = "source.md") -> Path:
     note_path = memory_dir / name
     note_path.write_text(
@@ -91,9 +95,11 @@ def test_memory_state_show(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
-    output = memory_state_show(memory_dir=str(memory_dir))
-    assert "現在のフォーカス" in output
-    assert "- (empty)" in output
+    payload = _state_show_payload(memory_dir=str(memory_dir))
+    assert payload["ok"] is True
+    assert "現在のフォーカス" in str(payload["output"])
+    assert "- (empty)" in str(payload["output"])
+    assert "sections" in payload
 
 
 def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -108,9 +114,9 @@ def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
     assert result_data["added"] == 2
     assert result_data["after"] == 2
 
-    output = memory_state_show(section="focus", memory_dir=str(memory_dir))
-    assert "Task A" in output
-    assert "Task B" in output
+    payload = _state_show_payload(section="focus", memory_dir=str(memory_dir))
+    assert "Task A" in str(payload["output"])
+    assert "Task B" in str(payload["output"])
 
 
 def test_memory_state_add_accepts_section_alias_and_string_replace(
@@ -130,9 +136,9 @@ def test_memory_state_add_accepts_section_alias_and_string_replace(
     payload = json.loads(result)
     assert payload["removed"] == 1
 
-    output = memory_state_show(section="open", memory_dir=str(memory_dir))
-    assert "New task" in output
-    assert "Old task" not in output
+    payload = _state_show_payload(section="open", memory_dir=str(memory_dir))
+    assert "New task" in str(payload["output"])
+    assert "Old task" not in str(payload["output"])
 
 
 def test_memory_state_set(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -147,9 +153,9 @@ def test_memory_state_set(tmp_memory_dir: Path, monkeypatch) -> None:
     assert parsed["before"] == 1
     assert parsed["after"] == 1
 
-    output = memory_state_show(section="focus", memory_dir=str(memory_dir))
-    assert "New" in output
-    assert "Old" not in output
+    payload = _state_show_payload(section="focus", memory_dir=str(memory_dir))
+    assert "New" in str(payload["output"])
+    assert "Old" not in str(payload["output"])
 
 
 def test_memory_state_remove(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -161,9 +167,9 @@ def test_memory_state_remove(tmp_memory_dir: Path, monkeypatch) -> None:
     removed_data = json.loads(removed)
     assert removed_data["removed"] == 1
 
-    output = memory_state_show(section="focus", memory_dir=str(memory_dir))
-    assert "Keep" in output
-    assert "Drop" not in output
+    payload = _state_show_payload(section="focus", memory_dir=str(memory_dir))
+    assert "Keep" in str(payload["output"])
+    assert "Drop" not in str(payload["output"])
 
 
 def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -173,7 +179,7 @@ def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
     note_path = _write_note(memory_dir, name="from_note.md")
     result = memory_state_from_note(
         note_path=str(note_path),
-        no_auto_improve=True,
+        auto_improve_mode="skip",
         memory_dir=str(memory_dir),
     )
     result_data = json.loads(result)
@@ -182,8 +188,8 @@ def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
     assert isinstance(result_data["section_counts"], dict)
     assert result_data["auto_improve"]["mode"] == "skip"
 
-    output = memory_state_show(section="open", memory_dir=str(memory_dir))
-    assert "write assertions" in output
+    payload = _state_show_payload(section="open", memory_dir=str(memory_dir))
+    assert "write assertions" in str(payload["output"])
 
 
 def test_memory_state_from_note_defaults_to_detect_mode(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -196,6 +202,7 @@ def test_memory_state_from_note_defaults_to_detect_mode(tmp_memory_dir: Path, mo
     )
 
     assert payload["auto_improve"]["mode"] == "detect"
+    assert payload["auto_improve"]["candidate_count"] == 0
 
 
 def test_memory_state_from_note_reports_legacy_migration_summary(
@@ -280,6 +287,22 @@ def test_memory_state_show_returns_json_error_for_invalid_section(
     assert payload["exit_code"] == 2
 
 
+def test_memory_state_show_as_json_returns_structured_sections(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_state_add(section="focus", items=["Task A"], memory_dir=str(tmp_memory_dir))
+
+    payload = _state_show_payload(
+        section="focus",
+        as_json=True,
+        memory_dir=str(tmp_memory_dir),
+    )
+    assert payload["ok"] is True
+    assert "output" not in payload
+    assert payload["sections"]["現在のフォーカス"][0]["text"] == "Task A"
+
+
 def test_memory_state_from_note_returns_json_error_for_missing_note(
     tmp_memory_dir: Path, monkeypatch
 ) -> None:
@@ -295,22 +318,34 @@ def test_memory_state_from_note_returns_json_error_for_missing_note(
     assert payload["exit_code"] == 2
 
 
-def test_memory_state_from_note_rejects_conflicting_auto_improve_options(
+def test_memory_state_from_note_returns_structured_candidates(
     tmp_memory_dir: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
-    note_path = _write_note(tmp_memory_dir, name="conflict.md")
+    signal_note = tmp_memory_dir / "2026-03-19" / "1100_sigfb-high.md"
+    signal_note.parent.mkdir(parents=True, exist_ok=True)
+    signal_note.write_text(
+        "# High Severity\n\n"
+        "- Date: 2026-03-19\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: spawn_agents | failure | one\n"
+        "- SIGFB: spawn_agents | failure | two\n"
+        "- SIGFB: spawn_agents | failure | three\n",
+        encoding="utf-8",
+    )
+    memory_index_upsert(note_path=str(signal_note), no_dense=True, memory_dir=str(tmp_memory_dir))
 
     payload = json.loads(
         memory_state_from_note(
-            note_path=str(note_path),
+            note_path=str(signal_note),
             auto_improve_mode="detect",
-            no_auto_improve=True,
             memory_dir=str(tmp_memory_dir),
         )
     )
-    assert payload["error_type"] == "validation_error"
-    assert payload["exit_code"] == 2
+    assert payload["auto_improve"]["candidate_count"] == 1
+    assert payload["auto_improve"]["added_count"] == 0
+    assert payload["auto_improve"]["candidates"][0]["skill"] == "spawn_agents"
+    assert "warnings" not in payload
 
 
 def test_memory_search(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -345,6 +380,12 @@ def test_memory_search_global_defaults_to_quick_mode(tmp_memory_dir: Path, monke
     assert "feedback_expand" not in payload
 
 
+def test_memory_search_global_returns_json_error_without_dirs() -> None:
+    payload = json.loads(memory_search_global(query="__no_result_expected__"))
+    assert payload["error_type"] == "validation_error"
+    assert payload["exit_code"] == 2
+
+
 def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
@@ -357,6 +398,25 @@ def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert isinstance(payload, dict)
     assert payload["path"].endswith(".md")
+
+
+def test_memory_index_upsert_invalid_task_id_returns_specific_hint(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    created_path = _note_path(memory_note_new(title="Bad Task Id", memory_dir=str(memory_dir)))
+    payload = json.loads(
+        memory_index_upsert(
+            note_path=str(created_path),
+            task_id="bad-task",
+            no_dense=True,
+            memory_dir=str(memory_dir),
+        )
+    )
+    assert payload["error_type"] == "validation_error"
+    assert "TASK-123" in payload["hint"]
 
 
 def test_memory_index_upsert_returns_json_error_for_missing_note(
@@ -456,8 +516,11 @@ def test_memory_evidence_rejects_task_id_without_indexed_notes(
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
-    with pytest.raises(ValueError, match="No notes found for task_id"):
+    payload = json.loads(
         memory_evidence(query="missing", task_id="TASK-999", memory_dir=str(tmp_memory_dir))
+    )
+    assert payload["error_type"] == "not_found"
+    assert payload["exit_code"] == 2
 
 
 def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkeypatch) -> None:

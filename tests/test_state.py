@@ -375,9 +375,10 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) 
         item.text == "Monitor 401 spikes after deploy."
         for item in loaded[state.STATE_SHORT_KEYS["pitfalls"]]
     )
-    # Warnings are now in JSON, not stderr
     assert payload["auto_improve"]["mode"] == "skip"
-    assert "warnings" not in payload or isinstance(payload.get("warnings"), list)
+    assert "warnings" not in payload
+    assert "cap_exceeded" not in payload
+    assert "auto_pruned" not in payload
 
 
 def test_cmd_from_note_rejects_conflicting_auto_improve_options(

@@ -100,6 +100,25 @@ def _parse_improvement_item(text: str) -> dict[str, str | None]:
     }
 
 
+def _serialize_state_item(item: StateItem) -> dict[str, str]:
+    return {"date": item.date, "text": item.text}
+
+
+def _serialize_improvement_candidate(item: StateItem) -> dict[str, str]:
+    payload = _serialize_state_item(item)
+    parsed = _parse_improvement_item(item.text)
+    for key, value in parsed.items():
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _serialize_state_change(section: str, item: StateItem) -> dict[str, str]:
+    payload = _serialize_state_item(item)
+    payload["section"] = section
+    return payload
+
+
 def _empty_legacy_migration_summary() -> dict[str, Any]:
     return {
         "legacy_file_present": False,
@@ -125,6 +144,10 @@ def _resolve_auto_improve_mode(
     auto_improve_mode: AutoImproveMode | None,
 ) -> AutoImproveMode:
     if auto_improve_mode is not None:
+        if auto_improve_mode not in {"detect", "add", "skip"}:
+            raise ValueError(
+                f"Invalid auto_improve_mode: {auto_improve_mode!r}. Use one of: detect, add, skip."
+            )
         if no_auto_improve and auto_improve_mode != "skip":
             raise ValueError(
                 f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
@@ -1326,13 +1349,16 @@ def cmd_cleanup(
     return 0
 
 
-def _auto_prune(sections: dict[str, list[StateItem]], max_entries: int = 20) -> list[StateItem]:
+def _auto_prune(
+    sections: dict[str, list[StateItem]],
+    max_entries: int = 20,
+) -> list[tuple[str, StateItem]]:
     """Trim each rolling section to max_entries by dropping the oldest timestamps.
 
     Returns list of dropped items.
     """
     safe_max = max(max_entries, 0)
-    all_dropped: list[StateItem] = []
+    all_dropped: list[tuple[str, StateItem]] = []
     for sec in SECTION_ORDER:
         items = sections.get(sec, [])
         if len(items) <= safe_max:
@@ -1344,7 +1370,7 @@ def _auto_prune(sections: dict[str, list[StateItem]], max_entries: int = 20) -> 
         )
         keep_indices = {idx for idx, _ in ranked[:safe_max]}
         dropped = [item for idx, item in enumerate(items) if idx not in keep_indices]
-        all_dropped.extend(dropped)
+        all_dropped.extend((sec, item) for item in dropped)
         sections[sec] = [item for idx, item in enumerate(items) if idx in keep_indices]
     return all_dropped
 
@@ -1398,7 +1424,7 @@ def _ensure_note_index_entry(
             max_summary_chars,
             dailynote_dir=index_path.parent,
         )
-    except Exception:
+    except (OSError, ValueError):
         return entries
     return entries + [built_entry]
 
@@ -1439,7 +1465,7 @@ def _auto_improve_from_signals(
         resolved_ids = _resolved_signal_id_set(state_path)
         aggregated = signals.aggregate_signals(entries, resolved_ids=resolved_ids)
         candidates = signals.analyze_signals(aggregated, threshold=threshold)
-    except Exception:
+    except (OSError, ValueError, TypeError, KeyError):
         return [], migration_summary
 
     existing_keys = {
@@ -1528,16 +1554,19 @@ def _merge_from_note(
     auto_improve_add: bool = False,
     auto_improve_mode: AutoImproveMode | None = None,
     max_entries: int = 20,
-) -> tuple[dict[str, list[StateItem]], list[str], int, list[str], dict[str, Any]]:
+) -> tuple[dict[str, list[StateItem]], list[str], int, dict[str, Any], dict[str, Any]]:
     """Merge note contents into rolling state.
 
     Returns:
-        (sections, updated_sections, stale_count, warnings, auto_improve_summary) tuple.
+        (sections, updated_sections, stale_count, diagnostics, auto_improve_summary) tuple.
     """
     note_text = note_path.read_text(encoding="utf-8", errors="ignore")
     sections = load_state(state_path)
     extracted = _extract_from_note(note_text)
-    merge_warnings: list[str] = []
+    diagnostics: dict[str, Any] = {
+        "cap_exceeded": [],
+        "auto_pruned": [],
+    }
     resolved_mode = _resolve_auto_improve_mode(
         no_auto_improve=no_auto_improve,
         auto_improve_add=auto_improve_add,
@@ -1559,16 +1588,15 @@ def _merge_from_note(
         merged = deduplicate(new_items + sections.get(sec, []))
         sections[sec], dropped = enforce_cap(merged, _FROM_NOTE_CAP_BY_SECTION[sec])
         for item in dropped:
-            merge_warnings.append(f"Cap exceeded ({sec}), dropping: [{item.date}] {item.text}")
+            diagnostics["cap_exceeded"].append(_serialize_state_change(sec, item))
 
     sections[STATE_SHORT_KEYS["improvements"]], dropped = enforce_cap(
         deduplicate(sections.get(STATE_SHORT_KEYS["improvements"], [])),
         _FROM_NOTE_CAP_BY_SECTION[STATE_SHORT_KEYS["improvements"]],
     )
     for item in dropped:
-        merge_warnings.append(
-            f"Cap exceeded ({STATE_SHORT_KEYS['improvements']}), "
-            f"dropping: [{item.date}] {item.text}"
+        diagnostics["cap_exceeded"].append(
+            _serialize_state_change(STATE_SHORT_KEYS["improvements"], item)
         )
 
     # Auto-improve: analyze signals
@@ -1581,49 +1609,27 @@ def _merge_from_note(
             note_path=note_path,
         )
         auto_improve_summary["candidate_count"] = len(auto_items)
+        if auto_items:
+            auto_improve_summary["candidates"] = [
+                _serialize_improvement_candidate(item) for item in auto_items
+            ]
         if migration_summary["legacy_entries_found"] > 0:
             auto_improve_summary["legacy_migration"] = migration_summary
-            if migration_summary["remaining_legacy_entries"] > 0:
-                suffix = (
-                    "reindex may be required"
-                    if migration_summary["needs_reindex"]
-                    else "manual cleanup may be required"
+        if auto_items and resolved_mode == "add":
+            # Explicitly requested: add to backlog
+            merged = deduplicate(auto_items + sections.get(STATE_SHORT_KEYS["improvements"], []))
+            sections[STATE_SHORT_KEYS["improvements"]], dropped = enforce_cap(
+                merged, _FROM_NOTE_CAP_BY_SECTION[STATE_SHORT_KEYS["improvements"]]
+            )
+            for item in dropped:
+                diagnostics["cap_exceeded"].append(
+                    _serialize_state_change(STATE_SHORT_KEYS["improvements"], item)
                 )
-                merge_warnings.append(
-                    "Legacy migration incomplete: "
-                    f"{migration_summary['remaining_legacy_entries']} entry(s) remain in "
-                    "_improvement_backlog_resolved.json; "
-                    f"{suffix}."
-                )
-        if auto_items:
-            if resolved_mode == "add":
-                # Explicitly requested: add to backlog
-                merged = deduplicate(
-                    auto_items + sections.get(STATE_SHORT_KEYS["improvements"], [])
-                )
-                sections[STATE_SHORT_KEYS["improvements"]], dropped = enforce_cap(
-                    merged, _FROM_NOTE_CAP_BY_SECTION[STATE_SHORT_KEYS["improvements"]]
-                )
-                for item in dropped:
-                    merge_warnings.append(
-                        f"Cap exceeded ({STATE_SHORT_KEYS['improvements']}), "
-                        f"dropping: [{item.date}] {item.text}"
-                    )
-                auto_improve_summary["added_count"] = len(auto_items)
-                merge_warnings.append(
-                    f"Auto-improve: {len(auto_items)} candidate(s) added to improvement backlog"
-                )
-            else:
-                # Default: report candidates without adding
-                candidates = [item.text for item in auto_items]
-                merge_warnings.append(
-                    f"Auto-improve: {len(auto_items)} candidate(s) detected "
-                    f"(use auto_improve_mode='add' or auto_improve_add to add): {candidates}"
-                )
+            auto_improve_summary["added_count"] = len(auto_items)
 
     pruned = _auto_prune(sections, max_entries=max_entries)
-    for item in pruned:
-        merge_warnings.append(f"Auto-prune, dropping: [{item.date}] {item.text}")
+    for section_name, item in pruned:
+        diagnostics["auto_pruned"].append(_serialize_state_change(section_name, item))
 
     save_state(state_path, sections)
 
@@ -1633,7 +1639,11 @@ def _merge_from_note(
     updated_sections = list(extracted.keys())
     if STATE_SHORT_KEYS["improvements"] not in updated_sections:
         updated_sections.append(STATE_SHORT_KEYS["improvements"])
-    return sections, updated_sections, stale_count, merge_warnings, auto_improve_summary
+    if not diagnostics["cap_exceeded"]:
+        diagnostics.pop("cap_exceeded")
+    if not diagnostics["auto_pruned"]:
+        diagnostics.pop("auto_pruned")
+    return sections, updated_sections, stale_count, diagnostics, auto_improve_summary
 
 
 def cmd_from_note(
@@ -1650,7 +1660,7 @@ def cmd_from_note(
 
     try:
         _validate_non_negative("max-entries", max_entries)
-        sections_data, updated_sections, stale_count, merge_warnings, auto_improve_summary = (
+        sections_data, updated_sections, stale_count, diagnostics, auto_improve_summary = (
             _merge_from_note(
                 state_path=state_path,
                 note_path=note_path,
@@ -1667,9 +1677,6 @@ def cmd_from_note(
         print(f"{FAILED_TO_READ_NOTE_PREFIX}: {exc}", file=sys.stderr)
         return 2
 
-    if stale_count > 0:
-        merge_warnings.append(f"{stale_count} stale items found (7+ days old)")
-
     result: dict[str, Any] = {
         "path": str(state_path),
         "note": str(note_path),
@@ -1678,8 +1685,7 @@ def cmd_from_note(
         "section_counts": {sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER},
         "auto_improve": auto_improve_summary,
     }
-    if merge_warnings:
-        result["warnings"] = merge_warnings
+    result.update(diagnostics)
     summary = json.dumps(result, ensure_ascii=False)
     print(summary)
     return 0

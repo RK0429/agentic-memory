@@ -182,7 +182,11 @@ def test_cli_state_from_note(tmp_memory_dir: Path) -> None:
     memory_dir = tmp_memory_dir
 
     note_path = _write_note_for_state(memory_dir)
-    result = _run(runner, memory_dir, ["state", "from-note", str(note_path), "--no-auto-improve"])
+    result = _run(
+        runner,
+        memory_dir,
+        ["state", "from-note", str(note_path), "--auto-improve-mode", "skip"],
+    )
     assert result.exit_code == 0
 
     show = _run(runner, memory_dir, ["state", "show", "--section", "open"])
@@ -205,27 +209,15 @@ def test_cli_state_from_note_auto_improve_mode(tmp_memory_dir: Path) -> None:
     assert payload["auto_improve"]["mode"] == "skip"
 
 
-def test_cli_state_from_note_rejects_conflicting_auto_improve_options(
-    tmp_memory_dir: Path,
-) -> None:
+def test_cli_state_from_note_defaults_to_detect_mode(tmp_memory_dir: Path) -> None:
     runner = CliRunner()
     memory_dir = tmp_memory_dir
 
-    note_path = _write_note_for_state(memory_dir, name="from_note_conflict.md")
-    result = _run(
-        runner,
-        memory_dir,
-        [
-            "state",
-            "from-note",
-            str(note_path),
-            "--auto-improve-mode",
-            "detect",
-            "--no-auto-improve",
-        ],
-    )
-    assert result.exit_code == 2
-    assert "Conflicting auto-improve options" in result.output
+    note_path = _write_note_for_state(memory_dir, name="from_note_default.md")
+    result = _run(runner, memory_dir, ["state", "from-note", str(note_path)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["auto_improve"]["mode"] == "detect"
 
 
 def test_cli_search(tmp_memory_dir: Path) -> None:
