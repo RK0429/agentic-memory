@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-03-20
+
+### Fixed
+
+- `scripts/smoke_packaged_server.py` now reports invalid wheel arguments through concise argparse usage errors instead of raw Python tracebacks
+- The smoke test CLI help text now documents that the default auto-selected artifact is the highest-version wheel under `dist/`
+
 ## [0.12.2] - 2026-03-20
 
 ### Added

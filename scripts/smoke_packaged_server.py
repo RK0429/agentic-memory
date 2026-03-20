@@ -104,7 +104,7 @@ async def _run_smoke_test(wheel: Path) -> None:
     _assert_packaged_annotations(tools)
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Smoke-test the packaged agentic-memory MCP server by launching the built "
@@ -115,12 +115,22 @@ def main() -> None:
         "wheel",
         nargs="?",
         help=(
-            "Optional path to the built agmemory wheel. Defaults to the newest dist/agmemory-*.whl."
+            "Optional path to the built agmemory wheel. Defaults to the highest-version "
+            "dist/agmemory-*.whl."
         ),
     )
+    return parser
+
+
+def main() -> None:
+    parser = _build_parser()
     args = parser.parse_args()
 
-    wheel = _resolve_wheel(args.wheel)
+    try:
+        wheel = _resolve_wheel(args.wheel)
+    except (FileNotFoundError, ValueError) as exc:
+        parser.error(str(exc))
+
     anyio.run(_run_smoke_test, wheel)
     print(
         "Packaged MCP smoke test passed:",
