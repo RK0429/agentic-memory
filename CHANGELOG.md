@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-03-20
+
+### Added
+
+- Added a packaged-runtime MCP smoke test that launches the built wheel, calls `tools/list`, and asserts the published `memory_search*` tool annotations from the installed artifact
+
 ## [0.12.1] - 2026-03-20
 
 ### Fixed
