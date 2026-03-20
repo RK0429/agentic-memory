@@ -180,9 +180,137 @@ def test_memory_state_from_note(tmp_memory_dir: Path, monkeypatch) -> None:
     assert result_data["path"].endswith("_state.md")
     assert isinstance(result_data["updated_sections"], list)
     assert isinstance(result_data["section_counts"], dict)
+    assert result_data["auto_improve"]["mode"] == "skip"
 
     output = memory_state_show(section="open", memory_dir=str(memory_dir))
     assert "write assertions" in output
+
+
+def test_memory_state_from_note_defaults_to_detect_mode(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    note_path = _write_note(memory_dir, name="from_note_detect.md")
+    payload = json.loads(
+        memory_state_from_note(note_path=str(note_path), memory_dir=str(memory_dir))
+    )
+
+    assert payload["auto_improve"]["mode"] == "detect"
+
+
+def test_memory_state_from_note_reports_legacy_migration_summary(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    memory_dir = tmp_memory_dir
+
+    signal_note = memory_dir / "2026-03-19" / "1100_sigfb-high.md"
+    signal_note.parent.mkdir(parents=True, exist_ok=True)
+    signal_note.write_text(
+        "# High Severity\n\n"
+        "- Date: 2026-03-19\n\n"
+        "## スキルフィードバック\n\n"
+        "- SIGFB: spawn_agents | failure | one\n"
+        "- SIGFB: spawn_agents | failure | two\n"
+        "- SIGFB: spawn_agents | failure | three\n",
+        encoding="utf-8",
+    )
+    memory_index_upsert(note_path=str(signal_note), no_dense=True, memory_dir=str(memory_dir))
+
+    legacy_path = memory_dir / "_improvement_backlog_resolved.json"
+    legacy_path.write_text(
+        json.dumps(
+            [
+                {
+                    "key": (
+                        "[severity:high] spawn_agents (score=9) — "
+                        "friction(0件) + failure(3件) — "
+                        "スキル定義またはガイドラインの見直しを推奨"
+                    ),
+                    "resolved_at": "2026-03-19 12:00",
+                    "text": (
+                        "[severity:high] spawn_agents (score=9) — "
+                        "friction(0件) + failure(3件) — "
+                        "スキル定義またはガイドラインの見直しを推奨"
+                    ),
+                    "severity": "high",
+                    "skill": "spawn_agents",
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    followup = memory_dir / "2026-03-20" / "1200_followup.md"
+    followup.parent.mkdir(parents=True, exist_ok=True)
+    followup.write_text(
+        "# Followup\n\n- Date: 2026-03-20\n\n## 目標\n\n- keep working\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        memory_state_from_note(
+            note_path=str(followup),
+            auto_improve_mode="add",
+            memory_dir=str(memory_dir),
+        )
+    )
+
+    migration = payload["auto_improve"]["legacy_migration"]
+    assert payload["auto_improve"]["mode"] == "add"
+    assert payload["auto_improve"]["candidate_count"] == 0
+    assert payload["auto_improve"]["added_count"] == 0
+    assert migration["legacy_entries_found"] == 1
+    assert migration["migrated_entries"] == 1
+    assert migration["migrated_signal_ids"] == 3
+    assert migration["remaining_legacy_entries"] == 0
+    assert not legacy_path.exists()
+
+
+def test_memory_state_show_returns_json_error_for_invalid_section(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(memory_state_show(section="bogus_section", memory_dir=str(tmp_memory_dir)))
+    assert payload["error_type"] == "validation_error"
+    assert payload["exit_code"] == 2
+
+
+def test_memory_state_from_note_returns_json_error_for_missing_note(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_state_from_note(
+            note_path=str(tmp_memory_dir / "missing.md"),
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    assert payload["error_type"] == "not_found"
+    assert payload["exit_code"] == 2
+
+
+def test_memory_state_from_note_rejects_conflicting_auto_improve_options(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    note_path = _write_note(tmp_memory_dir, name="conflict.md")
+
+    payload = json.loads(
+        memory_state_from_note(
+            note_path=str(note_path),
+            auto_improve_mode="detect",
+            no_auto_improve=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    assert payload["error_type"] == "validation_error"
+    assert payload["exit_code"] == 2
 
 
 def test_memory_search(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -229,6 +357,22 @@ def test_memory_index_upsert(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = json.loads(raw)
     assert isinstance(payload, dict)
     assert payload["path"].endswith(".md")
+
+
+def test_memory_index_upsert_returns_json_error_for_missing_note(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_index_upsert(
+            note_path=str(tmp_memory_dir / "missing.md"),
+            no_dense=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    assert payload["error_type"] == "not_found"
+    assert payload["exit_code"] == 2
 
 
 def test_index_upsert_compact(tmp_memory_dir: Path, monkeypatch) -> None:

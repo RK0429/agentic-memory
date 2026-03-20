@@ -117,6 +117,8 @@ for _name, _sk in _SHORT_KEY_REVERSE.items():
 for _alias, _sk in STATE_EXTRA_ALIASES.items():
     _NORMALIZED_SHORT_KEY_REVERSE[_normalize_lookup_key(_alias)] = _sk
 
+UNKNOWN_SECTION_KEY_PREFIX = "Unknown section key"
+
 
 def _unknown_section_key_error(key: str) -> ValueError:
     accepted = ", ".join(
@@ -134,7 +136,7 @@ def _unknown_section_key_error(key: str) -> ValueError:
             "improvement_backlog",
         ]
     )
-    return ValueError(f"Unknown section key: {key!r}. Use one of: {accepted}")
+    return ValueError(f"{UNKNOWN_SECTION_KEY_PREFIX}: {key!r}. Use one of: {accepted}")
 
 
 def resolve_short_key(key: str) -> str:

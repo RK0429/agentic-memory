@@ -190,6 +190,44 @@ def test_cli_state_from_note(tmp_memory_dir: Path) -> None:
     assert "Add server tests" in show.output
 
 
+def test_cli_state_from_note_auto_improve_mode(tmp_memory_dir: Path) -> None:
+    runner = CliRunner()
+    memory_dir = tmp_memory_dir
+
+    note_path = _write_note_for_state(memory_dir, name="from_note_mode.md")
+    result = _run(
+        runner,
+        memory_dir,
+        ["state", "from-note", str(note_path), "--auto-improve-mode", "skip"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["auto_improve"]["mode"] == "skip"
+
+
+def test_cli_state_from_note_rejects_conflicting_auto_improve_options(
+    tmp_memory_dir: Path,
+) -> None:
+    runner = CliRunner()
+    memory_dir = tmp_memory_dir
+
+    note_path = _write_note_for_state(memory_dir, name="from_note_conflict.md")
+    result = _run(
+        runner,
+        memory_dir,
+        [
+            "state",
+            "from-note",
+            str(note_path),
+            "--auto-improve-mode",
+            "detect",
+            "--no-auto-improve",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "Conflicting auto-improve options" in result.output
+
+
 def test_cli_search(tmp_memory_dir: Path) -> None:
     runner = CliRunner()
     memory_dir = tmp_memory_dir

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-20
+
+### Changed
+
+- **Breaking**: MCP error responses for all server tools that wrap `_capture_state_cmd` (`memory_state_show`, `memory_state_add`, `memory_state_set`, `memory_state_remove`, `memory_state_from_note`) plus `memory_index_upsert` now return structured JSON payloads with `error_type`, `message`, `hint`, and `exit_code`
+- `memory_state_from_note` now accepts `auto_improve_mode=detect|add|skip`, reports `auto_improve` metadata in its JSON response, and includes legacy resolution migration summaries when `_improvement_backlog_resolved.json` is encountered
+- `memory_index_upsert` and `memory_state_from_note` tool descriptions now document migration/recovery usage more explicitly
+
 ## [0.7.2] - 2026-03-20
 
 ### Fixed

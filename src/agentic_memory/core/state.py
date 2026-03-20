@@ -13,7 +13,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from agentic_memory.core import sections, signals
 
@@ -50,6 +50,10 @@ _LEGACY_IMPROVEMENT_RESOLVED_BASENAME = "_improvement_backlog_resolved.json"
 _SIGFB_RESOLVED_BASENAME = "_sigfb_resolved.json"
 _BACKLOG_CONTRIBUTORS_BASENAME = "_backlog_contributors.json"
 _TRIGGER_COOLDOWN_BASENAME = "_trigger_cooldown.json"
+AutoImproveMode = Literal["detect", "add", "skip"]
+NOTE_NOT_FOUND_PREFIX = "Note not found"
+FAILED_TO_READ_NOTE_PREFIX = "Failed to read note"
+CONFLICTING_AUTO_IMPROVE_PREFIX = "Conflicting auto-improve options"
 
 
 def now_stamp() -> str:
@@ -94,6 +98,54 @@ def _parse_improvement_item(text: str) -> dict[str, str | None]:
         "trigger_type": match.group("trigger_type"),
         "skill": match.group("skill").strip(),
     }
+
+
+def _empty_legacy_migration_summary() -> dict[str, Any]:
+    return {
+        "legacy_file_present": False,
+        "legacy_entries_found": 0,
+        "migrated_entries": 0,
+        "migrated_signal_ids": 0,
+        "migrated_trigger_cooldowns": 0,
+        "remaining_legacy_entries": 0,
+        "needs_reindex": False,
+        "unresolved_reason_counts": {},
+    }
+
+
+def _increment_unresolved_reason(summary: dict[str, Any], reason: str) -> None:
+    counts = cast(dict[str, int], summary["unresolved_reason_counts"])
+    counts[reason] = counts.get(reason, 0) + 1
+
+
+def _resolve_auto_improve_mode(
+    *,
+    no_auto_improve: bool,
+    auto_improve_add: bool,
+    auto_improve_mode: AutoImproveMode | None,
+) -> AutoImproveMode:
+    if auto_improve_mode is not None:
+        if no_auto_improve and auto_improve_mode != "skip":
+            raise ValueError(
+                f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
+                "no_auto_improve=True requires auto_improve_mode='skip'."
+            )
+        if auto_improve_add and auto_improve_mode != "add":
+            raise ValueError(
+                f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
+                "auto_improve_add=True requires auto_improve_mode='add'."
+            )
+        return auto_improve_mode
+    if no_auto_improve and auto_improve_add:
+        raise ValueError(
+            f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
+            "no_auto_improve and auto_improve_add cannot both be true."
+        )
+    if no_auto_improve:
+        return "skip"
+    if auto_improve_add:
+        return "add"
+    return "detect"
 
 
 # --- legacy _improvement_backlog_resolved.json sidecar ---
@@ -344,10 +396,13 @@ def _migrate_legacy_improvement_resolutions(
     entries: list[dict[str, Any]],
     *,
     threshold: int,
-) -> None:
+) -> dict[str, Any]:
     legacy_entries = _load_legacy_improvement_resolved(state_path)
+    summary = _empty_legacy_migration_summary()
+    summary["legacy_file_present"] = _legacy_improvement_resolved_path(state_path).exists()
+    summary["legacy_entries_found"] = len(legacy_entries)
     if not legacy_entries:
-        return
+        return summary
 
     snapshot_cache: dict[
         str,
@@ -385,6 +440,7 @@ def _migrate_legacy_improvement_resolutions(
     for legacy in sorted_entries:
         resolved_at = legacy.get("resolved_at")
         if not isinstance(resolved_at, str) or _parse_datetime(resolved_at) is None:
+            _increment_unresolved_reason(summary, "invalid_resolved_at")
             remaining.append(legacy)
             continue
 
@@ -397,21 +453,29 @@ def _migrate_legacy_improvement_resolutions(
             if current_dt is None or (next_dt is not None and next_dt > current_dt):
                 trigger_cooldown["periodic_review"] = resolved_at
                 cooldown_changed = True
+            summary["migrated_entries"] += 1
+            summary["migrated_trigger_cooldowns"] += 1
             continue
 
         if not isinstance(skill, str) or not skill.strip():
+            _increment_unresolved_reason(summary, "missing_skill")
             remaining.append(legacy)
             continue
         skill = skill.strip()
 
         candidates, skill_contributors, triggers = snapshot_for(resolved_at)
         signal_ids: list[str] = []
+        missing_reason: str | None = None
         if trigger_type in {"pattern_escalation", "gap_expansion"}:
             trigger_exists = any(
                 trig.get("type") == trigger_type and trig.get("skill") == skill for trig in triggers
             )
             if trigger_exists:
                 signal_ids = skill_contributors.get(skill, [])
+                if not signal_ids:
+                    missing_reason = "missing_signal_ids"
+            else:
+                missing_reason = "no_matching_trigger"
         else:
             matched = next(
                 (
@@ -427,15 +491,24 @@ def _migrate_legacy_improvement_resolutions(
                     for sid in matched.get("contributor_ids", [])
                     if isinstance(sid, str) and sid
                 ]
+                if not signal_ids:
+                    missing_reason = "missing_signal_ids"
+            else:
+                missing_reason = "no_matching_candidate"
 
         if not signal_ids:
+            if missing_reason is not None:
+                _increment_unresolved_reason(summary, missing_reason)
+            summary["needs_reindex"] = True
             remaining.append(legacy)
             continue
 
+        summary["migrated_entries"] += 1
         for sid in signal_ids:
             if sid not in resolved_data:
                 resolved_data[sid] = {"resolved_at": resolved_at}
                 resolved_changed = True
+            summary["migrated_signal_ids"] += 1
 
     if resolved_changed:
         _save_sigfb_resolved(state_path, resolved_data)
@@ -443,6 +516,8 @@ def _migrate_legacy_improvement_resolutions(
         _save_trigger_cooldown(state_path, trigger_cooldown)
     if resolved_changed or cooldown_changed or len(remaining) != len(legacy_entries):
         _save_legacy_improvement_resolved(state_path, remaining)
+    summary["remaining_legacy_entries"] = len(remaining)
+    return summary
 
 
 @dataclass
@@ -1335,13 +1410,17 @@ def _auto_improve_from_signals(
     threshold: int = 3,
     note_path: Path | None = None,
     max_summary_chars: int = 280,
-) -> list[StateItem]:
+) -> tuple[list[StateItem], dict[str, Any]]:
     """Analyze skill signals and return improvement candidates as StateItems.
 
     Processes both high-severity candidates from analyze_signals() and
     additional triggers from check_improvement_triggers().
     Fail-safe: returns empty list on any error (missing index, parse error, etc.).
     """
+    migration_summary = _empty_legacy_migration_summary()
+    migration_summary["legacy_file_present"] = _legacy_improvement_resolved_path(
+        state_path
+    ).exists()
     try:
         entries: list[dict] = []
         if index_path.exists():
@@ -1352,7 +1431,7 @@ def _auto_improve_from_signals(
             index_path=index_path,
             max_summary_chars=max_summary_chars,
         )
-        _migrate_legacy_improvement_resolutions(
+        migration_summary = _migrate_legacy_improvement_resolutions(
             state_path,
             entries,
             threshold=threshold,
@@ -1361,7 +1440,7 @@ def _auto_improve_from_signals(
         aggregated = signals.aggregate_signals(entries, resolved_ids=resolved_ids)
         candidates = signals.analyze_signals(aggregated, threshold=threshold)
     except Exception:
-        return []
+        return [], migration_summary
 
     existing_keys = {
         item.normalize_key() for item in sections.get(STATE_SHORT_KEYS["improvements"], [])
@@ -1414,7 +1493,7 @@ def _auto_improve_from_signals(
 
     if new_items:
         _save_contributor_snapshot(state_path, snapshot)
-    return new_items
+    return new_items, migration_summary
 
 
 _FROM_NOTE_CAP_BY_SECTION = {
@@ -1447,17 +1526,28 @@ def _merge_from_note(
     note_path: Path,
     no_auto_improve: bool = False,
     auto_improve_add: bool = False,
+    auto_improve_mode: AutoImproveMode | None = None,
     max_entries: int = 20,
-) -> tuple[dict[str, list[StateItem]], list[str], int, list[str]]:
+) -> tuple[dict[str, list[StateItem]], list[str], int, list[str], dict[str, Any]]:
     """Merge note contents into rolling state.
 
     Returns:
-        (sections, updated_sections, stale_count, warnings) tuple.
+        (sections, updated_sections, stale_count, warnings, auto_improve_summary) tuple.
     """
     note_text = note_path.read_text(encoding="utf-8", errors="ignore")
     sections = load_state(state_path)
     extracted = _extract_from_note(note_text)
     merge_warnings: list[str] = []
+    resolved_mode = _resolve_auto_improve_mode(
+        no_auto_improve=no_auto_improve,
+        auto_improve_add=auto_improve_add,
+        auto_improve_mode=auto_improve_mode,
+    )
+    auto_improve_summary: dict[str, Any] = {
+        "mode": resolved_mode,
+        "candidate_count": 0,
+        "added_count": 0,
+    }
 
     for sec in _FROM_NOTE_MERGE_TARGETS:
         new_items: list[StateItem] = []
@@ -1482,16 +1572,31 @@ def _merge_from_note(
         )
 
     # Auto-improve: analyze signals
-    if not no_auto_improve:
+    if resolved_mode != "skip":
         index_path = _resolve_index_path_for_note(note_path, state_path)
-        auto_items = _auto_improve_from_signals(
+        auto_items, migration_summary = _auto_improve_from_signals(
             state_path,
             index_path,
             sections,
             note_path=note_path,
         )
+        auto_improve_summary["candidate_count"] = len(auto_items)
+        if migration_summary["legacy_entries_found"] > 0:
+            auto_improve_summary["legacy_migration"] = migration_summary
+            if migration_summary["remaining_legacy_entries"] > 0:
+                suffix = (
+                    "reindex may be required"
+                    if migration_summary["needs_reindex"]
+                    else "manual cleanup may be required"
+                )
+                merge_warnings.append(
+                    "Legacy migration incomplete: "
+                    f"{migration_summary['remaining_legacy_entries']} entry(s) remain in "
+                    "_improvement_backlog_resolved.json; "
+                    f"{suffix}."
+                )
         if auto_items:
-            if auto_improve_add:
+            if resolved_mode == "add":
                 # Explicitly requested: add to backlog
                 merged = deduplicate(
                     auto_items + sections.get(STATE_SHORT_KEYS["improvements"], [])
@@ -1504,6 +1609,7 @@ def _merge_from_note(
                         f"Cap exceeded ({STATE_SHORT_KEYS['improvements']}), "
                         f"dropping: [{item.date}] {item.text}"
                     )
+                auto_improve_summary["added_count"] = len(auto_items)
                 merge_warnings.append(
                     f"Auto-improve: {len(auto_items)} candidate(s) added to improvement backlog"
                 )
@@ -1512,7 +1618,7 @@ def _merge_from_note(
                 candidates = [item.text for item in auto_items]
                 merge_warnings.append(
                     f"Auto-improve: {len(auto_items)} candidate(s) detected "
-                    f"(use auto_improve_add to add): {candidates}"
+                    f"(use auto_improve_mode='add' or auto_improve_add to add): {candidates}"
                 )
 
     pruned = _auto_prune(sections, max_entries=max_entries)
@@ -1527,7 +1633,7 @@ def _merge_from_note(
     updated_sections = list(extracted.keys())
     if STATE_SHORT_KEYS["improvements"] not in updated_sections:
         updated_sections.append(STATE_SHORT_KEYS["improvements"])
-    return sections, updated_sections, stale_count, merge_warnings
+    return sections, updated_sections, stale_count, merge_warnings, auto_improve_summary
 
 
 def cmd_from_note(
@@ -1535,26 +1641,30 @@ def cmd_from_note(
     note_path: Path,
     no_auto_improve: bool = False,
     auto_improve_add: bool = False,
+    auto_improve_mode: AutoImproveMode | None = None,
     max_entries: int = 20,
 ) -> int:
     if not note_path.exists():
-        print(f"Note not found: {note_path}", file=sys.stderr)
+        print(f"{NOTE_NOT_FOUND_PREFIX}: {note_path}", file=sys.stderr)
         return 2
 
     try:
         _validate_non_negative("max-entries", max_entries)
-        sections_data, updated_sections, stale_count, merge_warnings = _merge_from_note(
-            state_path=state_path,
-            note_path=note_path,
-            no_auto_improve=no_auto_improve,
-            auto_improve_add=auto_improve_add,
-            max_entries=max_entries,
+        sections_data, updated_sections, stale_count, merge_warnings, auto_improve_summary = (
+            _merge_from_note(
+                state_path=state_path,
+                note_path=note_path,
+                no_auto_improve=no_auto_improve,
+                auto_improve_add=auto_improve_add,
+                auto_improve_mode=auto_improve_mode,
+                max_entries=max_entries,
+            )
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     except OSError as exc:
-        print(f"Failed to read note: {exc}", file=sys.stderr)
+        print(f"{FAILED_TO_READ_NOTE_PREFIX}: {exc}", file=sys.stderr)
         return 2
 
     if stale_count > 0:
@@ -1566,6 +1676,7 @@ def cmd_from_note(
         "updated_sections": updated_sections,
         "stale_count": stale_count,
         "section_counts": {sec: len(sections_data.get(sec, [])) for sec in SECTION_ORDER},
+        "auto_improve": auto_improve_summary,
     }
     if merge_warnings:
         result["warnings"] = merge_warnings

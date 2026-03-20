@@ -376,7 +376,25 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) 
         for item in loaded[state.STATE_SHORT_KEYS["pitfalls"]]
     )
     # Warnings are now in JSON, not stderr
+    assert payload["auto_improve"]["mode"] == "skip"
     assert "warnings" not in payload or isinstance(payload.get("warnings"), list)
+
+
+def test_cmd_from_note_rejects_conflicting_auto_improve_options(
+    sample_state_path: Path,
+    sample_note_path: Path,
+    capsys,
+) -> None:
+    rc = state.cmd_from_note(
+        sample_state_path,
+        sample_note_path,
+        no_auto_improve=True,
+        auto_improve_add=True,
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "Conflicting auto-improve options:" in captured.err
 
 
 def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir: Path) -> None:

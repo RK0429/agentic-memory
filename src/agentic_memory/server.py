@@ -24,6 +24,7 @@ from agentic_memory.core import (
     index,
     note,
     search,
+    sections,
     state,
     stats,
 )
@@ -84,6 +85,61 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
+def _error_payload(
+    *,
+    error_type: str,
+    message: str,
+    hint: str | None = None,
+    exit_code: int = 2,
+) -> str:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "error_type": error_type,
+        "message": message,
+        "exit_code": exit_code,
+    }
+    if hint is not None:
+        payload["hint"] = hint
+    return _serialize_json(payload)
+
+
+def _state_command_error_payload(message: str, *, exit_code: int) -> str:
+    text = message.strip() or f"State command failed (exit_code={exit_code})"
+    if text.startswith(f"{state.NOTE_NOT_FOUND_PREFIX}:"):
+        return _error_payload(
+            error_type="not_found",
+            message=text,
+            hint="Verify `note_path` exists. Use `memory_note_new` to create a note first.",
+            exit_code=exit_code,
+        )
+    if text.startswith(f"{sections.UNKNOWN_SECTION_KEY_PREFIX}:"):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Use one of the accepted section keys or aliases shown in the message.",
+            exit_code=exit_code,
+        )
+    if text.startswith(f"{state.FAILED_TO_READ_NOTE_PREFIX}:"):
+        return _error_payload(
+            error_type="io_error",
+            message=text,
+            hint="Check filesystem permissions and that the note file is readable.",
+            exit_code=exit_code,
+        )
+    if (
+        state.CONFLICTING_AUTO_IMPROVE_PREFIX in text
+        or "must be non-negative" in text
+        or "must be >= 0" in text
+    ):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Adjust the auto-improve mode or numeric option and retry.",
+            exit_code=exit_code,
+        )
+    return _error_payload(error_type="command_error", message=text, exit_code=exit_code)
+
+
 def _capture_state_cmd(func: Callable[..., int], *args: Any, **kwargs: Any) -> str:
     out = io.StringIO()
     err = io.StringIO()
@@ -93,16 +149,15 @@ def _capture_state_cmd(func: Callable[..., int], *args: Any, **kwargs: Any) -> s
     stdout_text = out.getvalue().strip()
     stderr_text = err.getvalue().strip()
 
-    lines: list[str] = []
-    if stdout_text:
-        lines.append(stdout_text)
-    if stderr_text:
-        lines.append(stderr_text)
     if code != 0:
-        lines.append(f"exit_code={code}")
-    if not lines:
-        lines.append("ok")
-    return "\n".join(lines)
+        return _state_command_error_payload(stderr_text or stdout_text, exit_code=code)
+    if stdout_text:
+        if stderr_text:
+            return f"{stdout_text}\n{stderr_text}"
+        return stdout_text
+    if stderr_text:
+        return stderr_text
+    return "ok"
 
 
 def _resolve_note_path(note_path: str, memory_dir: Path) -> Path:
@@ -470,6 +525,7 @@ def memory_state_remove(
 @mcp.tool(annotations=_ADDITIVE)
 def memory_state_from_note(
     note_path: str,
+    auto_improve_mode: Literal["detect", "add", "skip"] | None = None,
     no_auto_improve: bool = False,
     auto_improve_add: bool = False,
     max_entries: int = 20,
@@ -479,15 +535,18 @@ def memory_state_from_note(
 
     `note_path` points to the source note.
     After merging note sections into rolling state, SIGFB signals in the note are
-    analyzed to detect improvement candidates for the backlog:
-      - Default (`no_auto_improve=False, auto_improve_add=False`): candidates are
-        reported in `warnings` but not added to the backlog.
-      - `auto_improve_add=True`: candidates are added to the improvements backlog.
-      - `no_auto_improve=True`: skip signal analysis entirely.
+    analyzed to detect improvement candidates for the backlog.
+    Prefer `auto_improve_mode`: `detect` reports candidates only, `add` appends them
+    to the improvement backlog, and `skip` disables analysis entirely.
+    Legacy flags `no_auto_improve` and `auto_improve_add` remain as compatibility aliases;
+    conflicting combinations are rejected with a structured validation error.
+    When legacy `_improvement_backlog_resolved.json` entries are present, this path also
+    migrates them into the 0.7.x sidecars and reports a migration summary in the response.
     `max_entries` limits section lengths after merge (excess items are auto-pruned
     and reported in `warnings`).
     Returns JSON with `updated_sections`, `section_counts`, `stale_count`,
-    and `warnings` (cap-exceeded, auto-prune, auto-improve candidates, stale items).
+    `auto_improve`, and optional `warnings` (cap-exceeded, auto-prune, auto-improve
+    candidates, stale items, incomplete legacy migration).
     """
     resolved = _resolve_dir(memory_dir)
     resolved_note = _resolve_note_path(note_path, resolved)
@@ -495,6 +554,7 @@ def memory_state_from_note(
         state.cmd_from_note,
         _state_path(resolved),
         note_path=resolved_note,
+        auto_improve_mode=auto_improve_mode,
         no_auto_improve=no_auto_improve,
         auto_improve_add=auto_improve_add,
         max_entries=max_entries,
@@ -636,6 +696,8 @@ def memory_index_upsert(
 ) -> str:
     """Upsert one note into the index.
 
+    Use this to add or refresh one note in the index. It is also useful after
+    schema changes or upgrades when an older index entry needs to be rebuilt.
     `note_path` targets the note to index.
     `max_summary_chars` truncates summary extraction, and `no_dense` skips dense upsert.
     `compact` omits verbose fields (auto_keywords, work_log_keywords, etc.) from the response.
@@ -643,16 +705,35 @@ def memory_index_upsert(
     """
     resolved = _resolve_dir(memory_dir)
     resolved_note = _resolve_note_path(note_path, resolved)
-    result = index.index_note(
-        note_path=resolved_note,
-        index_path=_index_path(resolved),
-        dailynote_dir=resolved,
-        task_id=task_id,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        max_summary_chars=max_summary_chars,
-        no_dense=no_dense,
-    )
+    try:
+        result = index.index_note(
+            note_path=resolved_note,
+            index_path=_index_path(resolved),
+            dailynote_dir=resolved,
+            task_id=task_id,
+            agent_id=agent_id,
+            relay_session_id=relay_session_id,
+            max_summary_chars=max_summary_chars,
+            no_dense=no_dense,
+        )
+    except FileNotFoundError as exc:
+        return _error_payload(
+            error_type="not_found",
+            message=str(exc),
+            hint="Verify `note_path` exists. Use `memory_note_new` to create a note first.",
+        )
+    except ValueError as exc:
+        return _error_payload(
+            error_type="validation_error",
+            message=str(exc),
+            hint="Check the input parameters and retry.",
+        )
+    except OSError as exc:
+        return _error_payload(
+            error_type="io_error",
+            message=str(exc),
+            hint="Check filesystem permissions and retry.",
+        )
     if compact:
         exclude = search.COMPACT_EXCLUDE_FIELDS
         result = {key: value for key, value in result.items() if key not in exclude}

@@ -298,12 +298,19 @@ def cmd_state_prune(
 
 @state_group.command("from-note")
 @click.argument("note_path", type=click.Path(path_type=Path))
+@click.option(
+    "--auto-improve-mode",
+    type=click.Choice(["detect", "add", "skip"]),
+    default=None,
+    help="Auto-improve behavior: detect candidates, add them, or skip analysis.",
+)
 @click.option("--no-auto-improve", is_flag=True, help="Skip auto-improve analysis.")
 @click.option("--auto-improve-add", is_flag=True, help="Add auto-improve candidates to backlog.")
 @click.pass_context
 def cmd_state_from_note(
     ctx: click.Context,
     note_path: Path,
+    auto_improve_mode: str | None,
     no_auto_improve: bool,
     auto_improve_add: bool,
 ) -> None:
@@ -312,6 +319,7 @@ def cmd_state_from_note(
     return_code = state.cmd_from_note(
         state_path=_state_path(app.memory_dir),
         note_path=note_path,
+        auto_improve_mode=cast(state.AutoImproveMode | None, auto_improve_mode),
         no_auto_improve=no_auto_improve,
         auto_improve_add=auto_improve_add,
     )
