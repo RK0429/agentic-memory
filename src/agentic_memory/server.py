@@ -47,6 +47,11 @@ except TypeError:
 
 # MCP tool annotations
 _READONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
+_READONLY_OPEN_WORLD = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    openWorldHint=True,
+)
 _ADDITIVE = ToolAnnotations(destructiveHint=False, openWorldHint=False)
 _IDEMPOTENT = ToolAnnotations(destructiveHint=False, idempotentHint=True, openWorldHint=False)
 _DESTRUCTIVE = ToolAnnotations(destructiveHint=True, openWorldHint=False)
@@ -183,6 +188,12 @@ def _validation_error_payload(message: str, *, default_hint: str) -> str:
             error_type="validation_error",
             message=text,
             hint="Pass explicit `paths` or one valid `task_id` to resolve note paths.",
+        )
+    if text.startswith("Cannot specify both 'paths' and 'task_id'."):
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint="Pass either explicit `paths` or one valid `task_id`, but not both.",
         )
     if text.startswith("No notes found for task_id"):
         return _error_payload(
@@ -521,10 +532,13 @@ def memory_note_new(
     `title` is required. Optional `context`, `tags`, and `keywords` fill metadata fields.
     `task_id`, `agent_id`, and `relay_session_id` are stored in index metadata.
     `task_id` accepts `TASK-123` / `GOAL-123` or a relay task UUID.
+    The created note is indexed immediately after it is written.
     `lang` selects the template language.
     Returns JSON with the created note path and metadata.
     """
     resolved = _resolve_dir(memory_dir)
+    if task_id is not None and _normalize_task_id(task_id) is None:
+        return _index_upsert_error_payload(invalid_task_id_message(task_id))
     created = note.create_note(
         memory_dir=resolved,
         title=title,
@@ -534,15 +548,24 @@ def memory_note_new(
         auto_index=False,
         lang=lang,
     )
-    index.index_note(
-        note_path=created,
-        index_path=_index_path(resolved),
-        dailynote_dir=resolved,
-        task_id=task_id,
-        agent_id=agent_id,
-        relay_session_id=relay_session_id,
-        no_dense=True,
-    )
+    try:
+        index.index_note(
+            note_path=created,
+            index_path=_index_path(resolved),
+            dailynote_dir=resolved,
+            task_id=task_id,
+            agent_id=agent_id,
+            relay_session_id=relay_session_id,
+            no_dense=True,
+        )
+    except ValueError as exc:
+        return _index_upsert_error_payload(str(exc))
+    except OSError as exc:
+        return _error_payload(
+            error_type="io_error",
+            message=str(exc),
+            hint="Check filesystem permissions and retry.",
+        )
     return _success_payload(
         {"path": str(created), "title": title, "date": str(created.parent.name)}
     )
@@ -560,7 +583,7 @@ def memory_state_show(
     Use this to check current focus, open actions, decisions, and pitfalls.
     `section` filters one state section, `stale_days` marks stale items.
     `as_json` defaults to True (structured sections only). Set to False
-    to also include rendered markdown under `output`.
+    to return rendered markdown under `output` instead of structured `sections`.
     `memory_dir` selects the state file location.
     Returns JSON.
     """
@@ -588,7 +611,8 @@ def memory_state_show(
     if isinstance(parsed, dict) and "warnings" in parsed:
         payload["warnings"] = parsed["warnings"]
     if not as_json:
-        payload["output"] = _render_state_show_output(cast(dict[str, Any], payload["sections"]))
+        sections_payload = cast(dict[str, Any], payload.pop("sections", {}))
+        payload["output"] = _render_state_show_output(sections_payload)
     return _success_payload(payload)
 
 
@@ -735,7 +759,7 @@ def memory_auto_restore(
     return _success_payload(payload)
 
 
-@mcp.tool(annotations=_READONLY)
+@mcp.tool(annotations=_READONLY_OPEN_WORLD)
 def memory_search(
     query: str,
     mode: Literal["quick", "detailed", "debug"] = "quick",
@@ -774,6 +798,8 @@ def memory_search(
         Sets: compact=False, no_feedback_expand=False, explain=True.
     `no_expand`, `no_cjk_expand`, `no_fuzzy`, `no_rerank` override individual features
     regardless of mode — use these only when mode presets are insufficient.
+    When rerank auto-enables, lazy-loading the rerank model may trigger a model
+    download via `sentence_transformers`.
     Returns ranked results, warnings, and match metadata as JSON.
     """
     # Derive compact/explain/no_feedback_expand from mode
@@ -887,15 +913,22 @@ def memory_evidence(
     by keyword, use memory_search instead.
     `query` filters relevant lines from the selected notes.
     Either `paths` (note file paths; list or single string) or `task_id` must be
-    provided — omitting both raises an error. If only `task_id` is given, paths are
-    auto-resolved from the index. `task_id` accepts `TASK-123` / `GOAL-123` or a
-    relay task UUID. A valid `task_id` with no indexed notes raises `ValueError`
-    with recovery guidance.
+    provided — omitting both raises an error, and specifying both raises a
+    validation error. If only `task_id` is given, paths are auto-resolved from
+    the index. `task_id` accepts `TASK-123` / `GOAL-123` or a relay task UUID.
+    A valid `task_id` with no indexed notes raises `ValueError` with recovery
+    guidance.
     `max_lines` limits lines per section (default 12).
     Returns JSON with the generated markdown under `markdown`.
     """
     resolved = _resolve_dir(memory_dir)
     try:
+        if paths is not None and task_id is not None:
+            raise ValueError(
+                "Cannot specify both 'paths' and 'task_id'. "
+                "Use 'paths' for explicit note file paths, "
+                "or 'task_id' to auto-resolve paths from the index."
+            )
         if paths is not None:
             resolved_paths = _resolve_paths(paths, resolved)
         elif task_id is not None:
@@ -1009,7 +1042,7 @@ def memory_cleanup_notes(
     return _success_payload(result)
 
 
-@mcp.tool(annotations=_READONLY)
+@mcp.tool(annotations=_READONLY_OPEN_WORLD)
 def memory_search_global(
     query: str,
     memory_dirs: list[str] | str | None = None,
@@ -1030,6 +1063,8 @@ def memory_search_global(
     Results are merged, scored, and sorted; each result includes `source_dir`.
     `mode` controls output verbosity: `quick` (default), `detailed`, `debug`.
     `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
+    When rerank auto-enables, lazy-loading the rerank model may trigger a model
+    download via `sentence_transformers`.
     Accepts the same query syntax as `memory_search`.
     """
     compact = mode == "quick"

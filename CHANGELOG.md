@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-03-20
+
+### Changed
+
+- `memory_search` and `memory_search_global` now declare `openWorldHint=true`, matching rerank auto-enable behavior that may lazy-load external models
+
+### Fixed
+
+- `memory_note_new` now validates invalid `task_id` before writing a note, returning a structured JSON validation error without leaving an orphaned note file
+- `memory_evidence` now rejects simultaneous `paths` and `task_id` arguments instead of silently preferring `paths`
+- `memory_state_show(as_json=False)` now returns rendered markdown without duplicating structured `sections` in the same payload
+
 ## [0.11.0] - 2026-03-20
 
 ### Changed

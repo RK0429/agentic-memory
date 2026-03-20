@@ -140,6 +140,7 @@ def test_memory_state_show_as_json_false_includes_rendered_output(
 
     payload = _state_show_payload(memory_dir=str(tmp_memory_dir), as_json=False)
     assert payload["ok"] is True
+    assert "sections" not in payload
     assert "現在のフォーカス" in str(payload["output"])
     assert "- (empty)" in str(payload["output"])
 
@@ -348,8 +349,19 @@ def test_memory_state_show_as_json_returns_structured_sections(
         memory_dir=str(tmp_memory_dir),
     )
     assert payload["ok"] is True
+    assert "sections" in payload
     assert "output" not in payload
     assert payload["sections"]["現在のフォーカス"][0]["text"] == "Task A"
+
+
+def test_memory_search_tools_mark_open_world_and_document_rerank_download() -> None:
+    for tool_name in ("memory_search", "memory_search_global"):
+        tool = server_module.mcp._tool_manager.get_tool(tool_name)
+        description = " ".join(tool.description.lower().split())
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.openWorldHint is True
+        assert "model download" in description
 
 
 def test_memory_state_from_note_returns_json_error_for_missing_note(
@@ -711,7 +723,9 @@ def test_memory_evidence_rejects_task_id_without_indexed_notes(
     assert payload["exit_code"] == 2
 
 
-def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkeypatch) -> None:
+def test_memory_evidence_rejects_paths_and_task_id_together(
+    tmp_memory_dir: Path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     memory_dir = tmp_memory_dir
 
@@ -725,9 +739,10 @@ def test_memory_evidence_prefers_paths_over_task_id(tmp_memory_dir: Path, monkey
         task_id="TASK-501",
         memory_dir=str(memory_dir),
     )
-    assert payload["ok"] is True
-    assert str(explicit_path) in str(payload["markdown"])
-    assert "Ignored Task Note" not in str(payload["markdown"])
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "Cannot specify both 'paths' and 'task_id'." in payload["message"]
+    assert "but not both" in payload["hint"]
 
 
 def test_memory_note_new_with_agent_metadata(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -831,12 +846,17 @@ def test_memory_note_new_rejects_unknown_task_id_with_format_hint(
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
-    with pytest.raises(ValueError, match="relay task UUID"):
+    payload = json.loads(
         memory_note_new(
             title="Invalid Task Note",
             task_id="not-a-task-id",
             memory_dir=str(tmp_memory_dir),
         )
+    )
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "TASK-123" in payload["hint"]
+    assert list(tmp_memory_dir.glob("*/*.md")) == []
 
 
 def test_memory_search_rejects_invalid_query_task_id_with_format_hint(
