@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from agentic_memory.core import sections, signals
+from agentic_memory.core.index_timestamps import (
+    INDEXED_AT_TOLERANCE_SECONDS,
+    parse_indexed_at,
+)
 
 resolve_short_key = sections.resolve_short_key
 get_cap = sections.get_cap
@@ -53,7 +57,6 @@ _TRIGGER_COOLDOWN_BASENAME = "_trigger_cooldown.json"
 AutoImproveMode = Literal["detect", "add", "skip"]
 NOTE_NOT_FOUND_PREFIX = "Note not found"
 FAILED_TO_READ_NOTE_PREFIX = "Failed to read note"
-CONFLICTING_AUTO_IMPROVE_PREFIX = "Conflicting auto-improve options"
 
 
 def now_stamp() -> str:
@@ -137,38 +140,13 @@ def _increment_unresolved_reason(summary: dict[str, Any], reason: str) -> None:
     counts[reason] = counts.get(reason, 0) + 1
 
 
-def _resolve_auto_improve_mode(
-    *,
-    no_auto_improve: bool,
-    auto_improve_add: bool,
-    auto_improve_mode: AutoImproveMode | None,
-) -> AutoImproveMode:
-    if auto_improve_mode is not None:
-        if auto_improve_mode not in {"detect", "add", "skip"}:
-            raise ValueError(
-                f"Invalid auto_improve_mode: {auto_improve_mode!r}. Use one of: detect, add, skip."
-            )
-        if no_auto_improve and auto_improve_mode != "skip":
-            raise ValueError(
-                f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
-                "no_auto_improve=True requires auto_improve_mode='skip'."
-            )
-        if auto_improve_add and auto_improve_mode != "add":
-            raise ValueError(
-                f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
-                "auto_improve_add=True requires auto_improve_mode='add'."
-            )
-        return auto_improve_mode
-    if no_auto_improve and auto_improve_add:
+def _resolve_auto_improve_mode(auto_improve_mode: AutoImproveMode | None) -> AutoImproveMode:
+    resolved = auto_improve_mode or "detect"
+    if resolved not in {"detect", "add", "skip"}:
         raise ValueError(
-            f"{CONFLICTING_AUTO_IMPROVE_PREFIX}: "
-            "no_auto_improve and auto_improve_add cannot both be true."
+            f"Invalid auto_improve_mode: {auto_improve_mode!r}. Use one of: detect, add, skip."
         )
-    if no_auto_improve:
-        return "skip"
-    if auto_improve_add:
-        return "add"
-    return "detect"
+    return resolved
 
 
 # --- legacy _improvement_backlog_resolved.json sidecar ---
@@ -1404,6 +1382,21 @@ def _normalize_note_path_for_index(note_path: Path, dailynote_dir: Path) -> str:
         return str(note_path)
 
 
+def _index_entry_is_stale(
+    entry: dict[str, Any],
+    note_path: Path,
+    tolerance_seconds: float = INDEXED_AT_TOLERANCE_SECONDS,
+) -> bool:
+    indexed_at = parse_indexed_at(entry.get("indexed_at"))
+    if indexed_at is None:
+        return True
+    try:
+        note_mtime = note_path.stat().st_mtime
+    except OSError:
+        return False
+    return (note_mtime - indexed_at.timestamp()) > tolerance_seconds
+
+
 def _ensure_note_index_entry(
     entries: list[dict],
     note_path: Path | None,
@@ -1413,20 +1406,37 @@ def _ensure_note_index_entry(
     if note_path is None:
         return entries
     expected_path = _normalize_note_path_for_index(note_path, index_path.parent)
-    for entry in entries:
+    matched_index: int | None = None
+    matched_entry: dict[str, Any] | None = None
+    for idx, entry in enumerate(entries):
         if isinstance(entry, dict) and str(entry.get("path", "")) == expected_path:
-            return entries
+            matched_index = idx
+            matched_entry = entry
+            if not _index_entry_is_stale(entry, note_path):
+                return entries
+            break
     try:
         from agentic_memory.core import index
 
-        built_entry = index.build_entry(
-            note_path,
-            max_summary_chars,
+        refreshed_entry = index.index_note(
+            note_path=note_path,
+            index_path=index_path,
             dailynote_dir=index_path.parent,
+            task_id=cast(str | None, matched_entry.get("task_id")) if matched_entry else None,
+            agent_id=cast(str | None, matched_entry.get("agent_id")) if matched_entry else None,
+            relay_session_id=(
+                cast(str | None, matched_entry.get("relay_session_id")) if matched_entry else None
+            ),
+            max_summary_chars=max_summary_chars,
+            no_dense=True,
         )
     except (OSError, ValueError):
         return entries
-    return entries + [built_entry]
+    if matched_index is None:
+        return entries + [refreshed_entry]
+    updated_entries = list(entries)
+    updated_entries[matched_index] = refreshed_entry
+    return updated_entries
 
 
 def _auto_improve_from_signals(
@@ -1550,8 +1560,6 @@ def _resolve_index_path_for_note(note_path: Path, state_path: Path) -> Path:
 def _merge_from_note(
     state_path: Path,
     note_path: Path,
-    no_auto_improve: bool = False,
-    auto_improve_add: bool = False,
     auto_improve_mode: AutoImproveMode | None = None,
     max_entries: int = 20,
 ) -> tuple[dict[str, list[StateItem]], list[str], int, dict[str, Any], dict[str, Any]]:
@@ -1567,11 +1575,7 @@ def _merge_from_note(
         "cap_exceeded": [],
         "auto_pruned": [],
     }
-    resolved_mode = _resolve_auto_improve_mode(
-        no_auto_improve=no_auto_improve,
-        auto_improve_add=auto_improve_add,
-        auto_improve_mode=auto_improve_mode,
-    )
+    resolved_mode = _resolve_auto_improve_mode(auto_improve_mode)
     auto_improve_summary: dict[str, Any] = {
         "mode": resolved_mode,
         "candidate_count": 0,
@@ -1649,8 +1653,6 @@ def _merge_from_note(
 def cmd_from_note(
     state_path: Path,
     note_path: Path,
-    no_auto_improve: bool = False,
-    auto_improve_add: bool = False,
     auto_improve_mode: AutoImproveMode | None = None,
     max_entries: int = 20,
 ) -> int:
@@ -1664,8 +1666,6 @@ def cmd_from_note(
             _merge_from_note(
                 state_path=state_path,
                 note_path=note_path,
-                no_auto_improve=no_auto_improve,
-                auto_improve_add=auto_improve_add,
                 auto_improve_mode=auto_improve_mode,
                 max_entries=max_entries,
             )

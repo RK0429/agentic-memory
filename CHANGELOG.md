@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-03-20
+
+### Changed
+
+- JSON を返す MCP ツールの成功応答は `ok: true` を含む envelope に統一
+- `memory_search_global` は `memory_dirs` に単一文字列も受け付けるようになった
+- internal API の legacy auto-improve boolean パラメータを削除し、`auto_improve_mode` に統一
+
+### Fixed
+
+- `memory_state_from_note` は stale な既存 index entry を検出した場合に、その note の index を自動 refresh してから auto-improve を評価するようになった
+- `_capture_state_cmd` は成功時に stderr warning が混在しても JSON envelope を壊さないようになった
+
 ## [0.9.0] - 2026-03-20
 
 ### Changed

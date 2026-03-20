@@ -85,6 +85,15 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
+def _success_payload(value: Any) -> str:
+    payload = _to_jsonable(value)
+    if isinstance(payload, dict):
+        data = dict(payload)
+        data.setdefault("ok", True)
+        return _serialize_json(data)
+    return _serialize_json({"ok": True, "result": payload})
+
+
 def _error_payload(
     *,
     error_type: str,
@@ -127,7 +136,7 @@ def _state_command_error_payload(message: str, *, exit_code: int) -> str:
             exit_code=exit_code,
         )
     if (
-        state.CONFLICTING_AUTO_IMPROVE_PREFIX in text
+        "Invalid auto_improve_mode:" in text
         or "must be non-negative" in text
         or "must be >= 0" in text
     ):
@@ -227,12 +236,27 @@ def _capture_state_cmd(func: Callable[..., int], *args: Any, **kwargs: Any) -> s
     if code != 0:
         return _state_command_error_payload(stderr_text or stdout_text, exit_code=code)
     if stdout_text:
+        try:
+            parsed = json.loads(stdout_text)
+        except json.JSONDecodeError:
+            payload: dict[str, Any] = {"raw_output": stdout_text}
+            if stderr_text:
+                payload["warnings"] = [stderr_text]
+            return _success_payload(payload)
+        if not isinstance(parsed, dict):
+            payload = {"raw_output": stdout_text}
+            if stderr_text:
+                payload["warnings"] = [stderr_text]
+            return _success_payload(payload)
         if stderr_text:
-            return f"{stdout_text}\n{stderr_text}"
-        return stdout_text
+            warnings = parsed.get("warnings", [])
+            if not isinstance(warnings, list):
+                warnings = [str(warnings)]
+            parsed["warnings"] = [*warnings, stderr_text]
+        return _success_payload(parsed)
     if stderr_text:
-        return stderr_text
-    return "ok"
+        return _success_payload({"warnings": [stderr_text]})
+    return _success_payload({})
 
 
 def _resolve_note_path(note_path: str, memory_dir: Path) -> Path:
@@ -444,7 +468,7 @@ def memory_init(
     """
     resolved = _resolve_dir(memory_dir)
     result = config.init_memory_dir(resolved, enable_dense=enable_dense)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_ADDITIVE)
@@ -488,7 +512,9 @@ def memory_note_new(
         relay_session_id=relay_session_id,
         no_dense=True,
     )
-    return _serialize_json({"path": str(created), "title": title, "date": str(created.parent.name)})
+    return _success_payload(
+        {"path": str(created), "title": title, "date": str(created.parent.name)}
+    )
 
 
 @mcp.tool(annotations=_READONLY)
@@ -528,9 +554,11 @@ def memory_state_show(
         "stale_days": stale_days,
         "sections": parsed.get("sections", {}) if isinstance(parsed, dict) else parsed,
     }
+    if isinstance(parsed, dict) and "warnings" in parsed:
+        payload["warnings"] = parsed["warnings"]
     if not as_json:
         payload["output"] = _render_state_show_output(cast(dict[str, Any], payload["sections"]))
-    return _serialize_json(payload)
+    return _success_payload(payload)
 
 
 @mcp.tool(annotations=_ADDITIVE)
@@ -673,7 +701,7 @@ def memory_auto_restore(
         include_project_state=include_project_state,
         include_agent_state=include_agent_state,
     )
-    return _serialize_json(payload)
+    return _success_payload(payload)
 
 
 @mcp.tool(annotations=_READONLY)
@@ -758,7 +786,7 @@ def memory_search(
     if mode != "debug":
         result = dict(result)
         result.pop("expanded", None)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -811,7 +839,7 @@ def memory_index_upsert(
     if compact:
         exclude = search.COMPACT_EXCLUDE_FIELDS
         result = {key: value for key, value in result.items() if key not in exclude}
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_READONLY)
@@ -869,7 +897,7 @@ def memory_stats(memory_dir: str | None = None) -> str:
     """
     resolved = _resolve_dir(memory_dir)
     result = stats.get_stats(resolved)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -897,7 +925,7 @@ def memory_health_check(
         result = health.fix_issues(resolved)
     else:
         result = health.health_check(resolved)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -914,7 +942,7 @@ def memory_export(
     """
     resolved = _resolve_dir(memory_dir)
     result = export.export_memory(resolved, Path(output_path), fmt=fmt)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_READONLY)
@@ -929,7 +957,7 @@ def memory_list_stale_notes(
     """
     resolved = _resolve_dir(memory_dir)
     result = cleanup.list_stale_notes(resolved, days=days)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
@@ -946,13 +974,13 @@ def memory_cleanup_notes(
     """
     resolved = _resolve_dir(memory_dir)
     result = cleanup.cleanup_notes(resolved, paths=paths, dry_run=dry_run)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_READONLY)
 def memory_search_global(
     query: str,
-    memory_dirs: list[str] | None = None,
+    memory_dirs: list[str] | str | None = None,
     mode: Literal["quick", "detailed", "debug"] = "quick",
     top: int | None = None,
     prefer_recent: bool = False,
@@ -963,7 +991,8 @@ def memory_search_global(
 
     Use this to find notes across different projects or workspaces.
     For searching within a single memory directory, use memory_search instead.
-    `memory_dirs` is an optional list of memory directory paths to search.
+    `memory_dirs` is an optional list of memory directory paths to search. A single
+    string is also accepted for convenience.
     `memory_dir`, if provided, is appended to `memory_dirs` for convenience.
     At least one of `memory_dirs` or `memory_dir` must be provided.
     Results are merged, scored, and sorted; each result includes `source_dir`.
@@ -976,7 +1005,7 @@ def memory_search_global(
     no_feedback_expand = mode == "quick"
 
     try:
-        dirs = [Path(d) for d in (memory_dirs or []) if d]
+        dirs = [Path(d) for d in _normalize_paths_arg(memory_dirs or []) if d]
         if memory_dir:
             additional = Path(memory_dir)
             if additional not in dirs:
@@ -1007,7 +1036,7 @@ def memory_search_global(
     if mode != "debug":
         result = dict(result)
         result.pop("expanded", None)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_ADDITIVE)
@@ -1030,7 +1059,7 @@ def memory_expire_stale(
         stale_days=stale_days,
         archive_path=archive_path,
     )
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -1047,7 +1076,7 @@ def memory_update_weights(
     """
     resolved = _resolve_dir(memory_dir)
     result = config.update_weights(resolved, updates=updates)
-    return _serialize_json(result)
+    return _success_payload(result)
 
 
 def run_server(

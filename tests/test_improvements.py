@@ -191,7 +191,7 @@ def test_cmd_from_note_returns_json_summary(tmp_memory_dir: Path) -> None:
     out = io.StringIO()
     err = io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        code = state.cmd_from_note(state_path, note_path, no_auto_improve=True)
+        code = state.cmd_from_note(state_path, note_path, auto_improve_mode="skip")
     assert code == 0
     result = json.loads(out.getvalue().strip())
     assert result["path"].endswith("_state.md")

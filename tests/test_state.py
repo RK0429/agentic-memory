@@ -355,7 +355,7 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) 
     rc = state.cmd_from_note(
         sample_state_path,
         sample_note_path,
-        no_auto_improve=True,
+        auto_improve_mode="skip",
         max_entries=20,
     )
     loaded = state.load_state(sample_state_path)
@@ -381,7 +381,7 @@ def test_cmd_from_note(sample_state_path: Path, sample_note_path: Path, capsys) 
     assert "auto_pruned" not in payload
 
 
-def test_cmd_from_note_rejects_conflicting_auto_improve_options(
+def test_cmd_from_note_rejects_invalid_auto_improve_mode(
     sample_state_path: Path,
     sample_note_path: Path,
     capsys,
@@ -389,13 +389,12 @@ def test_cmd_from_note_rejects_conflicting_auto_improve_options(
     rc = state.cmd_from_note(
         sample_state_path,
         sample_note_path,
-        no_auto_improve=True,
-        auto_improve_add=True,
+        auto_improve_mode="bogus",
     )
     captured = capsys.readouterr()
 
     assert rc == 2
-    assert "Conflicting auto-improve options:" in captured.err
+    assert "Invalid auto_improve_mode:" in captured.err
 
 
 def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir: Path) -> None:
@@ -421,7 +420,7 @@ def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir:
     )
     state_path = tmp_memory_dir / "_state.md"
 
-    rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
     assert rc == 0
     loaded = state.load_state(state_path)
     assert any(
@@ -439,7 +438,7 @@ def test_auto_improve_does_not_readd_resolved_high_severity_item(tmp_memory_dir:
     resolved = state._load_sigfb_resolved(state_path)
     assert len(resolved) >= 3
 
-    rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
     assert rc == 0
     loaded = state.load_state(state_path)
     assert not any(
@@ -498,7 +497,7 @@ def test_auto_improve_migrates_legacy_resolved_high_severity_item(tmp_memory_dir
         encoding="utf-8",
     )
 
-    rc = state.cmd_from_note(state_path, followup_note, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, followup_note, auto_improve_mode="add")
     assert rc == 0
 
     loaded = state.load_state(state_path)
@@ -564,7 +563,7 @@ def test_auto_improve_migrates_legacy_pattern_escalation_resolution(
         encoding="utf-8",
     )
 
-    rc = state.cmd_from_note(state_path, followup_note, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, followup_note, auto_improve_mode="add")
     assert rc == 0
 
     loaded = state.load_state(state_path)
@@ -625,7 +624,7 @@ def test_auto_improve_migrates_legacy_gap_expansion_resolution(tmp_memory_dir: P
         encoding="utf-8",
     )
 
-    rc = state.cmd_from_note(state_path, followup_note, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, followup_note, auto_improve_mode="add")
     assert rc == 0
 
     loaded = state.load_state(state_path)
@@ -660,7 +659,7 @@ def test_auto_improve_respects_recent_periodic_review_resolution(
         "# Periodic\n\n- Date: 2026-03-19\n\n## 目標\n\n- trigger periodic review\n",
         encoding="utf-8",
     )
-    rc = state.cmd_from_note(state_path, first_note, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, first_note, auto_improve_mode="add")
     assert rc == 0
     loaded = state.load_state(state_path)
     assert any(
@@ -687,7 +686,7 @@ def test_auto_improve_respects_recent_periodic_review_resolution(
         "# Periodic Again\n\n- Date: 2026-03-19\n\n## 目標\n\n- trigger periodic review again\n",
         encoding="utf-8",
     )
-    rc = state.cmd_from_note(state_path, second_note, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, second_note, auto_improve_mode="add")
     assert rc == 0
     loaded = state.load_state(state_path)
     assert not any(
@@ -749,7 +748,7 @@ def test_auto_improve_migrates_legacy_periodic_review_resolution(
         "# Periodic\n\n- Date: 2026-03-20\n\n## 目標\n\n- trigger periodic review\n",
         encoding="utf-8",
     )
-    rc = state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    rc = state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
     assert rc == 0
 
     loaded = state.load_state(state_path)
@@ -1155,7 +1154,7 @@ def test_auto_improve_saves_contributor_snapshot(tmp_memory_dir: Path) -> None:
         dailynote_dir=tmp_memory_dir,
     )
     state_path = tmp_memory_dir / "_state.md"
-    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
 
     snapshot = state._load_contributor_snapshot(state_path)
     assert len(snapshot) >= 1
@@ -1184,7 +1183,7 @@ def test_cmd_remove_marks_signals_resolved(tmp_memory_dir: Path) -> None:
         dailynote_dir=tmp_memory_dir,
     )
     state_path = tmp_memory_dir / "_state.md"
-    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
 
     # Before removal: no resolved signals
     resolved_before = state._load_sigfb_resolved(state_path)
@@ -1219,7 +1218,7 @@ def test_resolved_signals_not_recounted(tmp_memory_dir: Path) -> None:
     state_path = tmp_memory_dir / "_state.md"
 
     # Generate backlog
-    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
     loaded = state.load_state(state_path)
     assert any("tool_rc" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]])
 
@@ -1227,7 +1226,7 @@ def test_resolved_signals_not_recounted(tmp_memory_dir: Path) -> None:
     state.cmd_remove(state_path, "improvements", "tool_rc")
 
     # Re-run from_note — should NOT regenerate
-    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
     loaded = state.load_state(state_path)
     assert not any(
         "tool_rc" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]]
@@ -1258,7 +1257,7 @@ def test_new_signals_after_resolve_detected(tmp_memory_dir: Path) -> None:
     state_path = tmp_memory_dir / "_state.md"
 
     # Generate and resolve
-    state.cmd_from_note(state_path, note1, auto_improve_add=True)
+    state.cmd_from_note(state_path, note1, auto_improve_mode="add")
     state.cmd_remove(state_path, "improvements", "tool_new")
 
     # Second note with 3 NEW failures (different desc -> different IDs)
@@ -1280,7 +1279,7 @@ def test_new_signals_after_resolve_detected(tmp_memory_dir: Path) -> None:
         dailynote_dir=tmp_memory_dir,
     )
 
-    state.cmd_from_note(state_path, note2, auto_improve_add=True)
+    state.cmd_from_note(state_path, note2, auto_improve_mode="add")
     loaded = state.load_state(state_path)
     assert any("tool_new" in item.text for item in loaded[state.STATE_SHORT_KEYS["improvements"]])
 
@@ -1321,7 +1320,7 @@ def test_trigger_contributor_inheritance(tmp_memory_dir: Path) -> None:
         dailynote_dir=tmp_memory_dir,
     )
     state_path = tmp_memory_dir / "_state.md"
-    state.cmd_from_note(state_path, note_path, auto_improve_add=True)
+    state.cmd_from_note(state_path, note_path, auto_improve_mode="add")
 
     snapshot = state._load_contributor_snapshot(state_path)
     # Should have at least one entry with contributor_ids inherited from the candidate

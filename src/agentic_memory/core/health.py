@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agentic_memory.core import index as index_module
 from agentic_memory.core import signals, state
+from agentic_memory.core.index_timestamps import (
+    INDEXED_AT_TOLERANCE_SECONDS,
+    parse_indexed_at,
+)
 from agentic_memory.core.stats import _iter_note_paths, _normalize_note_path
-
-_INDEXED_AT_TOLERANCE_SECONDS = 1.0
 
 
 def _resolve_note_path(path_text: str, memory_dir: Path) -> Path:
@@ -40,15 +41,6 @@ def _is_within_memory_dir(path: Path, memory_dir: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def _parse_indexed_at(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def _load_index_entries(index_path: Path) -> tuple[list[dict[str, Any]], str | None]:
@@ -112,7 +104,7 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
             continue
 
         indexed_resolved_paths.add(resolved_note_path.resolve())
-        indexed_at = _parse_indexed_at(entry.get("indexed_at"))
+        indexed_at = parse_indexed_at(entry.get("indexed_at"))
         try:
             note_mtime = resolved_note_path.stat().st_mtime
         except OSError:
@@ -121,7 +113,7 @@ def health_check(memory_dir: Path) -> dict[str, Any]:
 
         if (
             indexed_at is None
-            or (note_mtime - indexed_at.timestamp()) > _INDEXED_AT_TOLERANCE_SECONDS
+            or (note_mtime - indexed_at.timestamp()) > INDEXED_AT_TOLERANCE_SECONDS
         ):
             stale_entries.append(path_text)
 
