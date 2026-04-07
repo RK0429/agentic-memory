@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-08
+
+### Added
+
+- `memory_search_global` now supports `no_expand`, `no_fuzzy`, and `no_rerank` parameters, matching the fine-grained search control available in `memory_search`
+
 ## [0.12.3] - 2026-03-20
 
 ### Fixed

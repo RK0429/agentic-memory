@@ -1096,7 +1096,10 @@ def memory_search_global(
     mode: Literal["quick", "detailed", "debug"] = "quick",
     top: int | None = None,
     prefer_recent: bool = False,
+    no_expand: bool = False,
     no_cjk_expand: bool = False,
+    no_fuzzy: bool = False,
+    no_rerank: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Search across multiple memory directories.
@@ -1109,7 +1112,8 @@ def memory_search_global(
     At least one of `memory_dirs` or `memory_dir` must be provided.
     Results are merged, scored, and sorted; each result includes `source_dir`.
     `mode` controls output verbosity: `quick` (default), `detailed`, `debug`.
-    `no_cjk_expand` suppresses CJK n-gram expansion to reduce context consumption.
+    `no_expand`, `no_cjk_expand`, `no_fuzzy`, `no_rerank` override individual features
+    regardless of mode — use these only when mode presets are insufficient.
     When rerank auto-enables, lazy-loading the rerank model may trigger a model
     download via `sentence_transformers`.
     Accepts the same query syntax as `memory_search`.
@@ -1133,7 +1137,10 @@ def memory_search_global(
             top=top,
             explain=explain,
             prefer_recent=prefer_recent,
+            no_expand=no_expand,
             no_cjk_expand=no_cjk_expand,
+            no_fuzzy=no_fuzzy,
+            no_use_rerank=no_rerank,
             no_feedback_expand=no_feedback_expand,
         )
     except ValueError as exc:
