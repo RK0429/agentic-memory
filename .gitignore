@@ -18,3 +18,5 @@ htmlcov/
 venv/
 tmp/
 memory/
+
+.kalos/
