@@ -1,0 +1,966 @@
+# 要件定義書: agentic-memory Knowledge & Values 拡張
+
+| 項目 | 内容 |
+|---|---|
+| バージョン | 0.1.0（ドラフト） |
+| 最終更新日 | 2026-04-08 |
+| ステータス | ドラフト — レビュー待ち |
+| 作成者 | エージェント（requirements-definer） |
+| レビュー者 | — |
+
+---
+
+## 変更履歴
+
+| バージョン | 日付 | 変更内容 |
+|---|---|---|
+| 0.1.0 | 2026-04-08 | 初版作成 |
+
+---
+
+## 1. プロジェクト概要
+
+### 1.1 背景・動機
+
+現在の agentic-memory（v0.12.3）はセッション単位の「具体的な記録」（Memory）に特化しており、記録の蓄積から抽象的な知見を蒸留する仕組みがない。エージェントが蓄積した Memory から知識（Knowledge）と価値観（Values）を自律的に形成し、「使えば使うほど良くなる」体験を実現したい。
+
+**コアコンセプト**: 「人と AI が共に成長していく」
+
+### 1.2 目的
+
+agentic-memory に Knowledge 層と Values 層を追加し、以下を実現する。
+
+1. **Knowledge**: エージェントがドメイン知識を自律的に蓄積・体系化し、ユーザーの学習を支援できるようにする
+2. **Values**: エージェントがユーザーの判断傾向を自律的に学習し、代理人としての行動精度を継続的に改善する
+
+### 1.3 体系的分類
+
+| 層 | 名称 | 性質 | 情報源 | 行動への影響 |
+|---|---|---|---|---|
+| 具体 | **Memory** | 具体的な宣言・手続き | セッション記録 | ローリングステートとして参照 |
+| 抽象（宣言） | **Knowledge** | 事実・概念・ルール | Memory 蒸留、自律収集、ユーザー教示+リサーチ | Tips/クイズとして提供（push は別実装） |
+| 抽象（手続き） | **Values** | 判断傾向・選好パターン | Memory 蒸留（判断履歴の傾向抽出） | 判断時に検索して参照。高確信度のものは AGENTS.md に昇格 |
+
+### 1.4 対象ユーザー
+
+agentic-workspace を利用する開発者（主に本プロジェクトのオーナー自身）。
+
+### 1.5 スコープ
+
+**スコープ内:**
+
+- Knowledge / Values のデータモデル・ストレージ設計
+- Knowledge / Values の CRUD 操作（MCP ツール）
+- Memory → Knowledge / Values の蒸留パイプライン
+- Knowledge の自律収集ワークフロー定義
+- Values の AGENTS.md 昇格メカニズム
+- 検索・参照統合
+- AGENTS.md の記憶管理セクション改修
+- 関連スキル（retrospective 等）の拡張
+
+**スコープ外:**
+
+- push 型配信の実装（Tips/クイズの定期配信）。エージェントが MCP ツールを使って自律的に実行する前提であり、本要件定義では Knowledge/Values の管理基盤のみを対象とする
+
+### 1.6 制約条件
+
+| 制約 | 内容 |
+|---|---|
+| 技術基盤 | 既存の agentic-memory（Python, MCP サーバー, v0.12.3）のアーキテクチャ上に構築する |
+| ストレージ | 既存の `memory/` ディレクトリ構造と共存する。外部 DB は使用しない |
+| 互換性 | 既存の Memory 機能（18 MCP ツール）に破壊的変更を加えない |
+| 検索エンジン | 既存の BM25+ スコアリングエンジンを流用・拡張する |
+
+### 1.7 成功基準
+
+| # | 基準 | 検証方法 |
+|---|---|---|
+| SC-1 | エージェントが Memory ノートから Knowledge を自律的に抽出・登録できる | `memory_distill_knowledge` の `dry_run=false` で Knowledge エントリが作成されることを確認 |
+| SC-2 | エージェントが Memory ノートから Values を自律的に抽出・登録できる | `memory_distill_values` の `dry_run=false` で Values エントリが作成されることを確認 |
+| SC-3 | エージェントが判断時に関連する Values を参照できる | `memory_values_search` でコンテキストに関連する Values が返されることを確認 |
+| SC-4 | 高確信度の Values が AGENTS.md に昇格できる | `memory_values_promote` で AGENTS.md の「内面化された価値観」セクションに反映されることを確認 |
+| SC-5 | 既存の Memory 機能が正常に動作し続ける | 既存テストスイート（177+ テストケース）が全件パスすること |
+
+---
+
+## 2. 用語集
+
+| 用語 | 定義 |
+|---|---|
+| **Memory** | セッション単位の具体的な記録。ノート（`.md` ファイル）とローリングステート（`_state.md`）で構成される。既存の agentic-memory の中核概念 |
+| **Knowledge** | Memory から蒸留された、または自律的に収集された抽象的な宣言的知識。事実・概念・定義・ルールを含む |
+| **Values** | Memory の判断履歴から蒸留された、ユーザーの判断傾向・選好パターン。エージェントの行動指針として機能する |
+| **蒸留（Distillation）** | 具体的な Memory ノート群から、一般化可能な Knowledge や Values を抽出するプロセス |
+| **昇格（Promotion）** | 高確信度の Values エントリを AGENTS.md に反映し、エージェントの常時参照指針とするプロセス |
+| **降格（Demotion）** | 昇格済みの Values を AGENTS.md から削除し、通常の Values エントリに戻すプロセス |
+| **確信度（Confidence）** | Values エントリに付与される 0.0〜1.0 の数値。ユーザーの判断傾向としての確実性を表す。evidence の蓄積により上昇し、矛盾する事例により低下する |
+| **正確性（Accuracy）** | Knowledge エントリに付与される品質指標。`verified`（複数ソースで確認済み）/ `likely`（単一ソースで確認）/ `uncertain`（未確認）の3段階 |
+| **Evidence** | Values の根拠となる具体的な事例。Memory ノートへの参照と要約で構成される |
+| **Source** | Knowledge の引用元。Memory ノートパス、URL、ユーザー教示等の参照情報 |
+| **SIGFB** | Skill Feedback Signal。ツール・スキル・サブエージェントの使用体験を記録するフィードバック信号（既存概念） |
+| **ローリングステート** | セッション横断で保持されるエージェントの作業状態。`_state.md` に記録される（既存概念） |
+
+---
+
+## 3. 機能要件
+
+### 3.1 機能領域マップ
+
+| 領域コード | 機能領域 | 要件数 |
+|---|---|---|
+| K | Knowledge 管理 | 7 |
+| V | Values 管理 | 8 |
+| D | 蒸留エンジン | 5 |
+| R | Knowledge 自律収集 | 3 |
+| P | Values 昇格 | 4 |
+| S | 検索・参照統合 | 3 |
+| A | AGENTS.md / スキル改修 | 5 |
+
+### 3.2 MoSCoW サマリ
+
+| 優先度 | 件数 | 概要 |
+|---|---|---|
+| Must | 22 | データモデル、CRUD コア、蒸留エンジン、昇格判定・反映、AGENTS.md 改修 |
+| Should | 7 | 削除、一括参照、蒸留トリガー、ユーザー教示 Knowledge 化、昇格同期、retrospective 拡張 |
+| Could | 5 | 統計、横断検索、関連知識の自律探索、降格メカニズム |
+| Won't | 0 | — |
+
+---
+
+### 3.3 K: Knowledge 管理
+
+#### REQ-FUNC-001: Knowledge データモデル
+
+- **ストーリー**: エージェントとして、Knowledge エントリに正確性・引用元・ユーザー理解度等のメタデータを紐づけたい。それはユーザーの学習状況に応じた知識提供を可能にするためだ。
+- **受け入れ基準**:
+  - Given 任意の Knowledge エントリ, When シリアライズ/デシリアライズ, Then 全属性が欠損なく復元される
+  - Given `accuracy` に無効な値が指定された場合, When バリデーション実行, Then エラーを返す
+  - Given `id` が同一の既存エントリが存在する場合, When 登録試行, Then 重複エラーを返す
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-003, REQ-FUNC-004
+
+**Knowledge エントリ属性:**
+
+| 属性 | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | 自動 | 一意識別子（`title` + `domain` + `content[:100]` から決定論的生成、プレフィックス `k-`） |
+| `title` | string | Yes | 知識のタイトル・トピック |
+| `content` | string | Yes | 知識の本体（定義・説明・ルール等） |
+| `domain` | string | Yes | ドメイン分類（例: `machine-learning`, `rust`, `company-rules`） |
+| `tags` | list[string] | No | 検索用タグ |
+| `accuracy` | enum | No | `verified` / `likely` / `uncertain`（デフォルト: `uncertain`） |
+| `sources` | list[Source] | No | 引用元リスト |
+| `source_type` | enum | No | `memory_distillation` / `autonomous_research` / `user_taught` |
+| `user_understanding` | enum | No | `unknown` / `novice` / `familiar` / `proficient` / `expert`（デフォルト: `unknown`） |
+| `related` | list[string] | No | 関連 Knowledge の ID |
+| `created_at` | datetime | 自動 | 作成日時 |
+| `updated_at` | datetime | 自動 | 最終更新日時 |
+
+**Source 構造:**
+
+| 属性 | 型 | 説明 |
+|---|---|---|
+| `type` | enum | `memory_distillation` / `autonomous_research` / `user_taught` |
+| `ref` | string | 参照先（Memory ノートパス、URL、セッション参照等） |
+| `summary` | string | 引用元の要約 |
+
+---
+
+#### REQ-FUNC-002: Values データモデル
+
+- **ストーリー**: エージェントとして、Values エントリに確信度・根拠事例・最終更新日時を紐づけたい。それは確信度に基づいて判断の参考度合いを調整するためだ。
+- **受け入れ基準**:
+  - Given `confidence` が 0.0〜1.0 の範囲外, When バリデーション実行, Then エラーを返す
+  - Given 新しい evidence が追加された場合, When 更新実行, Then `evidence_count` が自動インクリメントされ `updated_at` が更新される
+  - Given `promoted: true` のエントリ, When 検索結果に含まれる場合, Then `promoted` フラグが結果に表示される
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-003, REQ-FUNC-007
+
+**Values エントリ属性:**
+
+| 属性 | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | 自動 | 一意識別子（`description` + `category` から決定論的生成、プレフィックス `v-`） |
+| `description` | string | Yes | 価値観の記述 |
+| `category` | string | Yes | 分類（`coding-style` / `communication` / `workflow` / `design` / `review` 等） |
+| `confidence` | float | No | 確信度 0.0〜1.0（デフォルト: 0.3） |
+| `evidence` | list[Evidence] | No | 根拠事例（最新10件を保持） |
+| `evidence_count` | int | 自動 | 根拠事例の総数（evidence リスト外のものもカウント） |
+| `promoted` | bool | 自動 | AGENTS.md に昇格済みか（デフォルト: `false`） |
+| `promoted_at` | datetime | 自動 | 昇格日時（`promoted=true` の場合） |
+| `created_at` | datetime | 自動 | 作成日時 |
+| `updated_at` | datetime | 自動 | 最終更新日時 |
+
+**Evidence 構造:**
+
+| 属性 | 型 | 説明 |
+|---|---|---|
+| `ref` | string | Memory ノートパス |
+| `summary` | string | 事例の要約 |
+| `date` | string | 事例の日付 |
+
+---
+
+#### REQ-FUNC-003: Knowledge / Values ストレージ設計
+
+- **ストーリー**: エージェントとして、Knowledge と Values を既存の Memory ストレージと共存する形で永続化したい。それは既存機能を壊さずに新機能を追加するためだ。
+- **受け入れ基準**:
+  - Given `memory_init` 実行時, When `knowledge/` と `values/` ディレクトリが存在しない場合, Then 自動作成される
+  - Given Knowledge エントリが登録された場合, When `_knowledge.jsonl` を確認, Then 対応するインデックスエントリが存在する
+  - Given Knowledge エントリのファイルが手動削除された場合, When `memory_health_check` 実行, Then orphan インデックスエントリが検出される
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-001, REQ-FUNC-002
+
+**ディレクトリ構造:**
+
+```
+memory/
+├── _state.md              # 既存: ローリングステート
+├── _index.jsonl           # 既存: Memory ノートインデックス
+├── _knowledge.jsonl       # 新規: Knowledge インデックス（検索用）
+├── _values.jsonl          # 新規: Values インデックス（検索用）
+├── knowledge/             # 新規: Knowledge エントリ格納
+│   ├── {domain}/          #   domain ごとのサブディレクトリ
+│   │   └── k-{id}.md     #   個別エントリ（Markdown + YAML frontmatter）
+│   └── ...
+├── values/                # 新規: Values エントリ格納
+│   ├── v-{id}.md          #   個別エントリ（Markdown + YAML frontmatter）
+│   └── ...
+└── YYYY-MM-DD/            # 既存: Memory ノートディレクトリ
+    └── ...
+```
+
+**設計方針:**
+- Knowledge は `domain` ごとにサブディレクトリで分類（可読性・ナビゲーション性）
+- Values はフラットディレクトリ（エントリ数が Knowledge より少ない想定）
+- 各エントリは Markdown + YAML frontmatter で人間可読
+- `_knowledge.jsonl` / `_values.jsonl` は検索用インデックス（既存 `_index.jsonl` と同じ設計思想）
+
+---
+
+#### REQ-FUNC-004: Knowledge 登録
+
+- **ストーリー**: エージェントとして、新たに獲得した知識を Knowledge エントリとして登録したい。それは知識を永続化し、後続セッションで参照可能にするためだ。
+- **受け入れ基準**:
+  - Given 有効なパラメータ, When `memory_knowledge_add` 実行, Then `.md` ファイルと `_knowledge.jsonl` エントリが作成される
+  - Given `domain` に新規ドメインを指定, When 実行, Then `knowledge/{domain}/` ディレクトリが自動作成される
+  - Given 同一内容で2回実行, When 2回目, Then 重複エラーを返す
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-001, REQ-FUNC-003
+
+**MCP ツール: `memory_knowledge_add`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `title` | string | Yes | 知識のタイトル |
+| `content` | string | Yes | 知識の本体 |
+| `domain` | string | Yes | ドメイン分類 |
+| `tags` | list[string] | No | 検索用タグ |
+| `accuracy` | enum | No | `verified` / `likely` / `uncertain`（デフォルト: `uncertain`） |
+| `sources` | list[Source] | No | 引用元リスト |
+| `source_type` | enum | No | `memory_distillation` / `autonomous_research` / `user_taught` |
+| `user_understanding` | enum | No | デフォルト: `unknown` |
+| `related` | list[string] | No | 関連 Knowledge ID |
+
+**処理:**
+1. `title` + `domain` + `content[:100]` から決定論的に `id` を生成
+2. 重複チェック（同一 `id` が存在すればエラー）
+3. `knowledge/{domain}/k-{id}.md` にファイル作成
+4. `_knowledge.jsonl` にインデックスエントリを追加
+
+**出力:** 作成されたエントリの `id` とパス
+
+---
+
+#### REQ-FUNC-005: Knowledge 検索
+
+- **ストーリー**: エージェントとして、キーワードやドメインで Knowledge を検索したい。それはユーザーへの知識提供や蒸留時の重複チェックに使うためだ。
+- **受け入れ基準**:
+  - Given Knowledge エントリが5件存在し `domain: "rust"` が2件, When `domain="rust"` で検索, Then 2件のみ返される
+  - Given `query="所有権"`, When 検索実行, Then title/content/tags に「所有権」を含むエントリが上位に返される
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-003, REQ-FUNC-017
+
+**MCP ツール: `memory_knowledge_search`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `query` | string | Yes | 検索クエリ |
+| `domain` | string | No | ドメインフィルタ |
+| `accuracy` | enum | No | 正確性フィルタ |
+| `user_understanding` | enum | No | 理解度フィルタ |
+| `top` | int | No | 最大件数（デフォルト: 10） |
+
+**出力:** スコア順のエントリリスト（`id`, `title`, `domain`, `accuracy`, `user_understanding`, `content` の先頭部分）
+
+---
+
+#### REQ-FUNC-006: Knowledge 更新
+
+- **ストーリー**: エージェントとして、既存の Knowledge の正確性・引用元・理解度等を更新したい。それは知識を最新に保ち、ユーザーの学習進捗を反映するためだ。
+- **受け入れ基準**:
+  - Given 既存エントリ, When `accuracy` のみ更新, Then 他の属性は変更されず `updated_at` のみ更新される
+  - Given `sources` を追加, When 更新実行, Then 既存の sources に追加される（置換ではない）
+  - Given 存在しない `id`, When 更新試行, Then エラーを返す
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-001, REQ-FUNC-004
+
+**MCP ツール: `memory_knowledge_update`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | Yes | 更新対象の Knowledge ID |
+| `content` | string | No | 更新後の本体 |
+| `accuracy` | enum | No | 更新後の正確性 |
+| `sources` | list[Source] | No | 追加する引用元（既存にマージ） |
+| `user_understanding` | enum | No | 更新後の理解度 |
+| `related` | list[string] | No | 追加する関連 Knowledge ID（既存にマージ） |
+| `tags` | list[string] | No | 置換後のタグリスト |
+
+**処理:** 指定された属性のみ更新。`updated_at` を自動更新。`.md` ファイルと `_knowledge.jsonl` を同期更新。
+
+---
+
+### 3.4 V: Values 管理
+
+#### REQ-FUNC-007: Values 登録
+
+- **ストーリー**: エージェントとして、検出したユーザーの判断傾向を Values エントリとして登録したい。それはユーザーの代理人としての行動精度を向上させるためだ。
+- **受け入れ基準**:
+  - Given 有効なパラメータ, When `memory_values_add` 実行, Then `.md` ファイルとインデックスエントリが作成される
+  - Given 意味的に類似する既存 Values が存在, When 登録試行, Then 類似エントリの情報が警告として返される（登録自体は成功する）
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-002, REQ-FUNC-003
+
+**MCP ツール: `memory_values_add`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `description` | string | Yes | 価値観の記述 |
+| `category` | string | Yes | 分類 |
+| `confidence` | float | No | 初期確信度（デフォルト: 0.3） |
+| `evidence` | list[Evidence] | No | 初期根拠事例 |
+
+**処理:**
+1. `description` + `category` から決定論的に `id` を生成
+2. 類似判定: 既存 Values と意味的に重複する場合は警告を返す（エラーではなく、マージ提案）
+3. `values/v-{id}.md` にファイル作成
+4. `_values.jsonl` にインデックスエントリを追加
+
+**出力:** 作成されたエントリの `id`。類似既存エントリがある場合はその ID と description も返す。
+
+---
+
+#### REQ-FUNC-008: Values 検索
+
+- **ストーリー**: エージェントとして、判断が必要な場面で関連する Values を検索したい。それはユーザーの選好に沿った判断を行うためだ。
+- **受け入れ基準**:
+  - Given `min_confidence=0.5` を指定, When 検索実行, Then `confidence < 0.5` のエントリは返されない
+  - Given `query="コミットメッセージ"`, When 検索実行, Then コミット・git 関連の Values が上位に返される
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-002, REQ-FUNC-018
+
+**MCP ツール: `memory_values_search`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `query` | string | Yes | 検索クエリ（判断のコンテキスト） |
+| `category` | string | No | カテゴリフィルタ |
+| `min_confidence` | float | No | 確信度の下限（デフォルト: 0.0） |
+| `top` | int | No | 最大件数（デフォルト: 5） |
+
+**出力:** スコア順のエントリリスト（`id`, `description`, `category`, `confidence`, `evidence_count`）
+
+---
+
+#### REQ-FUNC-009: Values 更新
+
+- **ストーリー**: エージェントとして、既存 Values の確信度や根拠事例を更新したい。それは新しい事例に基づいて確信度を漸進的に調整するためだ。
+- **受け入れ基準**:
+  - Given evidence が10件ある状態で `add_evidence`, When 実行, Then 最古の1件が evidence リストから除外され `evidence_count` が +1 される
+  - Given `confidence` を更新, When 更新後の値が昇格閾値を超えた場合, Then レスポンスに昇格候補である旨を通知する（自動昇格はしない）
+  - Given 存在しない `id`, When 更新試行, Then エラーを返す
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-002, REQ-FUNC-015
+
+**MCP ツール: `memory_values_update`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | Yes | 更新対象の Values ID |
+| `confidence` | float | No | 更新後の確信度 |
+| `add_evidence` | Evidence | No | 追加する根拠事例 |
+| `description` | string | No | 更新後の記述 |
+
+**処理:**
+1. 指定属性を更新
+2. `add_evidence` 指定時: evidence リストの先頭に追加し、最新10件を保持。超過分は `evidence_count` のみインクリメント
+3. `updated_at` を自動更新
+4. `.md` ファイルと `_values.jsonl` を同期更新
+
+---
+
+### 3.5 D: 蒸留エンジン
+
+#### REQ-FUNC-010: Memory → Knowledge 蒸留
+
+- **ストーリー**: エージェントとして、蓄積された Memory ノートから一般化可能な知識を自動抽出したい。それは暗黙知を形式知として体系化するためだ。
+- **受け入れ基準**:
+  - Given 10件の Memory ノート, When `dry_run=true` で実行, Then Knowledge 候補リストが返され、`_knowledge.jsonl` は変更されない
+  - Given 抽出結果に既存 Knowledge と重複する内容がある, When `dry_run=false`, Then 重複エントリはスキップされ、レスポンスに報告される
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-004, REQ-FUNC-012
+
+**MCP ツール: `memory_distill_knowledge`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `date_from` | string | No | 対象期間の開始日（デフォルト: 全期間） |
+| `date_to` | string | No | 対象期間の終了日 |
+| `domain` | string | No | 特定ドメインに絞る |
+| `dry_run` | bool | No | true の場合、抽出結果を返すだけで登録しない（デフォルト: `true`） |
+
+**処理:**
+1. 対象ノートの「判断」「注意点」「成果」「作業ログ」セクションをスキャン
+2. 繰り返し現れるパターン・事実・ルールを抽出（LLM によるエージェント処理）
+3. 既存 Knowledge との重複チェック（REQ-FUNC-012: 統合ロジック）
+4. `dry_run=false` の場合、新規エントリを `memory_knowledge_add` で登録
+
+**出力:** 抽出された Knowledge 候補のリスト（新規 / 既存更新 / 重複スキップ を区別）
+
+**補足:** 蒸留の「抽出」自体は LLM のエージェント処理であり、ツールはそのトリガーと結果の永続化を担う。
+
+---
+
+#### REQ-FUNC-011: Memory → Values 蒸留
+
+- **ストーリー**: エージェントとして、Memory ノートの判断履歴からユーザーの判断傾向を自動抽出したい。それはユーザーの代理人としての行動精度を継続的に改善するためだ。
+- **受け入れ基準**:
+  - Given 判断セクションに「テスト追加を求めた」事例が3回以上, When 蒸留実行, Then「バグ修正時にリグレッションテストを求める傾向」のような Values 候補が抽出される
+  - Given 既存 Values と同じ傾向が追加抽出された場合, When `dry_run=false`, Then 既存エントリの `confidence` が上昇し `evidence` に新事例が追加される
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-007, REQ-FUNC-013
+
+**MCP ツール: `memory_distill_values`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `date_from` | string | No | 対象期間の開始日 |
+| `date_to` | string | No | 対象期間の終了日 |
+| `category` | string | No | 特定カテゴリに絞る |
+| `dry_run` | bool | No | デフォルト: `true` |
+
+**処理:**
+1. 対象ノートの「判断」セクションと、ステートの「主要な判断」を重点的にスキャン
+2. 判断の傾向パターンを抽出（LLM によるエージェント処理）
+3. 既存 Values との重複チェック（REQ-FUNC-013: 統合ロジック）
+4. 重複する場合は確信度を更新し evidence を追加
+5. `dry_run=false` の場合、新規は `memory_values_add`、既存更新は `memory_values_update` で反映
+
+**出力:** 抽出された Values 候補のリスト（新規 / 確信度更新 / スキップ を区別）
+
+---
+
+#### REQ-FUNC-012: Knowledge 統合ロジック
+
+- **説明**: REQ-FUNC-010 の内部処理。新規抽出 Knowledge と既存 Knowledge の重複を検出・マージする。
+- **受け入れ基準**:
+  - Given 「Rust の所有権」に関する既存 Knowledge と「Rust のライフタイム」に関する新規 Knowledge, When 統合判定, Then 別エントリとして登録され `related` で相互リンクされる
+  - Given 既存と矛盾する内容が抽出された場合, When 統合実行, Then `accuracy` が `uncertain` に設定され、矛盾の内容がレスポンスに報告される
+- **優先度**: Must
+- **出典**: エージェント推測（蒸留パイプラインに必須の内部処理）
+- **関連要件**: REQ-FUNC-010
+
+**処理:**
+1. 新規候補の `title` + `content` と既存エントリを照合
+2. 同一トピックと判定された場合: 既存エントリの `content` を補完・拡張（矛盾する場合は `accuracy: uncertain` にフラグ）、`sources` に新しい引用元を追加、`updated_at` を更新
+3. 類似だが別トピックと判定された場合: `related` に相互リンクを追加
+
+---
+
+#### REQ-FUNC-013: Values 統合ロジック
+
+- **説明**: REQ-FUNC-011 の内部処理。新規抽出 Values と既存 Values の重複を検出・確信度を更新する。
+- **受け入れ基準**:
+  - Given `confidence: 0.6` の既存 Values に対して同傾向の evidence が追加された, When 統合実行, Then `confidence` が 0.6 より上昇する
+  - Given 既存 Values と矛盾する判断が検出された, When 統合実行, Then 既存 Values の `confidence` が低下し、矛盾がレスポンスに報告される
+- **優先度**: Must
+- **出典**: エージェント推測（蒸留パイプラインに必須の内部処理）
+- **関連要件**: REQ-FUNC-011
+
+**処理:**
+1. 新規候補の `description` と既存エントリを照合
+2. 同一傾向と判定された場合: `confidence` を更新（同じ傾向の evidence が増えるほど上昇）、`evidence` に新事例を追加（最新10件保持ルール適用）
+3. 矛盾する傾向が検出された場合: 既存エントリの `confidence` を低下させ、矛盾をレスポンスに報告
+
+**確信度更新の方針:**
+- 新規事例が既存 Values を支持 → `confidence` を上昇
+- 新規事例が既存 Values と矛盾 → `confidence` を低下
+- 具体的な更新幅はエージェントが判断（固定の数式ではなく、コンテキストに応じた LLM 判定）
+
+---
+
+### 3.6 R: Knowledge 自律収集
+
+#### REQ-FUNC-014: リサーチ結果の Knowledge 登録
+
+- **ストーリー**: エージェントとして、調査で獲得した知識を Knowledge として登録したい。それは一過性の調査結果を再利用可能な知識資産として蓄積するためだ。
+- **受け入れ基準**:
+  - Given エージェントが調査で事実を確認した, When `memory_knowledge_add` を `source_type: autonomous_research` で呼び出す, Then Knowledge エントリが作成される
+  - Given 単一ソースのみで検証した場合, When 登録, Then `accuracy: likely` で登録される（`verified` には複数ソースの確認が必要）
+- **優先度**: Must
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-004, REQ-FUNC-019
+
+**実装方針:** 追加ツールは不要。既存の `memory_knowledge_add` を使用し、ワークフローを AGENTS.md に定義する。
+
+**ワークフロー:**
+1. エージェントが調査を実施
+2. ファクトチェック（複数ソースでの確認）を実施
+3. `memory_knowledge_add` で登録（`source_type` と `accuracy` をファクトチェック結果に応じて設定）
+
+---
+
+### 3.7 P: Values 昇格
+
+#### REQ-FUNC-015: 昇格判定
+
+- **説明**: 高確信度の Values を AGENTS.md 昇格候補として検出する。`memory_values_update` のレスポンスに組み込む。
+- **受け入れ基準**:
+  - Given `confidence >= 0.8`, `evidence_count >= 5`, `promoted == false` の Values, When 更新レスポンス, Then 昇格候補である旨が通知される
+  - Given `confidence >= 0.8` だが `evidence_count < 5` の Values, When 更新レスポンス, Then 昇格候補として通知されない
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-009, REQ-FUNC-016
+
+**昇格条件（すべて満たすこと）:**
+- `confidence >= 0.8`（閾値は設定可能）
+- `evidence_count >= 5`
+- `promoted == false`
+
+---
+
+#### REQ-FUNC-016: AGENTS.md への Values 反映
+
+- **ストーリー**: エージェントとして、高確信度の Values を AGENTS.md に反映したい。それはセッション開始時に自動参照される常時有効な指針にするためだ。
+- **受け入れ基準**:
+  - Given `confirm: false`, When 実行, Then エラーを返す（ユーザー確認なしの昇格を防止）
+  - Given 昇格実行後, When AGENTS.md を確認, Then 該当 Values が「内面化された価値観」セクションに存在する
+  - Given 既に `promoted: true` のエントリ, When 再度昇格, Then エラーを返す
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-015, REQ-FUNC-022
+
+**MCP ツール: `memory_values_promote`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | Yes | 昇格対象の Values ID |
+| `confirm` | bool | Yes | ユーザー確認済みフラグ（`true` 必須） |
+
+**処理:**
+1. `confirm: true` であることを確認（ガードレール）
+2. AGENTS.md の「内面化された価値観」セクションに記述を追記
+3. Values エントリの `promoted: true`, `promoted_at` を更新
+
+**出力:** AGENTS.md の更新差分
+
+---
+
+### 3.8 S: 検索・参照統合
+
+#### REQ-FUNC-017: Knowledge 専用検索
+
+- **説明**: REQ-FUNC-005 と同一。既存の `memory_search`（Memory ノート検索）とは独立した Knowledge 専用検索ツールとして提供する。
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-005
+
+---
+
+#### REQ-FUNC-018: Values 判断時参照
+
+- **説明**: REQ-FUNC-008 と同一。エージェントが判断を求められた場面で、コンテキストに関連する Values を検索する。
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-008, REQ-FUNC-020
+
+**AGENTS.md への記載:** 「設計判断・スタイル判断が必要な場面では `memory_values_search` を参照すること」をセッション手順に追加する。
+
+---
+
+### 3.9 A: AGENTS.md / スキル改修
+
+#### REQ-FUNC-019: 記憶管理セクション拡張
+
+- **ストーリー**: エージェントとして、AGENTS.md の記憶管理セクションに Memory / Knowledge / Values の3層構造とライフサイクルを記載したい。それは全エージェントが統一的に Knowledge/Values を活用するためだ。
+- **受け入れ基準**:
+  - Given AGENTS.md の記憶管理セクション, When 確認, Then Memory / Knowledge / Values の3層分類と各ツール一覧が記載されている
+  - Given 新規セッションを開始するエージェント, When AGENTS.md を読み込む, Then Knowledge/Values の参照・更新手順が明確に理解できる
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-020, REQ-FUNC-021
+
+---
+
+#### REQ-FUNC-020: セッション開始手順更新
+
+- **説明**: AGENTS.md の「セッション開始（必須）」の「想起（recalling）」ステップに Values 参照を追加する。
+- **受け入れ基準**:
+  - Given セッション開始時, When エージェントが想起ステップを実行, Then 現在のタスクに関連する Values が参照される
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-008, REQ-FUNC-019
+
+**追加内容:** 「想起（recalling）」に `memory_values_search` でタスクコンテキストに関連する Values を取得する手順を追加。
+
+---
+
+#### REQ-FUNC-021: セッション終了手順更新
+
+- **説明**: AGENTS.md の「応答終了時」に Knowledge/Values の更新手順を追加する。
+- **受け入れ基準**:
+  - Given セッション終了時, When エージェントが振り返りステップを実行, Then Knowledge/Values の更新要否が判定される
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-010, REQ-FUNC-011, REQ-FUNC-019
+
+**追加内容:**
+- 「振り返り（reflecting）」: セッション中の判断が既存 Values を支持/矛盾するか評価。新たな Knowledge が得られた場合の登録判断
+- 「保存（storing）」: Knowledge/Values の更新手順（蒸留トリガー条件含む）
+
+---
+
+#### REQ-FUNC-022: 昇格 Values セクション
+
+- **ストーリー**: エージェントとして、AGENTS.md に動的に管理される「内面化された価値観」セクションを設けたい。それは昇格された Values を全エージェントが常時参照できるようにするためだ。
+- **受け入れ基準**:
+  - Given AGENTS.md を読み込む全エージェント, When セッション開始, Then 昇格された Values が自動的に判断指針として参照される
+  - Given 昇格 Values セクション, When `memory_values_promote` で新規追加, Then セクション末尾に追記される
+- **優先度**: Must
+- **出典**: ユーザー確認済み
+- **関連要件**: REQ-FUNC-016
+
+**セクション形式:**
+
+```markdown
+## 内面化された価値観
+
+<!-- このセクションは memory_values_promote ツールにより自動管理される -->
+
+- バグ修正時は最小侵入修正を優先し、周辺コードのリファクタリングを同時に行わない
+  （confidence: 0.92, evidence: 8件, id: v-m3n4o5）
+- コミットは論理的な変更単位で分割し、1コミット1関心事を徹底する
+  （confidence: 0.88, evidence: 6件, id: v-p6q7r8）
+```
+
+---
+
+### 3.10 Should 要件
+
+#### REQ-FUNC-023: Knowledge 削除
+
+- **ストーリー**: エージェントとして、不要になった Knowledge エントリを削除したい。それは知識ベースの鮮度と正確性を維持するためだ。
+- **受け入れ基準**:
+  - Given 他エントリが `related` で参照している Knowledge を削除, When 実行, Then 参照元の `related` からも該当 ID が除去される
+  - Given 削除実行後, When `memory_knowledge_search` で検索, Then 該当エントリはヒットしない
+- **優先度**: Should
+- **出典**: エージェント推測（CRUD の D として必要）
+- **関連要件**: REQ-FUNC-004
+
+**MCP ツール: `memory_knowledge_delete`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | Yes | 削除対象の Knowledge ID |
+| `reason` | string | No | 削除理由（監査用に記録） |
+
+---
+
+#### REQ-FUNC-024: Values 削除
+
+- **ストーリー**: エージェントとして、不要になった Values エントリを削除したい。それは誤った価値観がエージェントの判断に影響し続けることを防ぐためだ。
+- **受け入れ基準**:
+  - Given `promoted: true` の Values を削除, When 実行, Then AGENTS.md の「内面化された価値観」セクションから該当行も削除される
+  - Given 削除実行後, When `memory_values_search` で検索, Then 該当エントリはヒットしない
+- **優先度**: Should
+- **出典**: エージェント推測（CRUD の D として必要）
+- **関連要件**: REQ-FUNC-007, REQ-FUNC-016
+
+**MCP ツール: `memory_values_delete`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | Yes | 削除対象の Values ID |
+| `reason` | string | No | 削除理由 |
+
+---
+
+#### REQ-FUNC-025: Values 一括参照
+
+- **ストーリー**: エージェントとして、高確信度の Values を一括取得したい。それはセッション開始時にユーザーの全体的な判断傾向を把握するためだ。
+- **受け入れ基準**:
+  - Given 30件の Values エントリ, When `min_confidence=0.7` で実行, Then `confidence >= 0.7` のエントリのみ `confidence` 降順で返される
+  - Given `promoted_only=true`, When 実行, Then `promoted: true` のエントリのみ返される
+- **優先度**: Should
+- **出典**: エージェント推測
+- **関連要件**: REQ-FUNC-008
+
+**MCP ツール: `memory_values_list`**
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `min_confidence` | float | No | 確信度の下限（デフォルト: 0.5） |
+| `category` | string | No | カテゴリフィルタ |
+| `promoted_only` | bool | No | 昇格済みのみ（デフォルト: `false`） |
+| `top` | int | No | 最大件数（デフォルト: 20） |
+
+---
+
+#### REQ-FUNC-026: 蒸留トリガー判定
+
+- **説明**: 蒸留を実行すべきタイミングを判定するロジック。AGENTS.md のセッション終了手順に組み込む。
+- **受け入れ基準**:
+  - Given 前回蒸留から8日経過, When セッション終了時の振り返り, Then 蒸留の実行がエージェントに推奨される
+  - Given 前回蒸留から2日経過かつ新規ノート3件, When セッション終了時, Then 蒸留は推奨されない
+- **優先度**: Should
+- **出典**: エージェント推測
+- **関連要件**: REQ-FUNC-010, REQ-FUNC-011, REQ-FUNC-021
+
+**判定条件（いずれかを満たす場合に蒸留を推奨）:**
+1. 前回の蒸留以降に作成されたノートが N 件以上（暫定値: 10）
+2. 前回の蒸留から M 日以上経過（暫定値: 7日）
+3. ユーザーが蒸留を明示的に要求した場合
+
+**実装方針:** `_state.md` に「最終蒸留日時」を記録。
+
+---
+
+#### REQ-FUNC-027: ユーザー教示の Knowledge 化
+
+- **ストーリー**: エージェントとして、ユーザーが会話中に教えてくれた知識をファクトチェックし Knowledge 化したい。それはユーザーの知識を検証済みの形式で蓄積するためだ。
+- **受け入れ基準**:
+  - Given ユーザーが「ハミルトン方程式は正準方程式とも呼ばれ…」と教えた, When エージェントが Knowledge 化, Then `source_type: user_taught` で登録される
+  - Given ファクトチェックで矛盾が見つかった場合, When 登録, Then `accuracy: uncertain` で登録され、矛盾の内容が `content` に注記される
+- **優先度**: Should
+- **出典**: ユーザー明示
+- **関連要件**: REQ-FUNC-004, REQ-FUNC-014
+
+**ワークフロー:**
+1. エージェントがユーザーの発言から「教示」を検出
+2. Web 検索等でファクトチェックを実施
+3. `accuracy` をファクトチェック結果に応じて設定（複数ソース確認 → `verified` / 単一 → `likely` / 未確認 → `uncertain`）
+4. `memory_knowledge_add` で登録（`source_type: user_taught`）
+
+---
+
+#### REQ-FUNC-028: 昇格 Values の同期
+
+- **説明**: AGENTS.md の「内面化された価値観」セクションと Values エントリの整合性を `memory_health_check` で検証する。
+- **受け入れ基準**:
+  - Given `promoted: true` だが AGENTS.md に記載がない Values, When `memory_health_check` 実行, Then 不整合として報告される
+  - Given AGENTS.md 側の記述が Values エントリと異なる, When チェック実行, Then 差異が報告される
+- **優先度**: Should
+- **出典**: エージェント推測（昇格メカニズムの運用安定性に必要）
+- **関連要件**: REQ-FUNC-016, REQ-FUNC-022
+
+**チェック項目:**
+1. `promoted: true` の Values エントリが AGENTS.md セクションに存在するか
+2. AGENTS.md セクションに記載があるが `promoted: true` でないエントリはないか
+3. AGENTS.md の記述と Values エントリの `description` が一致するか
+
+---
+
+#### REQ-FUNC-029: retrospective スキル拡張
+
+- **説明**: 既存の retrospective スキルに Knowledge/Values の定期蒸留機能を追加する。
+- **受け入れ基準**:
+  - Given retrospective スキルを起動, When 蒸留条件（REQ-FUNC-026）を満たしている, Then 蒸留の実行が提案される
+  - Given 蒸留モードを実行, When 完了, Then 抽出された Knowledge/Values のサマリがユーザーに報告される
+- **優先度**: Should
+- **出典**: エージェント推測
+- **関連要件**: REQ-FUNC-010, REQ-FUNC-011, REQ-FUNC-026
+
+---
+
+### 3.11 Could 要件
+
+#### REQ-FUNC-030: Knowledge 統計
+
+- **説明**: Knowledge エントリの統計情報（総数、ドメイン別分布、accuracy 別分布、user_understanding 別分布、source_type 別分布）を返す。
+- **優先度**: Could
+- **出典**: エージェント推測
+- **MCP ツール**: `memory_knowledge_stats`
+
+---
+
+#### REQ-FUNC-031: Values 統計
+
+- **説明**: Values エントリの統計情報（総数、カテゴリ別分布、確信度分布、昇格済み数）を返す。
+- **優先度**: Could
+- **出典**: エージェント推測
+- **MCP ツール**: `memory_values_stats`
+
+---
+
+#### REQ-FUNC-032: 横断検索
+
+- **説明**: Memory ノート・Knowledge・Values を横断して検索する。
+- **優先度**: Could
+- **出典**: エージェント推測
+- **関連要件**: REQ-FUNC-005, REQ-FUNC-008
+- **MCP ツール**: `memory_search_all`
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `query` | string | Yes | 検索クエリ |
+| `include` | list[enum] | No | 検索対象（`memory`, `knowledge`, `values`）。デフォルト: 全て |
+| `top` | int | No | 各カテゴリからの最大件数（デフォルト: 5） |
+
+---
+
+#### REQ-FUNC-033: 関連知識の自律探索
+
+- **説明**: 既存 Knowledge の `related` が少ない孤立エントリを検出し、関連トピックを自律的に調査・提案する。
+- **優先度**: Could
+- **出典**: エージェント推測
+- **関連要件**: REQ-FUNC-004, REQ-FUNC-014
+
+---
+
+#### REQ-FUNC-034: Values 降格・撤回
+
+- **説明**: AGENTS.md に昇格済みの Values を降格し、通常の Values エントリに戻す。`confidence` が昇格時から 0.2 以上低下した場合に自動提案。
+- **優先度**: Could
+- **出典**: エージェント推測
+- **関連要件**: REQ-FUNC-016, REQ-FUNC-022
+- **MCP ツール**: `memory_values_demote`
+
+| パラメータ | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `id` | string | Yes | 降格対象の Values ID |
+| `reason` | string | Yes | 降格理由 |
+
+---
+
+## 4. 非機能要件
+
+### 4.1 性能
+
+#### REQ-NF-001: 検索応答時間
+
+- **基準**: `memory_knowledge_search` および `memory_values_search` は、エントリ数 1,000 件以下の場合、95 パーセンタイルで応答時間 500ms 以内
+- **根拠**: 既存の `memory_search` と同等の応答性能を維持する
+- **優先度**: Must
+
+#### REQ-NF-002: 蒸留処理時間
+
+- **基準**: `memory_distill_knowledge` / `memory_distill_values` のツール自体の処理時間（LLM 呼び出しを除く）は 100 ノートあたり 5 秒以内
+- **根拠**: 蒸留は LLM がボトルネックであり、ツール側の前処理・後処理は高速である必要がある
+- **優先度**: Should
+
+### 4.2 運用性
+
+#### REQ-NF-003: 後方互換性
+
+- **基準**: 既存の 18 MCP ツールの入出力仕様に破壊的変更を加えない。既存テストスイート（177+ テストケース）が全件パスすること
+- **優先度**: Must
+
+#### REQ-NF-004: Health Check 統合
+
+- **基準**: 既存の `memory_health_check` が Knowledge/Values のインデックス整合性もチェックする。orphan エントリ（ファイルなしのインデックスエントリ）と orphan ファイル（インデックスなしのファイル）を検出できること
+- **優先度**: Must
+
+#### REQ-NF-005: マイグレーション
+
+- **基準**: 既存の `memory/` ディレクトリに Knowledge/Values 機能を導入する際、`memory_init` の再実行のみで必要なディレクトリ・ファイルが作成されること。手動のマイグレーション作業が不要であること
+- **優先度**: Must
+
+### 4.3 セキュリティ
+
+#### REQ-NF-006: AGENTS.md 書き込みガードレール
+
+- **基準**: `memory_values_promote` による AGENTS.md 書き込みは `confirm: true` パラメータが必須。誤操作による AGENTS.md の破損を防止する
+- **優先度**: Must
+
+#### REQ-NF-007: 機密情報の除外
+
+- **基準**: Knowledge/Values エントリにシークレット・認証情報・API キーが含まれないことをバリデーションする。検出時は警告を返す
+- **優先度**: Should
+
+### 4.4 テスト
+
+#### REQ-NF-008: テストカバレッジ
+
+- **基準**: 新規追加される全モジュール（Knowledge CRUD、Values CRUD、蒸留エンジン、昇格メカニズム）に対してユニットテストを作成する。各 MCP ツールの正常系・異常系を網羅すること
+- **優先度**: Must
+
+---
+
+## 5. 要件間の関連
+
+### 5.1 依存関係（depends on）
+
+```
+REQ-FUNC-004 (Knowledge 登録) → REQ-FUNC-001 (Knowledge データモデル)
+REQ-FUNC-004 (Knowledge 登録) → REQ-FUNC-003 (ストレージ設計)
+REQ-FUNC-005 (Knowledge 検索) → REQ-FUNC-003 (ストレージ設計)
+REQ-FUNC-006 (Knowledge 更新) → REQ-FUNC-004 (Knowledge 登録)
+REQ-FUNC-007 (Values 登録) → REQ-FUNC-002 (Values データモデル)
+REQ-FUNC-007 (Values 登録) → REQ-FUNC-003 (ストレージ設計)
+REQ-FUNC-008 (Values 検索) → REQ-FUNC-003 (ストレージ設計)
+REQ-FUNC-009 (Values 更新) → REQ-FUNC-007 (Values 登録)
+REQ-FUNC-010 (Knowledge 蒸留) → REQ-FUNC-004 (Knowledge 登録)
+REQ-FUNC-010 (Knowledge 蒸留) → REQ-FUNC-012 (Knowledge 統合)
+REQ-FUNC-011 (Values 蒸留) → REQ-FUNC-007 (Values 登録)
+REQ-FUNC-011 (Values 蒸留) → REQ-FUNC-013 (Values 統合)
+REQ-FUNC-015 (昇格判定) → REQ-FUNC-009 (Values 更新)
+REQ-FUNC-016 (AGENTS.md 反映) → REQ-FUNC-015 (昇格判定)
+REQ-FUNC-016 (AGENTS.md 反映) → REQ-FUNC-022 (昇格 Values セクション)
+REQ-FUNC-019 (記憶管理拡張) → REQ-FUNC-001, REQ-FUNC-002 (データモデル)
+REQ-FUNC-020 (開始手順更新) → REQ-FUNC-008 (Values 検索)
+REQ-FUNC-021 (終了手順更新) → REQ-FUNC-010, REQ-FUNC-011 (蒸留)
+REQ-FUNC-023 (Knowledge 削除) → REQ-FUNC-004 (Knowledge 登録)
+REQ-FUNC-024 (Values 削除) → REQ-FUNC-007 (Values 登録)
+REQ-FUNC-028 (昇格同期) → REQ-FUNC-016 (AGENTS.md 反映)
+REQ-FUNC-029 (retrospective 拡張) → REQ-FUNC-010, REQ-FUNC-011 (蒸留)
+REQ-FUNC-034 (降格) → REQ-FUNC-016 (AGENTS.md 反映)
+```
+
+### 5.2 CRUD データマトリクス
+
+| エンティティ | Create | Read | Update | Delete |
+|---|---|---|---|---|
+| **Knowledge** | REQ-FUNC-004 | REQ-FUNC-005 | REQ-FUNC-006 | REQ-FUNC-023 (Should) |
+| **Values** | REQ-FUNC-007 | REQ-FUNC-008, REQ-FUNC-025 (Should) | REQ-FUNC-009 | REQ-FUNC-024 (Should) |
+| **AGENTS.md Values セクション** | REQ-FUNC-022 | (暗黙: AGENTS.md 読み込み) | REQ-FUNC-016 | REQ-FUNC-024, REQ-FUNC-034 (Could) |
+
+---
+
+## 6. 未確定事項
+
+| # | 内容 | 関連要件 | 確認相手 | 暫定値 |
+|---|---|---|---|---|
+| 1 | Values の evidence 保持件数 N の具体的な値 | REQ-FUNC-002, REQ-FUNC-009 | プロダクトオーナー | 10件 |
+| 2 | 確信度更新の具体的アルゴリズム（LLM 判定 vs 固定数式） | REQ-FUNC-013 | プロダクトオーナー | LLM 判定（コンテキスト依存） |
+| 3 | 蒸留トリガーのノート数閾値 | REQ-FUNC-026 | プロダクトオーナー | 10 ノート |
+| 4 | 蒸留トリガーの期間閾値 | REQ-FUNC-026 | プロダクトオーナー | 7日 |
+| 5 | Values 昇格の確信度閾値 | REQ-FUNC-015 | プロダクトオーナー | 0.8 |
+| 6 | Values 昇格の evidence_count 閾値 | REQ-FUNC-015 | プロダクトオーナー | 5件 |
+| 7 | Knowledge/Values の初期シードデータ（既存 CLAUDE.md の設計方針等）を移行するか | REQ-FUNC-001, REQ-FUNC-002 | プロダクトオーナー | 未定 |
+| 8 | Knowledge の `domain` 分類体系（固定リスト vs 自由入力） | REQ-FUNC-001, REQ-FUNC-004 | プロダクトオーナー | 自由入力 |
+| 9 | Values の `category` 分類体系（固定リスト vs 自由入力） | REQ-FUNC-002, REQ-FUNC-007 | プロダクトオーナー | 自由入力 |
+| 10 | `memory_values_add` の類似判定に使用するアルゴリズム（BM25 スコア閾値 vs LLM 判定） | REQ-FUNC-007 | 技術リード | 未定 |
+| 11 | Values の降格閾値（確信度の低下幅） | REQ-FUNC-034 | プロダクトオーナー | 昇格時から 0.2 低下 |
+| 12 | 検索応答時間のベンチマーク環境（ハードウェアスペック） | REQ-NF-001 | 技術リード | 未定 |
