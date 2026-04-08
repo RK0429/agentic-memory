@@ -100,7 +100,7 @@ classDiagram
     class KnowledgeId {
         <<ValueObject>>
         +string value
-        +generate(title, domain, content)$ KnowledgeId
+        +generate()$ KnowledgeId
     }
 
     class Domain {
@@ -177,7 +177,7 @@ classDiagram
 ```
 
 **集約不変条件:**
-- `id` は作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier（プレフィックス `k-`）。更新で再計算しない。ファイルパスは `knowledge/{id}.md`。同一 ID の重複登録は不可（BR-1, BR-8）
+- `id` は作成時に UUID を生成し `k-` プレフィックスを付与する immutable identifier。内容の変化に依存しない安定した識別子であり、更新で再計算しない。ファイルパスは `knowledge/{id}.md`。重複検出は `title` + `domain` + `content` の内容ベースで行い、同一内容の登録は不可（BR-1, BR-8）
 - `sources` の更新はマージ（既存に追加。置換ではない）（BR-11）
 - `sourceType` は作成時に一度だけ設定される immutable フィールド。`Source.type` とは独立にエントリレベルの出自分類を表す。MERGE_EXISTING（BR-11）時は既存エントリの `sourceType` を維持し、変更しない。新規 Source はそれぞれの `type` を持って `sources` リストに追加される
 
@@ -210,7 +210,7 @@ classDiagram
     class ValuesId {
         <<ValueObject>>
         +string value
-        +generate(description, category)$ ValuesId
+        +generate()$ ValuesId
     }
 
     class Category {
@@ -298,7 +298,7 @@ classDiagram
 ```
 
 **集約不変条件:**
-- `id` は作成時に `description + category` から一度だけ生成される immutable identifier（プレフィックス `v-`）。更新で再計算しない。ファイルパスは `values/{id}.md`。同一 ID の重複登録は不可（BR-2, BR-9）
+- `id` は作成時に UUID を生成し `v-` プレフィックスを付与する immutable identifier。内容の変化に依存しない安定した識別子であり、更新で再計算しない。ファイルパスは `values/{id}.md`。厳密重複検出は `description` + `category` の内容ベースで行い、同一内容の登録は不可（BR-2, BR-9）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
 - `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）。**作成時にも同じ 10 件保持ルールを適用する**。`totalCount` は提供された `evidence` の件数で初期化される（未提供時は 0）
 - ID は異なるが意味的に類似するエントリの登録は警告付きで許可（エラーではない）（BR-9）
@@ -385,7 +385,7 @@ classDiagram
         +datetime? lastEvaluatedAt
         +datetime? lastDistilledAt
         +int notesSinceLastEvaluation
-        +int daysSinceLastEvaluation
+        +int hoursSinceLastEvaluation
         +shouldDistill() bool
     }
 
@@ -407,7 +407,7 @@ classDiagram
   - *ユーザーの直接呼び出し* (`memory_distill_*`): `shouldDistill()` を**バイパス**して即座に蒸留パイプライン（collect → extract → integrate）を実行する。トリガー条件は評価しない
 - **タイムスタンプの永続化と更新**: `_state.md` のフロントマターには蒸留種別ごとに 2 つの日時フィールドを記録する。各フィールドは `memory_init` 時には作成せず、更新条件を初めて満たした時点で独立に遅延追加する:
   - `lastEvaluatedAt`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で追加または更新（永続化 0 件でも更新）。`DistillationTrigger.shouldDistill()` はこの日時を基準に判定する。初回 `dry_run=false` 蒸留完了時にフィールドが出現する
-  - `lastDistilledAt`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した場合にのみ追加または更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない。永続化が発生しない蒸留では `lastEvaluatedAt` のみが存在し、`lastDistilledAt` は null のままとなりうる
+  - `lastDistilledAt`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した場合にのみ追加または更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない。永続化が発生しない蒸留では `lastEvaluatedAt` のみが存在し、`lastDistilledAt` は null のままとなりうる
   - `dry_run=true` の実行ではいずれも更新しない。起動経路による差異はない
 
 ---
@@ -472,7 +472,7 @@ stateDiagram-v2
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
 | KnowledgeEntry | 抽象的な宣言的知識のエンティティ。事実・概念・ルールを含む | Source, Accuracy |
-| KnowledgeId | `k-` プレフィックス付き識別子。作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier | KnowledgeEntry |
+| KnowledgeId | `k-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | KnowledgeEntry |
 | Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
 | Source | Knowledge の引用元。型（`SourceType`）・参照先・要約で構成。MERGE_EXISTING 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | SourceType |
 | SourceType | Knowledge の出自分類。`MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT` の3値。`KnowledgeEntry.sourceType`（エントリレベル）と `Source.type`（個別引用元レベル）の両方で使用される。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry, Source |
@@ -485,7 +485,7 @@ stateDiagram-v2
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
 | ValuesEntry | ユーザーの判断傾向・選好パターンのエンティティ | Evidence, Confidence |
-| ValuesId | `v-` プレフィックス付き識別子。作成時に `description + category` から一度だけ生成される immutable identifier | ValuesEntry |
+| ValuesId | `v-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | ValuesEntry |
 | Category | Values の分類軸（coding-style, communication, workflow 等）。自由入力を kebab-case に正規化する | ValuesEntry |
 | Confidence | 確信度（0.0〜1.0）。evidence 蓄積で上昇、矛盾で低下。デフォルト 0.3 | ValuesEntry |
 | Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付（`YYYY-MM-DD` 形式）で構成 | ValuesEntry |
@@ -503,7 +503,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
-| DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(7日)で判定する（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
+| DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(168 時間)でタイムスタンプ精度の比較を行う（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計。想定実装先は `core/distillation/extractor.py`（提案。詳細はアーキテクチャ文書 4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---
@@ -565,18 +565,18 @@ stateDiagram-v2
 
 | # | ルール | 関連要件 |
 |---|---|---|
-| BR-1 | Knowledge ID は作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier（プレフィックス `k-`） | REQ-FUNC-001 |
-| BR-2 | Values ID は作成時に `description + category` から一度だけ生成される immutable identifier（プレフィックス `v-`） | REQ-FUNC-002 |
+| BR-1 | Knowledge ID は作成時に UUID を生成し `k-` プレフィックスを付与する immutable identifier。重複検出は `title` + `domain` + `content` の内容ベースで ID とは独立に行う | REQ-FUNC-001 |
+| BR-2 | Values ID は作成時に UUID を生成し `v-` プレフィックスを付与する immutable identifier。厳密重複検出は `description` + `category` の内容ベースで ID とは独立に行う | REQ-FUNC-002 |
 | BR-3 | Knowledge の accuracy は `verified` / `likely` / `uncertain` の3段階 | REQ-FUNC-001 |
 | BR-4 | Values の confidence は 0.0〜1.0 の範囲。デフォルト 0.3 | REQ-FUNC-002 |
 | BR-5 | Values の evidence リストは最新10件を保持。超過分は `totalCount`（永続化層では `evidence_count`）のみインクリメント | REQ-FUNC-002, REQ-FUNC-009 |
 | BR-6 | 昇格条件: `confidence >= 0.8` AND `totalCount >= 5`（永続化層では `evidence_count >= 5`） AND `promoted == false` | REQ-FUNC-015 |
 | BR-7 | 昇格にはユーザー確認が必須（`confirm` はアプリケーション層で消費） | REQ-FUNC-016 |
-| BR-8 | Knowledge 登録時、同一 ID が存在すればエラー（完全重複拒否） | REQ-FUNC-004 |
-| BR-9 | Values 登録時、同一 ID が存在すればエラー（厳密重複拒否）。ID は異なるが意味的に類似する既存エントリがあれば警告（登録は許可） | REQ-FUNC-007 |
+| BR-8 | Knowledge 登録時、`title` + `domain` + `content` が既存エントリと実質同一であればエラー（完全重複拒否。内容ベースで判定） | REQ-FUNC-004 |
+| BR-9 | Values 登録時、`description` + `category` が既存エントリと実質同一であればエラー（厳密重複拒否。内容ベースで判定）。意味的に類似する既存エントリがあれば警告（登録は許可） | REQ-FUNC-007 |
 | BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
-| BR-12 | 蒸留トリガー条件（公開 API ベースの推奨判定のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 7日以上経過。`lastEvaluatedAt` が null（初回蒸留前）の場合はノート 1 件以上で条件充足。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する | REQ-FUNC-026 |
+| BR-12 | 蒸留トリガー条件（公開 API ベースの推奨判定のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 168 時間（7日相当）以上経過（タイムスタンプ精度で比較）。`lastEvaluatedAt` が null（初回蒸留前）の場合はノート 1 件以上で条件充足。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
