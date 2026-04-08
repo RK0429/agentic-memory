@@ -45,9 +45,9 @@ graph LR
 
     AGENTS["AGENTS.md<br/>（外部システム）"]
 
-    MN -->|"ドメインイベント"| KD
-    MN -->|"ドメインイベント"| VD
-    MS -->|"ドメインイベント"| VD
+    MN -->|"蒸留入力（同期読み取り）"| KD
+    MN -->|"蒸留入力（同期読み取り）"| VD
+    MS -->|"蒸留入力（同期読み取り）"| VD
     KD -->|"OHS"| KI
     VD -->|"OHS"| VI
     KI --> KE
@@ -59,7 +59,7 @@ graph LR
 
 | パターン | 適用箇所 | 理由 |
 |---|---|---|
-| ドメインイベント | Memory → 蒸留 | 蒸留は Memory の変更（ノート蓄積）をトリガーに実行される |
+| 同期読み取り | Memory → 蒸留 | 蒸留は `memory_distill_*` の同期呼び出しで実行され、Memory ノートと `_state.md` を直接読み取る。概念的には Memory の蓄積が蒸留のトリガーだが、実装はイベント駆動ではなくポーリング型（トリガー条件の判定）である |
 | 公開ホストサービス (OHS) | 蒸留 → Knowledge/Values | 蒸留結果を標準的な候補フォーマットで公開し、各コンテキストの Integrator が受け取る |
 | 腐敗防止層 (ACL) | Values → AGENTS.md | AGENTS.md は Markdown テキスト形式の外部ファイルであり、Values ドメインモデルとの表現形式が異なる |
 
@@ -103,6 +103,7 @@ classDiagram
     class Domain {
         <<ValueObject>>
         +string value
+        +normalize(string)$ Domain
     }
 
     class Source {
@@ -171,7 +172,7 @@ classDiagram
 ```
 
 **不変条件:**
-- `id` は `title + domain + content[:100]` から決定論的に生成（プレフィックス `k-`）。ファイルパスは `knowledge/{domain}/{id}.md`（`id` 自体が `k-` を含む）。同一 ID の重複登録は不可（BR-1, BR-8）
+- `id` は作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier（プレフィックス `k-`）。更新で再計算しない。ファイルパスは `knowledge/{id}.md`。同一 ID の重複登録は不可（BR-1, BR-8）
 - `sources` の更新はマージ（既存に追加。置換ではない）（BR-11）
 - 削除時、他エントリの `related` からの参照除去はアプリケーション層の責務（BR-14、判断記録 2 参照）
 
@@ -207,6 +208,7 @@ classDiagram
     class Category {
         <<ValueObject>>
         +string value
+        +normalize(string)$ Category
     }
 
     class Confidence {
@@ -223,6 +225,8 @@ classDiagram
         +string summary
         +string date
     }
+
+    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)"
 
     class EvidenceList {
         <<ValueObject>>
@@ -245,7 +249,7 @@ classDiagram
     class PromotionManager {
         <<DomainService>>
         +checkCandidate(ValuesEntry) bool
-        +promote(ValuesEntry, bool confirm) ValuesEntry
+        +promote(ValuesEntry) ValuesEntry
         +demote(ValuesEntry, string reason) ValuesEntry
     }
 
@@ -282,11 +286,11 @@ classDiagram
 ```
 
 **不変条件:**
-- `id` は `description + category` から決定論的に生成（プレフィックス `v-`）。ファイルパスは `values/{id}.md`（`id` 自体が `v-` を含む）（BR-2）
+- `id` は作成時に `description + category` から一度だけ生成される immutable identifier（プレフィックス `v-`）。更新で再計算しない。ファイルパスは `values/{id}.md`（BR-2）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
 - `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）
 - 昇格条件: `confidence >= 0.8` AND `evidence.totalCount >= 5` AND `promoted == false`（BR-6）
-- 昇格にはユーザー確認（`confirm: true`）が必須（BR-7）
+- 昇格にはユーザー確認が必須。`confirm` パラメータはアプリケーション層（`PromotionService`）で消費する（BR-7）
 - 類似エントリの登録は警告付きで許可（エラーではない）（BR-9）
 - `promoted: true` のエントリ削除時は AGENTS.md からも除去（BR-13）
 
@@ -375,9 +379,9 @@ classDiagram
 ```
 
 **補足:**
-- 蒸留の「抽出」自体は LLM のエージェント処理。ツールはトリガーと結果の永続化を担う
+- 蒸留の「抽出」は `DistillationExtractorPort` 経由で LLM に委譲する。ツールは collect（ノート選定）→ extract（抽出委譲）→ integrate（統合・永続化）の全段階をオーケストレーションする
 - `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。`lastDistilledAt` は `_state.md` に `last_knowledge_distilled_at` / `last_values_distilled_at` として種別ごとに永続化する
-- `DistillationTrigger.shouldDistill()` の条件: 前回から10ノート以上 OR 7日以上経過 OR ユーザー明示要求（BR-12）
+- `DistillationTrigger.shouldDistill()` の条件: 前回から10ノート以上 OR 7日以上経過（BR-12）。ユーザーが `memory_distill_*` を直接呼び出した場合は `shouldDistill()` をバイパスして即座に実行するため、トリガーの入力フィールドとしてはモデル化しない
 
 ---
 
@@ -409,7 +413,7 @@ stateDiagram-v2
         PromotionReady --> Growing : confidence低下
     }
 
-    Active --> Promoted : promote(confirm=true)
+    PromotionReady --> Promoted : promote()（ユーザー確認済）
     Promoted --> Promoted : evidence追加 / confidence変動
     Promoted --> Active : demote()<br/>[confidence低下≥0.2]
     Active --> Deleted : 削除
@@ -417,7 +421,7 @@ stateDiagram-v2
     Deleted --> [*]
 ```
 
-**補足**: `PromotionReady` はエンティティに保存される状態ではなく、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` から導出される条件。`memory_values_update` のレスポンスで昇格候補として通知される。
+**補足**: `PromotionReady` はエンティティに保存される状態ではなく、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` から導出される条件。`memory_values_update` のレスポンスで昇格候補として通知される。昇格遷移は `PromotionReady` サブステートからのみ発生する（`Growing` からの直接昇格は不可）。
 
 ---
 
@@ -435,8 +439,8 @@ stateDiagram-v2
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
 | KnowledgeEntry | 抽象的な宣言的知識のエンティティ。事実・概念・ルールを含む | Source, Accuracy |
-| KnowledgeId | `k-` プレフィックス付き決定論的識別子。`title + domain + content[:100]` から生成 | KnowledgeEntry |
-| Domain | Knowledge の分類軸。自由入力の文字列 | KnowledgeEntry |
+| KnowledgeId | `k-` プレフィックス付き識別子。作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier | KnowledgeEntry |
+| Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
 | Source | Knowledge の引用元。型（蒸留/リサーチ/教示）・参照先・要約で構成 | SourceType |
 | Accuracy | Knowledge の品質指標。verified（複数ソース確認）/ likely（単一ソース）/ uncertain（未確認） | KnowledgeEntry |
 | UserUnderstanding | ユーザーのその知識に対する理解度。unknown / novice / familiar / proficient / expert の5段階 | KnowledgeEntry |
@@ -447,11 +451,11 @@ stateDiagram-v2
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
 | ValuesEntry | ユーザーの判断傾向・選好パターンのエンティティ | Evidence, Confidence |
-| ValuesId | `v-` プレフィックス付き決定論的識別子。`description + category` から生成 | ValuesEntry |
-| Category | Values の分類軸（coding-style, communication, workflow 等）。自由入力 | ValuesEntry |
+| ValuesId | `v-` プレフィックス付き識別子。作成時に `description + category` から一度だけ生成される immutable identifier | ValuesEntry |
+| Category | Values の分類軸（coding-style, communication, workflow 等）。自由入力を kebab-case に正規化する | ValuesEntry |
 | Confidence | 確信度（0.0〜1.0）。evidence 蓄積で上昇、矛盾で低下。デフォルト 0.3 | ValuesEntry |
 | Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付で構成 | ValuesEntry |
-| EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を別途カウント | Evidence |
+| EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持 | ValuesEntry |
 | PromotionManager | 昇格条件判定・昇格/降格実行を行うドメインサービス | PromotionState |
 | ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス | Confidence |
@@ -465,7 +469,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
-| DistillationTrigger | 蒸留実行の推奨判定ロジック。ノート数閾値(10)・期間閾値(7日)で判定 | DistillationRequest |
+| DistillationTrigger | 蒸留実行の自動推奨判定ロジック。ノート数閾値(10)・期間閾値(7日)で判定。ユーザーの直接呼び出し時はバイパスされる | DistillationRequest |
 
 ---
 
@@ -513,18 +517,18 @@ stateDiagram-v2
 
 | # | ルール | 関連要件 |
 |---|---|---|
-| BR-1 | Knowledge ID は `title + domain + content[:100]` から決定論的に生成される（プレフィックス `k-`） | REQ-FUNC-001 |
-| BR-2 | Values ID は `description + category` から決定論的に生成される（プレフィックス `v-`） | REQ-FUNC-002 |
+| BR-1 | Knowledge ID は作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier（プレフィックス `k-`） | REQ-FUNC-001 |
+| BR-2 | Values ID は作成時に `description + category` から一度だけ生成される immutable identifier（プレフィックス `v-`） | REQ-FUNC-002 |
 | BR-3 | Knowledge の accuracy は `verified` / `likely` / `uncertain` の3段階 | REQ-FUNC-001 |
 | BR-4 | Values の confidence は 0.0〜1.0 の範囲。デフォルト 0.3 | REQ-FUNC-002 |
-| BR-5 | Values の evidence リストは最新10件を保持。超過分は evidence_count のみインクリメント | REQ-FUNC-002, 009 |
-| BR-6 | 昇格条件: `confidence >= 0.8` AND `evidence_count >= 5` AND `promoted == false` | REQ-FUNC-015 |
-| BR-7 | 昇格には `confirm: true`（ユーザー確認）が必須 | REQ-FUNC-016 |
+| BR-5 | Values の evidence リストは最新10件を保持。超過分は `totalCount`（永続化層では `evidence_count`）のみインクリメント | REQ-FUNC-002, REQ-FUNC-009 |
+| BR-6 | 昇格条件: `confidence >= 0.8` AND `totalCount >= 5`（永続化層では `evidence_count >= 5`） AND `promoted == false` | REQ-FUNC-015 |
+| BR-7 | 昇格にはユーザー確認が必須（`confirm` はアプリケーション層で消費） | REQ-FUNC-016 |
 | BR-8 | Knowledge 登録時、同一 ID が存在すればエラー（完全重複拒否） | REQ-FUNC-004 |
 | BR-9 | Values 登録時、類似既存エントリがあれば警告（登録は許可） | REQ-FUNC-007 |
 | BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
-| BR-12 | 蒸留トリガー条件: 前回から10ノート以上 OR 7日以上経過 OR ユーザー明示要求 | REQ-FUNC-026 |
+| BR-12 | 蒸留トリガー条件（自動推奨）: 前回から10ノート以上 OR 7日以上経過。ユーザーの直接呼び出しはトリガー判定をバイパスする | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格提案条件: confidence が昇格時から 0.2 以上低下 | REQ-FUNC-034 |

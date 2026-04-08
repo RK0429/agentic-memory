@@ -16,7 +16,7 @@
 | 1 | **後方互換性** | 既存 19 MCP ツール・270+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
 | 2 | **保守性** | 既存 `core/` のフラットモジュール構造に Knowledge/Values/蒸留の3コンテキストを追加するため、モジュール境界の明確化が不可欠 |
 | 3 | **拡張性** | 将来的な push 型配信・横断検索・降格メカニズム等の Could 要件への対応余地を確保 |
-| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。既存 BM25+ エンジンの流用で達成可能 |
+| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは CI ランナーまたは開発者ラップトップ相当の環境で計測する。既存 BM25+ エンジンの流用で達成可能 |
 | 5 | **運用性** | `memory_init` のみでマイグレーション完了（REQ-NF-005）、health check 統合（REQ-NF-004） |
 
 ---
@@ -34,8 +34,7 @@ graph TB
     Agent -->|"MCP ツール呼び出し"| MCP
     MCP -->|"ファイル読み書き"| FS
     MCP -->|"昇格/降格時の書き込み"| AGENTS
-    Agent -->|"蒸留抽出（LLM 処理）"| LLM
-    Agent -->|"蒸留結果を永続化"| MCP
+    MCP -->|"蒸留抽出（ExtractorPort 経由）"| LLM
 
     style MCP fill:#4a90d9,color:#fff
     style Agent fill:#6c757d,color:#fff
@@ -44,7 +43,7 @@ graph TB
 
 **システム境界の説明:**
 
-- **agentic-memory MCP サーバー**: Knowledge/Values の CRUD・検索・昇格・蒸留前後処理を担う。蒸留の「抽出」自体は LLM が行い、ツールはオーケストレーション（トリガー判定・結果永続化・統合判定）を担当する
+- **agentic-memory MCP サーバー**: Knowledge/Values の CRUD・検索・昇格・蒸留パイプライン全体を担う。蒸留の「抽出」は内部の `DistillationExtractorPort` 経由で LLM に委譲し、トリガー判定・抽出依頼・統合判定・結果永続化をオーケストレーションする
 - **AGENTS.md**: Values 昇格時の書き込み先。外部システムとして ACL を介してアクセスする
 - **LLM**: 蒸留パイプラインにおける抽出処理を担当。agentic-memory の外部依存として位置づける
 
@@ -127,16 +126,16 @@ graph TB
 
 | レイヤー | コンポーネント | 責務 | 依存先 |
 |---|---|---|---|
-| **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、アプリケーション層の呼び出し、レスポンス整形 | アプリケーション層 |
+| **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok`/`warnings` エンベロープ形式でのレスポンス整形 | アプリケーション層 |
 | **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（判断記録 2） | ドメイン層、インフラ層 |
 | | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み | ドメイン層、インフラ層 |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
-| | `PromotionService` | 昇格/降格のワークフロー、confirm ガードレール、AGENTS.md 同期、排他制御 | ドメイン層、`AgentsMdAdapter` |
+| | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御 | ドメイン層、`AgentsMdAdapter` |
 | **ドメイン層** | `KnowledgeEntry` | Knowledge の不変条件の保護（ID 生成、sources マージ等） | なし（自己完結） |
 | | `ValuesEntry` | Values の不変条件の保護（confidence 範囲、evidence 保持上限、昇格条件判定） | なし |
 | | `KnowledgeIntegrator` | 蒸留候補と既存 Knowledge の重複検出・マージ判定 | なし |
 | | `ValuesIntegrator` | 蒸留候補と既存 Values の重複検出・confidence 更新判定 | なし |
-| | `PromotionManager` | 昇格条件判定、降格提案判定など純粋なドメインポリシー | なし |
+| | `PromotionManager` | 昇格条件判定、降格提案判定など純粋なドメインポリシー（`confirm` は受け取らない） | なし |
 | **インフラ層** | `KnowledgeRepository` | Knowledge の永続化（Markdown + frontmatter）、インデックス同期 | `SearchEngine` |
 | | `ValuesRepository` | Values の永続化、インデックス同期 | `SearchEngine` |
 | | `SearchEngine` | BM25+ スコアリングの汎用化（既存 `scorer.py` / `search.py` の拡張） | なし |
@@ -216,7 +215,7 @@ sequenceDiagram
     KR-->>KS: None（存在しない）
     KS->>KE: new KnowledgeEntry(...)
     KS->>KR: save(entry)
-    KR->>KR: write knowledge/{domain}/{id}.md
+    KR->>KR: write knowledge/{id}.md
     KR->>KR: append _knowledge.jsonl
     KR-->>KS: ok
     KS-->>T: {id, path}
@@ -230,7 +229,7 @@ sequenceDiagram
     participant A as Agent
     participant DT as memory_distill_knowledge
     participant DS as DistillationService
-    participant SE as SearchEngine
+    participant IX as _index.jsonl
     participant DX as DistillationExtractorPort
     participant LLM as LLM (外部)
     participant KI as KnowledgeIntegrator
@@ -238,8 +237,8 @@ sequenceDiagram
 
     A->>DT: date_from, date_to, domain, dry_run
     DT->>DS: run(params)
-    DS->>SE: load_index(_index.jsonl) + filter
-    SE-->>DS: 対象ノート一覧
+    DS->>IX: load_index + date/domain filter
+    IX-->>DS: 対象ノート一覧
     DS->>DS: ノート内容をバッチ読み込み
     DS->>DX: extract(snapshot, mode=knowledge)
     DX->>LLM: ノート内容 → Knowledge 候補抽出
@@ -297,6 +296,8 @@ sequenceDiagram
     PT-->>A: AGENTS.md 更新差分
 ```
 
+**部分失敗時の整合性:** AGENTS.md 書き込み（不可逆影響が大きい操作）を先に実行し、成功後に Values エントリを更新する。Values エントリの更新が失敗した場合、AGENTS.md と `promoted` フラグの間に不整合が生じるが、`memory_health_check`（REQ-FUNC-028）がこの不整合を検出・報告する。復旧はオペレーターが `memory_values_promote` を再実行する。`promoted` がまだ `false` のため昇格条件を再び満たし、`AgentsMdAdapter` が既存エントリの重複追記を ID チェックで防止する（ADR-003）ため、冪等に完了する。
+
 ---
 
 ## 6. 同期/非同期境界
@@ -332,8 +333,7 @@ memory/
 ├── _knowledge.jsonl         # 新規: Knowledge インデックス
 ├── _values.jsonl            # 新規: Values インデックス
 ├── knowledge/               # 新規
-│   └── {domain}/
-│       └── {id}.md          # Markdown + YAML frontmatter（id は `k-` プレフィックス付き）
+│   └── {id}.md              # Markdown + YAML frontmatter（id は `k-` プレフィックス付き）
 ├── values/                  # 新規
 │   └── {id}.md              # Markdown + YAML frontmatter（id は `v-` プレフィックス付き）
 └── YYYY-MM-DD/              # 既存（変更なし）
@@ -370,7 +370,7 @@ Rust の所有権ルール:
 ```json
 {
   "id": "k-a1b2c3",
-  "path": "knowledge/rust/k-a1b2c3.md",
+  "path": "knowledge/k-a1b2c3.md",
   "title": "Rust の所有権ルール",
   "domain": "rust",
   "tags": ["ownership", "borrow-checker", "memory-safety"],
@@ -484,7 +484,18 @@ REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesS
 <!-- END:PROMOTED_VALUES -->
 ```
 
-### 9.2 AgentsMdAdapter の責務
+### 9.2 昇格 Values のテキスト形式
+
+各昇格 Values は以下の形式で AGENTS.md に書き込まれる:
+
+```
+- {description}（1行、最大200文字。改行はスペースに置換）
+  （confidence: {value}, evidence: {count}件, id: {id}）
+```
+
+**サニタイゼーション:** `description` に含まれる HTML コメントマーカー（`<!--`, `-->`）はエスケープまたは除去する。`BEGIN:PROMOTED_VALUES` / `END:PROMOTED_VALUES` を含む文字列は拒否する。200文字を超える場合は末尾を `…` で切り詰める。
+
+### 9.3 AgentsMdAdapter の責務
 
 | 操作 | 処理 |
 |---|---|
@@ -494,14 +505,14 @@ REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesS
 | `syncCheck()` | Values ストアの `promoted: true` とセクション内容の差分を検出 |
 | `writeAtomically(entries)` | `fcntl` ロック取得後に temp file + `os.replace()` でセクション全体を更新 |
 
-### 9.3 ACL（腐敗防止層）の必要性
+### 9.4 ACL（腐敗防止層）の必要性
 
 AGENTS.md は Markdown テキスト形式の外部ファイルであり、Values ドメインモデルとは異なる表現形式を持つ。`AgentsMdAdapter` が以下の変換を担う:
 
 - **Values → AGENTS.md**: `ValuesEntry` → 人間可読な1行記述 + メタデータ注釈
 - **AGENTS.md → Values**: セクション内テキスト → `ValuesId` + 概要（同期チェック用）
 
-### 9.4 AGENTS.md のパス解決
+### 9.5 AGENTS.md のパス解決
 
 AGENTS.md のパスは以下の優先順位で解決する:
 
@@ -509,10 +520,10 @@ AGENTS.md のパスは以下の優先順位で解決する:
 2. `memory_dir` の親ディレクトリ（= リポジトリルート）の `AGENTS.md`
 3. `memory_dir` の親ディレクトリの `CLAUDE.md`（symlink 考慮）
 
-### 9.5 書き込み整合性
+### 9.6 書き込み整合性
 
 - AGENTS.md 更新は `index.py` と同じ設計原則を採用し、`fcntl` による排他と atomic write を必須にする
-- 書き込み前に `BEGIN/END` マーカーの存在を検証し、欠落時は fail-fast でエラーにする
+- 書き込み前に `BEGIN/END` マーカーの存在を検証し、欠落時は fail-fast でエラーにする（マーカー挿入は `memory_init` の責務。昇格/降格時に欠落していれば `memory_init` の再実行を案内する）
 - `memory_health_check` は `promoted=true` の Values と AGENTS.md セクションの双方向整合性を検証する
 
 ---
@@ -536,8 +547,9 @@ stateDiagram-v2
 
 1. `DistillationTrigger.shouldDistill()` でトリガー条件を評価（`_state.md` の蒸留種別ごとの最終蒸留日時を参照。Knowledge は `last_knowledge_distilled_at`、Values は `last_values_distilled_at`）
 2. 対象期間の Memory ノートを `_index.jsonl` から選定
-3. ノート内容（判断・注意点・成果・作業ログセクション）を読み込み
-4. 抽出用の `DistillationSnapshot` を構築
+3. ノート内容（「判断」「注意点・残課題」「成果」「作業ログ」セクション）を読み込み
+4. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
+5. 抽出用の `DistillationSnapshot` を構築
 
 **extract:**
 
@@ -553,13 +565,13 @@ stateDiagram-v2
 
 ### 10.2 蒸留トリガー条件
 
-| 条件 | 閾値（暫定） | 判定データ |
+| 条件 | 閾値 | 判定データ |
 |---|---|---|
 | ノート数 | 10件以上（前回蒸留以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の該当種別の最終蒸留日時 |
 | 経過日数 | 7日以上 | 現在日時 vs `_state.md` の該当種別の最終蒸留日時 |
-| ユーザー明示要求 | — | ツール呼び出し自体がトリガー |
+| ユーザー明示要求 | — | `memory_distill_*` の直接呼び出し自体がトリガー（`shouldDistill()` をバイパス） |
 
-**最終蒸留日時の保存先:** `_state.md` の専用セクション（例: 「蒸留メタデータ」）に `last_knowledge_distilled_at` と `last_values_distilled_at` を個別に保持する。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの最終実行日時を区別して管理する。
+**最終蒸留日時の保存先:** `_state.md` の YAML フロントマターに `last_knowledge_distilled_at` と `last_values_distilled_at` を個別に保持する。既存のセクション構造（「現在のフォーカス」「主要な判断」等）には変更を加えない。`state.py` にフロントマター読み書き機能を追加する（セクション 11.1 参照）。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの最終実行日時を区別して管理する。
 
 ---
 
@@ -573,7 +585,8 @@ stateDiagram-v2
 | `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加 | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
-| `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 | 低（ディレクトリ作成追加） |
+| `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md マーカー idempotent 自動挿入 | 低（追加のみ） |
+| `state.py` | `_state.md` フロントマターへの蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at`）読み書き機能を追加。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
 
 ### 11.2 変更しない既存モジュール
 
@@ -581,7 +594,6 @@ stateDiagram-v2
 |---|---|
 | `index.py` | Memory ノート専用のインデックス構築ロジック。K/V は別ファイル・別ロジック |
 | `note.py` | Memory ノート作成ユーティリティ。K/V は独自のファイル作成を持つ |
-| `state.py` | ローリングステート管理。蒸留日時の記録は `state.py` の既存 API（`state_add`）で対応可能 |
 | `export.py` | Memory ノートのエクスポート。K/V を含めるかは別 ADR で判断し、初期リリースでは対象外 |
 | `cleanup.py` | Memory ノートのクリーンアップ。K/V は別ライフサイクル |
 
@@ -665,9 +677,9 @@ stateDiagram-v2
 - (+) `<!-- BEGIN:PROMOTED_VALUES -->` / `<!-- END:PROMOTED_VALUES -->` 間のみを操作対象とし、それ以外の AGENTS.md 内容に影響しない
 - (+) 冪等性: 同一 Values の二重追記を防止可能（ID チェック）
 - (+) health check でマーカーの存在・整合性を検証可能
-- (-) 初回セットアップ時にマーカーの挿入が必要（`memory_init` または手動）
-- (-) ユーザーがマーカーを誤って削除した場合のリカバリが必要
-- **軽減策**: `memory_health_check` でマーカーの存在を検証。マーカーが見つからない場合はエラーメッセージで復元手順を案内
+- (-) 初回セットアップ時にマーカーの挿入が必要（`memory_init` で idempotent に自動挿入）
+- (+) ユーザーがマーカーを誤って削除しても `memory_init` の再実行で復元可能
+- **軽減策**: `memory_init` がマーカーの存在を検証し、欠落時は自動挿入する。`memory_health_check` でも検証を行う
 
 ---
 
@@ -691,7 +703,7 @@ stateDiagram-v2
 - (+) 公開 MCP ツールのパラメータは REQ-FUNC-010/011 のまま維持できる
 - (+) 抽出境界はポートとして独立し、CLI / API / 将来の provider に差し替えられる
 - (+) `DistillationService` は collect / integrate をユニットテストできる
-- (-) extractor 実装の設定がない環境では `memory_distill_*` が設定エラーを返す可能性がある
+- (-) extractor 実装の設定がない環境では `memory_distill_*` 呼び出し時に設定エラーを返す（`memory_init` の冪等性には影響しない）
 - (-) 単一ツール呼び出しのため、抽出時間はツールの実行時間に含まれる
 
 ---
@@ -725,14 +737,16 @@ stateDiagram-v2
 
 | フェーズ | 内容 | 対応要件 | 依存 |
 |---|---|---|---|
-| **Phase 1** | データモデル + ストレージ + `memory_init` 拡張 | REQ-FUNC-001, 002, 003, REQ-NF-005 | なし |
+| **Phase 1** | データモデル + ストレージ + `memory_init` 拡張 + 検索エンジン汎用化 | REQ-FUNC-001, 002, 003, REQ-NF-001, REQ-NF-005 | なし |
 | **Phase 2** | Knowledge CRUD（add / search / update） | REQ-FUNC-004, 005, 006 | Phase 1 |
 | **Phase 3** | Values CRUD（add / search / update / list） | REQ-FUNC-007, 008, 009, 025 | Phase 1 |
-| **Phase 4** | 検索エンジン汎用化 + health check 拡張 | REQ-NF-001, 004 | Phase 2, 3 |
+| **Phase 4** | health check 拡張 | REQ-NF-004 | Phase 2, 3 |
 | **Phase 5** | 蒸留エンジン（collect / extract / integrate） | REQ-FUNC-010, 011, 012, 013 | Phase 2, 3 |
 | **Phase 6** | Values 昇格 + AGENTS.md 連携 | REQ-FUNC-015, 016, 022 | Phase 3 |
 | **Phase 7** | AGENTS.md セクション改修 + Should 要件 | REQ-FUNC-019-021, 023-029 | Phase 5, 6 |
 | **Phase 8** | Could 要件（統計、横断検索、降格） | REQ-FUNC-030-034 | Phase 7 |
+
+**補足:** 検索エンジン汎用化（ADR-005）を Phase 1 に含めることで、Phase 2/3 の Knowledge/Values 検索ツールが `score_generic_entry` を利用できる。Phase 2 と Phase 3 は相互に独立しており、並行実装が可能。
 
 ---
 
@@ -743,6 +757,6 @@ stateDiagram-v2
 | AGENTS.md の誤操作・破損 | 高 | HTML マーカー方式 + `confirm` ガードレール + file lock + atomic write + health check（ADR-003） |
 | 既存テストの破壊 | 高 | 既存モジュールへの変更は追加のみ（Open-Closed）。CI で既存テスト全件実行 |
 | 蒸留の LLM 品質ばらつき | 中 | `dry_run` による事前確認。統合ロジックでの矛盾検出・フラグ付け |
-| extractor 未設定・外部依存の失敗 | 中 | `DistillationExtractorPort` の設定チェックを `memory_init`/起動時に行い、未設定時は明確な設定エラーを返す |
+| extractor 未設定・外部依存の失敗 | 中 | `memory_distill_*` 呼び出し時に `DistillationExtractorPort` の設定を検証し、未設定時は明確な設定エラーを返す。`memory_init` の冪等性は維持する（extractor 未設定でも init は成功する） |
 | インデックスファイルの肥大化 | 低 | エントリ数 1,000 件は JSONL で数 MB 程度。性能問題が顕在化してから対応 |
-| `_state.md` への蒸留日時記録がステート肥大化を招く | 低 | 単一行の追加のみ。既存のステートキャップで制御される |
+| `_state.md` への蒸留日時記録がステート肥大化を招く | 低 | フロントマターに2フィールド追加のみ。既存のセクション構造・ステートキャップに影響しない |
