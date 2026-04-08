@@ -244,7 +244,7 @@ memory/
 
 **生成タイミング（eager / lazy）:**
 - `memory_init` が作成するもの（eager）: `knowledge/` ディレクトリ、`values/` ディレクトリ、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー（全て冪等）
-- 初回操作時に作成するもの（lazy）: `_knowledge.jsonl`（初回 `memory_knowledge_add` 時）、`_values.jsonl`（初回 `memory_values_add` 時）、`_state.md` の蒸留日時フロントマター（初回蒸留完了時）
+- 初回操作時に作成するもの（lazy）: `_knowledge.jsonl`（初回 `memory_knowledge_add` 時）、`_values.jsonl`（初回 `memory_values_add` 時）、`_state.md` の蒸留日時フロントマター（初回 `dry_run=false` 蒸留完了時。`last_*_distilled_at`（永続化日時）と `last_*_evaluated_at`（最終評価日時）の 4 フィールド）
 
 **AGENTS.md のパス解決規則:**
 `memory_init` および `memory_values_promote` / `memory_values_demote` / `memory_values_delete`（promoted エントリ）が AGENTS.md を操作する際のパス解決は、以下の優先順位に従う:
@@ -351,7 +351,8 @@ memory/
 - **ストーリー**: エージェントとして、検出したユーザーの判断傾向を Values エントリとして登録したい。それはユーザーの代理人としての行動精度を向上させるためだ。
 - **受け入れ基準**:
   - Given 有効なパラメータ, When `memory_values_add` 実行, Then `.md` ファイルとインデックスエントリが作成される
-  - Given 意味的に類似する既存 Values が存在, When 登録試行, Then 類似エントリの情報が警告として返される（登録自体は成功する）
+  - Given 同一 `description` + `category` で `id` が完全一致する既存エントリが存在, When 登録試行, Then 重複エラーを返す（厳密重複）
+  - Given 意味的に類似する既存 Values が存在（`id` は異なる）, When 登録試行, Then 類似エントリの情報が警告として返される（登録自体は成功する）
 - **優先度**: Must
 - **出典**: ユーザー明示
 - **関連要件**: REQ-FUNC-002, REQ-FUNC-003
@@ -367,9 +368,10 @@ memory/
 
 **処理:**
 1. `description` + `category` から `id` を生成（作成時のみ。以降不変）
-2. 類似判定: 既存 Values と意味的に重複する場合は警告を返す（エラーではなく、マージ提案）
-3. `values/{id}.md` にファイル作成（`id` は `v-` プレフィックス付きで自動生成済み）
-4. `_values.jsonl` にインデックスエントリを追加
+2. 厳密重複チェック: 同一 `id` が既に存在する場合はエラーを返す（Knowledge の REQ-FUNC-004 と同じ扱い）
+3. 類似判定: 既存 Values と意味的に重複する場合は警告を返す（エラーではなく、マージ提案。厳密重複とは別のチェック）
+4. `values/{id}.md` にファイル作成（`id` は `v-` プレフィックス付きで自動生成済み）
+5. `_values.jsonl` にインデックスエントリを追加
 
 **出力:** 作成されたエントリの `id`。類似既存エントリがある場合はその ID と description も返す。
 
@@ -396,7 +398,7 @@ memory/
 
 **制約:** `query` と `category` の少なくとも一方が必須。両方省略した場合はバリデーションエラーを返す。`category` のみ指定時はフィルタ結果を `confidence` 降順で返す。
 
-**出力:** スコア順のエントリリスト（`id`, `description`, `category`, `confidence`, `evidence_count`）
+**出力:** スコア順のエントリリスト（`id`, `description`, `category`, `confidence`, `evidence_count`, `promoted`）
 
 ---
 
@@ -755,21 +757,25 @@ memory/
 
 - **説明**: 蒸留を実行すべきタイミングを判定するロジック。AGENTS.md のセッション終了手順に組み込む。
 - **受け入れ基準**:
-  - Given 前回蒸留から8日経過, When セッション終了時の振り返り, Then 蒸留の実行がエージェントに推奨される
-  - Given 前回蒸留から2日経過かつ新規ノート3件, When セッション終了時, Then 蒸留は推奨されない
+  - Given 最終評価日時から8日経過, When セッション終了時の振り返り, Then 蒸留の実行がエージェントに推奨される
+  - Given 最終評価日時から2日経過かつ新規ノート3件, When セッション終了時, Then 蒸留は推奨されない
 - **優先度**: Should
 - **出典**: エージェント推測
 - **関連要件**: REQ-FUNC-010, REQ-FUNC-011, REQ-FUNC-021
 
 **判定条件（いずれかを満たす場合に蒸留を推奨）:**
-1. 前回の蒸留以降に作成されたノートが 10 件以上
-2. 前回の蒸留から 7 日以上経過
+1. 最終評価日時以降に作成されたノートが 10 件以上
+2. 最終評価日時から 7 日以上経過
 
 **2 つの起動経路:**
 - *セッション終了時の自動推奨*: 上記条件（10 ノート以上 OR 7 日以上経過）を評価し、満たす場合に蒸留を推奨する
 - *ユーザーの直接呼び出し* (`memory_distill_knowledge` / `memory_distill_values`): トリガー判定をバイパスし、即座に蒸留パイプラインを実行する
 
-**実装方針:** `_state.md` の YAML フロントマターに蒸留種別ごとの最終蒸留日時を記録する（`last_knowledge_distilled_at` / `last_values_distilled_at`）。Knowledge と Values の蒸留は独立にトリガーされるため、日時を個別に管理する。これらの日時は `dry_run=false` かつ 1 件以上の永続化が発生した蒸留完了時にのみ更新される。
+**実装方針:** `_state.md` の YAML フロントマターに蒸留種別ごとに以下の2つの日時を記録する:
+- `last_knowledge_distilled_at` / `last_values_distilled_at`: 最終永続化日時。`dry_run=false` かつ 1 件以上の永続化が発生した蒸留完了時にのみ更新される
+- `last_knowledge_evaluated_at` / `last_values_evaluated_at`: 最終評価日時。`dry_run=false` の蒸留が完了した時点で（永続化 0 件であっても）更新される
+
+Knowledge と Values の蒸留は独立にトリガーされるため、日時を個別に管理する。**トリガー条件（10 ノート以上 OR 7 日以上経過）は「最終評価日時」を基準に判定する。** これにより、永続化 0 件（no-op）の蒸留が完了した場合でもタイムスタンプが進み、同じノート集合に対して蒸留推奨が繰り返し出続けることを防止する。
 
 ---
 
@@ -810,9 +816,11 @@ memory/
 **チェック項目:**
 1. `promoted: true` の Values エントリが AGENTS.md セクションに存在するか（`id` による存在チェック）
 2. AGENTS.md セクションに記載があるが `promoted: true` でないエントリはないか（`id` による逆方向チェック）
-3. AGENTS.md の記述と Values エントリの `description` が一致するか（内容チェック）
+3. AGENTS.md の記述と Values エントリの `description` の**投影後テキスト**が一致するか（内容チェック）
 
-**同期スコープ:** `id`（存在有無）と `description`（内容一致）のみをチェック対象とする。AGENTS.md に表示される `confidence` と `evidence` 件数はプロモーション実行時点のスナップショット値であり、Values エントリ更新時に追従しないため、同期チェックの対象外とする。
+**投影後テキスト:** AGENTS.md に書き込む際と同じ正規化処理（200 文字切り詰め、改行のスペース置換、HTML コメントマーカーのサニタイズ）を適用した結果のテキスト。`syncCheck()` は Values エントリの `description` をこの投影処理に通した値と AGENTS.md 上のテキストを比較する。これにより、`description` が 200 文字を超える場合や特殊文字を含む場合でも、正当な切り詰め・サニタイズによる差異は不整合として報告されない。
+
+**同期スコープ:** `id`（存在有無）と `description`（投影後テキスト一致）のみをチェック対象とする。AGENTS.md に表示される `confidence` と `evidence` 件数はプロモーション実行時点のスナップショット値であり、Values エントリ更新時に追従しないため、同期チェックの対象外とする。
 
 ---
 
@@ -931,8 +939,8 @@ memory/
 
 #### REQ-NF-007: 機密情報の除外
 
-- **基準**: Knowledge/Values エントリにシークレット・認証情報・API キーが含まれないことをバリデーションする。検出時のポリシーは操作の不可逆度に応じて段階的に適用する:
-  - `memory_knowledge_add` / `memory_knowledge_update` / `memory_values_add` / `memory_values_update`: 警告をレスポンスに含めるが、保存は継続する
+- **基準**: Knowledge/Values エントリに対してシークレット・認証情報・API キーの検出バリデーションを行う。検出時のポリシーは操作の不可逆度に応じて段階的に適用する:
+  - `memory_knowledge_add` / `memory_knowledge_update` / `memory_values_add` / `memory_values_update`: 警告をレスポンスに含めるが、保存は継続する（エージェントが警告に基づいて修正判断を行う想定）
   - `memory_values_promote`: AGENTS.md への書き込みは不可逆影響が大きいため、シークレット検出時は昇格を拒否する
 - **優先度**: Should
 
