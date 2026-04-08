@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | バージョン | 0.1.0（ドラフト） |
-| 最終更新日 | 2026-04-08 |
+| 最終更新日 | 2026-04-09 |
 | 関連要件 | [REQ-knowledge-values.md](../requirements/REQ-knowledge-values.md) |
 
 ---
@@ -52,7 +52,7 @@ graph LR
     VD -->|"OHS"| VI
     KI --> KE
     VI --> VE
-    PM -->|"ACL"| AGENTS
+    VE -->|"ACL<br/>(PromotionService経由)"| AGENTS
 ```
 
 **統合パターンの選択理由:**
@@ -61,7 +61,7 @@ graph LR
 |---|---|---|
 | 同期読み取り | Memory → 蒸留 | 蒸留は `memory_distill_*` の同期呼び出しで実行され、Memory ノートと `_state.md` を直接読み取る。概念的には Memory の蓄積が蒸留のトリガーだが、実装はイベント駆動ではなくポーリング型（トリガー条件の判定）である |
 | 公開ホストサービス (OHS) | 蒸留 → Knowledge/Values | 蒸留結果を標準的な候補フォーマットで公開し、各コンテキストの Integrator が受け取る |
-| 腐敗防止層 (ACL) | Values → AGENTS.md | AGENTS.md は Markdown テキスト形式の外部ファイルであり、Values ドメインモデルとの表現形式が異なる |
+| 腐敗防止層 (ACL) | Values コンテキスト → AGENTS.md | AGENTS.md は Markdown テキスト形式の外部ファイルであり、Values ドメインモデルとの表現形式が異なる。ACL はアプリケーション層の `PromotionService` が `AgentsMdAdapter` を介して実現する（`PromotionManager` はドメインポリシー判定のみを担い、外部システムと直接通信しない） |
 
 ---
 
@@ -197,9 +197,8 @@ classDiagram
         +updateDescription(string) ValuesEntry
         +addEvidence(Evidence) ValuesEntry
         +adjustConfidence(float) ValuesEntry
-        +isPromotionCandidate() bool
         +promote(datetime) ValuesEntry
-        +demote() ValuesEntry
+        +demote(string reason) ValuesEntry
     }
 
     class ValuesId {
@@ -252,9 +251,11 @@ classDiagram
     class PromotionManager {
         <<DomainService>>
         +checkCandidate(ValuesEntry) bool
-        +promote(ValuesEntry) ValuesEntry
-        +demote(ValuesEntry, string reason) ValuesEntry
+        +applyPromotion(ValuesEntry, datetime now) ValuesEntry
+        +applyDemotion(ValuesEntry, string reason) ValuesEntry
     }
+
+    note for PromotionManager "ポリシー判定を担当:\n- checkCandidate(): 昇格条件の充足を判定\n  （Confidence.meetsPromotionThreshold() AND\n   EvidenceList.meetsPromotionCount() に委譲）\n- applyPromotion/applyDemotion(): ポリシー検証後に\n  ValuesEntry.promote()/demote(reason) を呼び出す\nValuesEntry 自身の promote()/demote(reason) は\n状態遷移のみを担当（不変条件の保護）"
 
     class ValuesIntegrator {
         <<DomainService>>
@@ -421,13 +422,16 @@ stateDiagram-v2
 
     PromotionReady --> Promoted : promote()（ユーザー確認済）
     Promoted --> Promoted : evidence追加 / confidence変動
-    Promoted --> Active : demote()<br/>[confidence低下≥0.2]
+    Promoted --> Active : demote(reason)（理由を記録）
     Active --> Deleted : 削除
     Promoted --> Deleted : 削除（AGENTS.mdからも除去）
     Deleted --> [*]
 ```
 
-**補足**: `PromotionReady` はエンティティに保存される状態ではなく、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` から導出される条件。`memory_values_update` のレスポンスで昇格候補として通知される。昇格遷移は `PromotionReady` サブステートからのみ発生する（`Growing` からの直接昇格は不可）。
+**補足:**
+- `PromotionReady` はエンティティに保存される状態ではなく、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` から導出される条件。`memory_values_update` のレスポンスで昇格候補として通知される。昇格遷移は `PromotionReady` サブステートからのみ発生する（`Growing` からの直接昇格は不可）
+- **降格提案と降格実行の区別**: `demote(reason)` は理由の指定のみを必要とし、confidence 低下を前提条件としない。一方、BR-15 の「confidence が昇格時から 0.2 以上低下」は降格の**自動提案条件**（`PromotionState.shouldSuggestDemotion()`）であり、エージェントに降格を推奨するトリガーである。ユーザーは confidence 低下以外の理由（例: 明示的な撤回、方針変更）でも `memory_values_demote(id, reason)` を呼び出せる
+- **昇格候補判定の責務配置**: 昇格候補の判定は `PromotionManager.checkCandidate()` が一元的に担い、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` AND `PromotionState.promoted == false` に委譲する。`ValuesEntry` 自身は昇格候補判定メソッドを持たない（判定ロジックの二重化を避けるため）
 
 ---
 
@@ -463,7 +467,7 @@ stateDiagram-v2
 | Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付で構成 | ValuesEntry |
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3） | ValuesEntry |
-| PromotionManager | 昇格条件判定・昇格/降格実行を行うドメインサービス。降格提案判定は `PromotionState` に委譲 | PromotionState |
+| PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` に委譲）、`applyPromotion()` / `applyDemotion(entry, reason)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲 | PromotionState |
 | ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス | Confidence |
 
 ### 5.4 蒸留コンテキスト
@@ -476,6 +480,7 @@ stateDiagram-v2
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
 | DistillationTrigger | セッション終了時の蒸留自動推奨判定ロジック。ノート数閾値(10)・期間閾値(7日)で判定する。ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる（2つの起動経路） | DistillationRequest |
+| DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計。実装場所は `core/distillation/extractor.py` | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---
 
@@ -537,4 +542,4 @@ stateDiagram-v2
 | BR-12 | 蒸留トリガー条件（セッション終了時の自動推奨のみに適用）: 前回から10ノート以上 OR 7日以上経過。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
-| BR-15 | 降格提案条件: confidence が昇格時から 0.2 以上低下 | REQ-FUNC-034 |
+| BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |

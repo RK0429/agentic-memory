@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | バージョン | 0.1.0（ドラフト） |
-| 最終更新日 | 2026-04-08 |
+| 最終更新日 | 2026-04-09 |
 | 関連要件 | [REQ-knowledge-values.md](../requirements/REQ-knowledge-values.md) |
 | 関連ドメインモデル | [DOMAIN-MODEL-knowledge-values.md](DOMAIN-MODEL-knowledge-values.md) |
 
@@ -44,6 +44,7 @@ graph TB
 **システム境界の説明:**
 
 - **agentic-memory MCP サーバー**: Knowledge/Values の CRUD・検索・昇格・蒸留パイプライン全体を担う。蒸留の「抽出」は内部の `DistillationExtractorPort` 経由で LLM に委譲し、トリガー判定・抽出依頼・統合判定・結果永続化をオーケストレーションする
+- **ローカルファイルシステム `memory/`**: 記憶ディレクトリ。現行実装の `config.py` は legacy の `daily_note/` ディレクトリも既定候補として扱うが、本設計では `memory/` を前提とする。`daily_note/` 配下に Knowledge/Values ディレクトリを作成するかは既存の `memory_dir` 解決ロジックに従い、本設計では明示的に対象外としない（`memory_dir` がどのパスに解決されても同じストレージ設計が適用される）
 - **AGENTS.md**: Values 昇格時の書き込み先。外部システムとして ACL を介してアクセスする
 - **LLM**: 蒸留パイプラインにおける抽出処理を担当。agentic-memory の外部依存として位置づける
 
@@ -128,14 +129,15 @@ graph TB
 |---|---|---|---|
 | **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok`/`warnings` エンベロープ形式でのレスポンス整形 | アプリケーション層 |
 | **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（判断記録 2） | ドメイン層、インフラ層 |
-| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み | ドメイン層、インフラ層 |
+| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み。`promoted: true` のエントリ削除時は `PromotionService.onDelete(id)` を呼び出し AGENTS.md からの除去を委譲する | ドメイン層、インフラ層、`PromotionService` |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
-| | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御 | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
+| | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御。`onDelete(id)` メソッドで promoted Values 削除時の AGENTS.md 除去も担当する（`ValuesService` から委譲される） | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
 | **ドメイン層** | `KnowledgeEntry` | Knowledge の不変条件の保護（ID 生成、sources マージ等） | なし（自己完結） |
 | | `ValuesEntry` | Values の不変条件の保護（confidence 範囲、evidence 保持上限、昇格条件判定） | なし |
 | | `KnowledgeIntegrator` | 蒸留候補と既存 Knowledge の重複検出・マージ判定 | なし |
 | | `ValuesIntegrator` | 蒸留候補と既存 Values の重複検出・confidence 更新判定 | なし |
 | | `PromotionManager` | 昇格条件判定、昇格/降格実行など純粋なドメインポリシー（`confirm` は受け取らない）。降格提案判定は `PromotionState.shouldSuggestDemotion()` に委譲（判断記録 3） | なし |
+| | `DistillationTrigger` | 蒸留トリガー条件の正規定義（REQ-FUNC-026: 10 ノート以上 OR 7 日以上経過）。蒸留種別（Knowledge / Values）ごとにインスタンス化し、ノート数閾値・期間閾値を保持する。`DistillationService` の内部コンポーネントであり、公開 API としては露出しない。トリガー条件の評価はエージェント/スキル側が公開ツールレスポンスから行う（セクション 13 Phase 7 補足参照） | なし（`_state.md` の最終蒸留日時は `DistillationService` 経由で取得） |
 | **インフラ層** | `KnowledgeRepository` | Knowledge の永続化（Markdown + frontmatter）、インデックス同期 | `SearchEngine` |
 | | `ValuesRepository` | Values の永続化、インデックス同期 | `SearchEngine` |
 | | `SearchEngine` | BM25+ スコアリングの汎用化（既存 `scorer.py` / `search.py` の拡張） | なし |
@@ -150,6 +152,7 @@ graph TB
 | `ValuesService` | `core/values/service.py` | 同上 |
 | `DistillationService` | `core/distillation/service.py` | 新規。ノート読み込みに `search.py` の `load_index` を利用 |
 | `DistillationExtractorPort` | `core/distillation/extractor.py` | 新規。CLI / API / 将来の provider を差し替える抽出境界 |
+| `DistillationTrigger` | `core/distillation/trigger.py` | 新規。蒸留トリガー条件の正規定義（`DistillationService` 内部コンポーネント）。`_state.md` の蒸留日時を `DistillationService` 経由で取得 |
 | `PromotionService` | `core/values/promotion.py` | `state.py` のセクション操作パターンを参考にする |
 | `KnowledgeEntry` | `core/knowledge/model.py` | 新規。`dataclass` ベース |
 | `ValuesEntry` | `core/values/model.py` | 新規。`dataclass` ベース |
@@ -157,6 +160,7 @@ graph TB
 | `ValuesRepository` | `core/values/repository.py` | 同上 |
 | `SearchEngine`（汎用化） | `core/scorer.py`（拡張） | 既存の `IndexEntry` / `score_entry` を汎用化 |
 | `AgentsMdAdapter` | `core/values/agents_md.py` | 新規。Markdown セクション操作 |
+| `SecretScanPolicy` | `core/security.py` | 新規実装。正規表現ベースのシークレット検出ユーティリティ |
 
 ### 4.3 ディレクトリ構成（提案）
 
@@ -186,7 +190,8 @@ src/agentic_memory/
 │   ├── search.py            # 既存（軽微な拡張: 汎用インデックス対応）
 │   ├── scorer.py            # 既存（軽微な拡張: フィールドマッピング汎用化）
 │   ├── note.py              # 既存（変更なし）
-│   ├── state.py             # 既存（変更なし）
+│   ├── security.py          # 新規: SecretScanPolicy（機密情報除外）
+│   ├── state.py             # 既存（拡張: フロントマター読み書き追加 — セクション 11.1 参照）
 │   ├── health.py            # 既存（拡張: K/V インデックス整合性チェック追加）
 │   └── ...                  # 既存モジュール群（変更なし）
 ├── server.py                # 既存（拡張: 新規ツール関数追加）
@@ -332,7 +337,7 @@ sequenceDiagram
 
 ```
 memory/
-├── _state.md                # 既存（変更なし）
+├── _state.md                # 既存（パスは据え置き。YAML フロントマターに蒸留日時フィールドを追加拡張）
 ├── _index.jsonl             # 既存: Memory ノートインデックス（変更なし）
 ├── _knowledge.jsonl         # 新規: Knowledge インデックス
 ├── _values.jsonl            # 新規: Values インデックス
@@ -423,7 +428,7 @@ REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesS
 - `memory_values_promote`:
   AGENTS.md への書き込みは不可逆影響が大きいため、シークレット検出時は警告ではなく昇格を拒否する
 - 実装:
-  既存の正規表現ベース検出器を `core/security.py` のような薄いユーティリティとして追加し、Memory 本体には影響させない
+  正規表現ベースのシークレット検出器を `core/security.py` として新規実装する（既存リポジトリ内に再利用可能な検出器は存在しない）。一般的なシークレットパターン（AWS キー、API トークン、GitHub PAT 等）をカバーする薄いユーティリティとし、Memory 本体には影響させない
 
 ---
 
@@ -565,12 +570,12 @@ stateDiagram-v2
 
 **collect:**
 
-1. **起動経路の判定**: ユーザーが `memory_distill_*` を直接呼び出した場合はステップ 2 をスキップし、ステップ 3 へ進む
-2. `DistillationTrigger.shouldDistill()` でトリガー条件を評価（セッション終了時の自動推奨経路でのみ実行。`_state.md` の蒸留種別ごとの最終蒸留日時を参照。Knowledge は `last_knowledge_distilled_at`、Values は `last_values_distilled_at`）。条件を満たさない場合は蒸留を推奨せずに終了
-3. 対象期間の Memory ノートを `_index.jsonl` から選定
-4. ノート内容（「判断」「注意点・残課題」「成果」「作業ログ」セクション）を読み込み
-5. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
-6. 抽出用の `DistillationSnapshot` を構築
+`memory_distill_*` が呼び出された時点で直接パイプラインを実行する。トリガー条件の評価はエージェント/スキル側の責務であり（セクション 13 Phase 7 補足参照）、パイプライン内では行わない。
+
+1. 対象期間の Memory ノートを `_index.jsonl` から選定
+2. ノート内容の Decisions / Pitfalls & Remaining Issues / Results / Work Log セクション（日本語エイリアス: 判断 / 注意点・残課題 / 成果 / 作業ログ）を読み込み。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う
+3. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
+4. 抽出用の `DistillationSnapshot` を構築
 
 **extract:**
 
@@ -586,11 +591,13 @@ stateDiagram-v2
 
 ### 10.2 蒸留トリガー条件
 
+以下の条件は `DistillationTrigger` が正規定義する（REQ-FUNC-026）。エージェント/スキル側が公開ツールレスポンス（`memory_state_show` + `memory_stats`）から同じ条件を評価し、蒸留を推奨する。`memory_distill_*` パイプライン内では条件評価を行わない。
+
 | 条件 | 閾値 | 判定データ |
 |---|---|---|
 | ノート数 | 10件以上（前回蒸留以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の該当種別の最終蒸留日時 |
 | 経過日数 | 7日以上 | 現在日時 vs `_state.md` の該当種別の最終蒸留日時 |
-| ユーザー明示要求 | — | `memory_distill_*` の直接呼び出し自体がトリガー（`shouldDistill()` をバイパスし即座にパイプラインを実行） |
+| ユーザー明示要求 | — | `memory_distill_*` の直接呼び出し（条件評価なしで即座にパイプラインを実行） |
 
 **最終蒸留日時の保存先:** `_state.md` の YAML フロントマターに `last_knowledge_distilled_at` と `last_values_distilled_at` を個別に保持する。既存のセクション構造（「現在のフォーカス」「主要な判断」等）には変更を加えない。`state.py` にフロントマター読み書き機能を追加する（セクション 11.1 参照）。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの最終実行日時を区別して管理する。これらの日時は `dry_run=false` かつ 1 件以上の永続化が発生した蒸留完了時にのみ更新される（セクション 10.1 integrate 参照）。
 
@@ -602,12 +609,19 @@ stateDiagram-v2
 
 | モジュール | 変更内容 | 影響度 |
 |---|---|---|
-| `server.py` | 新規ツール関数の追加（既存関数は変更なし） | 低（追加のみ） |
+| `server.py` | 新規ツール関数の追加 + 既存 2 ツールの追加的レスポンス拡張（下記参照） | 低（追加のみ） |
 | `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加 | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（初回蒸留完了時に遅延追加） | 低（追加のみ） |
-| `state.py` | `_state.md` フロントマターへの蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at`）読み書き機能を追加。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
+| `state.py` | `_state.md` の YAML フロントマターに蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at`）の読み書き機能を追加。これにより `_state.md` のファイル形式は拡張される（パスは据え置き）。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
+
+**既存ツールの追加的レスポンス拡張（REQ-FUNC-021/029 の判定データ提供）:**
+
+蒸留推奨判定（セクション 10.2、Phase 7 参照）に必要なデータを公開するため、以下の 2 ツールのレスポンスに追加フィールドを設ける。既存フィールドの削除・型変更は行わず、追加のみとする:
+
+- **`memory_state_show`**: 既存の `sections` フィールドに加え、`frontmatter` フィールドを追加する。`_state.md` の YAML フロントマター（`last_knowledge_distilled_at` / `last_values_distilled_at`）を返却し、エージェント/スキル側が蒸留からの経過日数を算出できるようにする
+- **`memory_stats`**: 既存の統計フィールドに加え、`notes_since_last_knowledge_distillation` / `notes_since_last_values_distillation` フィールドを追加する。各蒸留種別の最終蒸留日時以降に作成されたノート数を、`_index.jsonl` のエントリタイムスタンプと `_state.md` の蒸留日時を突合して算出する（日単位ではなくタイムスタンプ精度）
 
 ### 11.2 変更しない既存モジュール
 
@@ -620,7 +634,7 @@ stateDiagram-v2
 
 ### 11.3 後方互換性の保証方針
 
-- 既存の 19 MCP ツールの関数シグネチャ・レスポンス形式に一切変更を加えない
+- 既存の 19 MCP ツールの関数シグネチャは変更しない。レスポンスは `memory_state_show` と `memory_stats` の 2 ツールのみ追加的フィールド拡張を行う（詳細はセクション 11.1 参照）。既存フィールドの削除・型変更は行わないため、既存クライアントの後方互換を維持する。上記 2 ツール以外の既存ツールのレスポンス形式には変更を加えない
 - `_index.jsonl` のスキーマに変更を加えない
 - 新規モジュールは `core/knowledge/`、`core/values/`、`core/distillation/` として分離し、既存 `core/` の名前空間を汚染しない
 - `memory_init` の拡張は追加的（既存ディレクトリ構造を壊さない）
@@ -764,10 +778,25 @@ stateDiagram-v2
 | **Phase 4** | health check 拡張 | REQ-NF-004 | Phase 2, 3 |
 | **Phase 5** | 蒸留エンジン（collect / extract / integrate） | REQ-FUNC-010, 011, 012, 013 | Phase 2, 3 |
 | **Phase 6** | Values 昇格 + AGENTS.md 連携 | REQ-FUNC-015, 016, 022 | Phase 3 |
-| **Phase 7** | AGENTS.md セクション改修 + Should 要件 | REQ-FUNC-019-021, 023-029 | Phase 5, 6 |
+| **Phase 7** | AGENTS.md セクション改修（Must）+ 削除・一括参照・トリガー・教示・同期・retrospective（Should） | REQ-FUNC-019-021（Must）, 023-029（Should） | Phase 5, 6 |
 | **Phase 8** | Could 要件（統計、横断検索、降格） | REQ-FUNC-030-034 | Phase 7 |
 
-**補足:** 検索エンジン汎用化（ADR-005）を Phase 1 に含めることで、Phase 2/3 の Knowledge/Values 検索ツールが `score_generic_entry` を利用できる。Phase 2 と Phase 3 は相互に独立しており、並行実装が可能。
+**補足:**
+- 検索エンジン汎用化（ADR-005）を Phase 1 に含めることで、Phase 2/3 の Knowledge/Values 検索ツールが `score_generic_entry` を利用できる。Phase 2 と Phase 3 は相互に独立しており、並行実装が可能
+- Phase 7 は Must 要件（REQ-FUNC-019-021: AGENTS.md セクション改修）と Should 要件（REQ-FUNC-023-029）を含む。Must 要件を先行実装し、Should 要件は Phase 7 内で後続とする
+
+**Phase 7 の AGENTS.md / retrospective 連携設計:**
+
+Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と retrospective 拡張（REQ-FUNC-029）は、以下のコンポーネント境界で既存の仕組みと接続する:
+
+| 要件 | 接続点 | 呼び出し元 → 呼び出し先 |
+|---|---|---|
+| REQ-FUNC-019（記憶管理セクション拡張） | AGENTS.md テキスト | 手動編集（設計成果物として AGENTS.md に Memory/Knowledge/Values の3層構造を記載） |
+| REQ-FUNC-020（セッション開始手順更新） | AGENTS.md テキスト → `memory_values_search` | エージェントが想起ステップで `memory_values_search` を MCP ツールとして呼び出す |
+| REQ-FUNC-021（セッション終了手順更新） | AGENTS.md テキスト → `memory_state_show` + `memory_stats` → 蒸留推奨判断 | エージェントが振り返りステップで `memory_state_show`（蒸留日時: `last_knowledge_distilled_at` / `last_values_distilled_at`）と `memory_stats`（前回蒸留以降のノート蓄積数）を呼び出し、REQ-FUNC-026 の条件を評価する。条件充足時は蒸留の実行を推奨する（エージェントの判断で `memory_distill_*` を呼び出してよいが、MCP サーバー側の自動実行ではない） |
+| REQ-FUNC-029（retrospective 拡張） | retrospective スキル → `memory_state_show` + `memory_stats` → `memory_distill_*` | retrospective スキルが `memory_state_show`（蒸留日時）と `memory_stats`（ノート蓄積数）を取得し、REQ-FUNC-026 の条件を評価する。条件充足時に蒸留実行を提案し、ユーザー承認後に `memory_distill_*` を呼び出す |
+
+**補足**: REQ-FUNC-020/021/029 はいずれもエージェント（または retrospective スキル）が MCP ツールの公開 API を呼び出す形で実装される。REQ-FUNC-026 のトリガー条件評価はエージェント/スキル側の責務であり、判定データは以下の公開ツールレスポンスから取得する: (1) `memory_state_show` — `_state.md` フロントマターの蒸留日時（`last_knowledge_distilled_at` / `last_values_distilled_at`）、(2) `memory_stats` — 前回蒸留以降のノート蓄積数。`DistillationTrigger` は `DistillationService` の内部コンポーネントであり、REQ-FUNC-026 のトリガー条件（10 ノート以上 OR 7 日以上経過）を正規定義するが、公開 API としては露出せず、`memory_distill_*` パイプライン内での条件評価も行わない（セクション 10.1 参照）。エージェント/スキル側が上記の公開ツールレスポンスに基づいて同じ条件を評価し、条件充足時に蒸留を推奨する（自動実行ではない）。
 
 ---
 

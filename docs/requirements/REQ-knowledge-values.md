@@ -246,6 +246,14 @@ memory/
 - `memory_init` が作成するもの（eager）: `knowledge/` ディレクトリ、`values/` ディレクトリ、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー（全て冪等）
 - 初回操作時に作成するもの（lazy）: `_knowledge.jsonl`（初回 `memory_knowledge_add` 時）、`_values.jsonl`（初回 `memory_values_add` 時）、`_state.md` の蒸留日時フロントマター（初回蒸留完了時）
 
+**AGENTS.md のパス解決規則:**
+`memory_init` および `memory_values_promote` / `memory_values_demote` / `memory_values_delete`（promoted エントリ）が AGENTS.md を操作する際のパス解決は、以下の優先順位に従う:
+1. 環境変数 `AGENTS_MD_PATH`（明示指定。設定されていれば常に優先）
+2. `memory_dir` の親ディレクトリ（= リポジトリルート想定）の `AGENTS.md`
+3. `memory_dir` の親ディレクトリの `CLAUDE.md`（AGENTS.md への symlink 考慮）
+
+いずれも見つからない場合、`memory_init` はマーカー挿入をスキップし警告を返す。昇格/降格/削除操作はエラーを返す。
+
 ---
 
 #### REQ-FUNC-004: Knowledge 登録
@@ -442,7 +450,7 @@ memory/
 | `dry_run` | bool | No | true の場合、抽出結果を返すだけで登録しない（デフォルト: `true`） |
 
 **処理:**
-1. 対象ノートの「判断」「注意点・残課題」「成果」「作業ログ」セクションをスキャン
+1. 対象ノートの Decisions / Pitfalls & Remaining Issues / Results / Work Log セクション（日本語エイリアス: 判断 / 注意点・残課題 / 成果 / 作業ログ）をスキャン。セクション識別はテンプレート言語（日本語・英語）に依存しない正規化済みセクション名で行う
 2. 繰り返し現れるパターン・事実・ルールを抽出（`DistillationExtractorPort` 経由で LLM に委譲）
 3. 既存 Knowledge との重複チェック（REQ-FUNC-012: 統合ロジック）
 4. `dry_run=false` の場合、新規エントリを `memory_knowledge_add` で登録
@@ -473,7 +481,7 @@ memory/
 | `dry_run` | bool | No | デフォルト: `true` |
 
 **処理:**
-1. 対象ノートの「判断」セクションと、ステートの「主要な判断」を重点的にスキャン
+1. 対象ノートの Decisions セクション（日本語エイリアス: 判断）と、ステートの「主要な判断」セクションを重点的にスキャン。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う
 2. 判断の傾向パターンを抽出（`DistillationExtractorPort` 経由で LLM に委譲）
 3. 既存 Values との重複チェック（REQ-FUNC-013: 統合ロジック）
 4. 重複する場合は確信度を更新し evidence を追加
@@ -982,7 +990,7 @@ REQ-FUNC-034 (降格) → REQ-FUNC-016 (AGENTS.md 反映)
 | # | 内容 | 関連要件 | 確認相手 | 暫定値 |
 |---|---|---|---|---|
 | 1 | 確信度更新の具体的アルゴリズム（LLM 判定 vs 固定数式） | REQ-FUNC-013 | プロダクトオーナー | LLM 判定（コンテキスト依存） |
-| 2 | Knowledge/Values の初期シードデータ（既存 CLAUDE.md の設計方針等）を移行するか | REQ-FUNC-001, REQ-FUNC-002 | プロダクトオーナー | 未定 |
+| 2 | Knowledge/Values の初期シードデータ（既存 AGENTS.md の設計方針等。CLAUDE.md は AGENTS.md への symlink）を移行するか | REQ-FUNC-001, REQ-FUNC-002 | プロダクトオーナー | 未定 |
 | 3 | Knowledge の `domain` 分類体系（固定リスト vs 自由入力） | REQ-FUNC-001, REQ-FUNC-004 | プロダクトオーナー | 自由入力 |
 | 4 | Values の `category` 分類体系（固定リスト vs 自由入力） | REQ-FUNC-002, REQ-FUNC-007 | プロダクトオーナー | 自由入力 |
 | 5 | `memory_values_add` の類似判定に使用するアルゴリズム（BM25 スコア閾値 vs LLM 判定） | REQ-FUNC-007 | 技術リード | 未定 |
