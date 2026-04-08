@@ -13,7 +13,7 @@
 
 | 優先度 | 品質特性 | 根拠 |
 |---|---|---|
-| 1 | **後方互換性** | 既存 18 MCP ツール・177+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
+| 1 | **後方互換性** | 既存 19 MCP ツール・270+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
 | 2 | **保守性** | 既存 `core/` のフラットモジュール構造に Knowledge/Values/蒸留の3コンテキストを追加するため、モジュール境界の明確化が不可欠 |
 | 3 | **拡張性** | 将来的な push 型配信・横断検索・降格メカニズム等の Could 要件への対応余地を確保 |
 | 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。既存 BM25+ エンジンの流用で達成可能 |
@@ -62,7 +62,7 @@ graph TB
             VT["Values ツール群<br/>add / search / update / delete / list"]
             PT["Promotion ツール群<br/>promote / demote"]
             DT["Distillation ツール群<br/>distill_knowledge / distill_values"]
-            ET["既存ツール群<br/>(18 ツール — 変更なし)"]
+            ET["既存ツール群<br/>(19 ツール — 変更なし)"]
         end
 
         subgraph "アプリケーション層"
@@ -216,7 +216,7 @@ sequenceDiagram
     KR-->>KS: None（存在しない）
     KS->>KE: new KnowledgeEntry(...)
     KS->>KR: save(entry)
-    KR->>KR: write knowledge/{domain}/k-{id}.md
+    KR->>KR: write knowledge/{domain}/{id}.md
     KR->>KR: append _knowledge.jsonl
     KR-->>KS: ok
     KS-->>T: {id, path}
@@ -243,12 +243,12 @@ sequenceDiagram
     DS->>DS: ノート内容をバッチ読み込み
     DS->>DX: extract(snapshot, mode=knowledge)
     DX->>LLM: ノート内容 → Knowledge 候補抽出
-    LLM-->>DX: 候補リスト
-    DX-->>DS: 候補リスト
+    LLM-->>DX: KnowledgeCandidate[]
+    DX-->>DS: KnowledgeCandidate[]
 
     loop 各候補について
         DS->>KI: integrate(candidate, existingEntries)
-        KI-->>DS: IntegrationResult
+        KI-->>DS: KnowledgeIntegrationResult
         alt dry_run=true
             DS->>DS: ReportEntry のみ生成
         else CREATE_NEW
@@ -256,13 +256,19 @@ sequenceDiagram
         else MERGE_EXISTING
             DS->>KS: update(targetId, mergedContent)
         else LINK_RELATED
-            DS->>KS: update(targetId, related=[candidateId])
+            DS->>KS: add(candidate)
+            DS->>KS: update(newId, related=[targetId])
+            DS->>KS: update(targetId, related=[newId])
+        else SKIP_DUPLICATE
+            DS->>DS: ReportEntry(SKIPPED)
         end
     end
 
     DS-->>DT: DistillationReport
-    DT-->>A: {new: N, updated: M, skipped: K}
+    DT-->>A: {new: N, merged: M, linked: L, skipped: K}
 ```
+
+**補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new: N, reinforced: R, contradicted: C, skipped: K}` を返す（`merged` / `linked` は 0、代わりに `reinforced` / `contradicted` を使用）。`DistillationReport` は6種の集計フィールド（`newCount` / `mergedCount` / `linkedCount` / `reinforcedCount` / `contradictedCount` / `skippedCount`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。
 
 ### 5.3 Values 昇格フロー
 
@@ -327,9 +333,9 @@ memory/
 ├── _values.jsonl            # 新規: Values インデックス
 ├── knowledge/               # 新規
 │   └── {domain}/
-│       └── k-{id}.md        # Markdown + YAML frontmatter
+│       └── {id}.md          # Markdown + YAML frontmatter（id は `k-` プレフィックス付き）
 ├── values/                  # 新規
-│   └── v-{id}.md            # Markdown + YAML frontmatter
+│   └── {id}.md              # Markdown + YAML frontmatter（id は `v-` プレフィックス付き）
 └── YYYY-MM-DD/              # 既存（変更なし）
 ```
 
@@ -390,6 +396,7 @@ Rust の所有権ルール:
   "evidence_count": 8,
   "promoted": true,
   "promoted_at": "2026-04-05T14:00:00",
+  "promoted_confidence": 0.85,
   "created_at": "2026-03-10T09:00:00",
   "updated_at": "2026-04-05T14:00:00"
 }
@@ -527,30 +534,32 @@ stateDiagram-v2
 
 **collect:**
 
-1. `DistillationTrigger.shouldDistill()` でトリガー条件を評価（`_state.md` の最終蒸留日時を参照）
+1. `DistillationTrigger.shouldDistill()` でトリガー条件を評価（`_state.md` の蒸留種別ごとの最終蒸留日時を参照。Knowledge は `last_knowledge_distilled_at`、Values は `last_values_distilled_at`）
 2. 対象期間の Memory ノートを `_index.jsonl` から選定
-3. ノート内容（判断・注意点・成果セクション）を読み込み
+3. ノート内容（判断・注意点・成果・作業ログセクション）を読み込み
 4. 抽出用の `DistillationSnapshot` を構築
 
 **extract:**
 
 1. `DistillationExtractorPort` が `DistillationSnapshot` を受け取り、LLM へ抽出依頼
-2. 候補リスト（`DistillationCandidate[]`）を返す
+2. 候補リスト（`KnowledgeCandidate[]` または `ValuesCandidate[]`）を返す
 
 **integrate:**
 
 1. 各候補に対して `KnowledgeIntegrator` / `ValuesIntegrator` で統合判定
 2. `dry_run=false` の場合のみ CRUD 操作を実行
 3. `DistillationReport` を生成・返却
-4. 永続化が発生した場合のみ `_state.md` の最終蒸留日時を更新
+4. 永続化が発生した場合のみ `_state.md` の該当種別の最終蒸留日時を更新（`last_knowledge_distilled_at` または `last_values_distilled_at`）
 
 ### 10.2 蒸留トリガー条件
 
 | 条件 | 閾値（暫定） | 判定データ |
 |---|---|---|
-| ノート数 | 10件以上（前回蒸留以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の最終蒸留日時 |
-| 経過日数 | 7日以上 | 現在日時 vs `_state.md` の最終蒸留日時 |
+| ノート数 | 10件以上（前回蒸留以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の該当種別の最終蒸留日時 |
+| 経過日数 | 7日以上 | 現在日時 vs `_state.md` の該当種別の最終蒸留日時 |
 | ユーザー明示要求 | — | ツール呼び出し自体がトリガー |
+
+**最終蒸留日時の保存先:** `_state.md` の専用セクション（例: 「蒸留メタデータ」）に `last_knowledge_distilled_at` と `last_values_distilled_at` を個別に保持する。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの最終実行日時を区別して管理する。
 
 ---
 
@@ -578,7 +587,7 @@ stateDiagram-v2
 
 ### 11.3 後方互換性の保証方針
 
-- 既存の 18 MCP ツールの関数シグネチャ・レスポンス形式に一切変更を加えない
+- 既存の 19 MCP ツールの関数シグネチャ・レスポンス形式に一切変更を加えない
 - `_index.jsonl` のスキーマに変更を加えない
 - 新規モジュールは `core/knowledge/`、`core/values/`、`core/distillation/` として分離し、既存 `core/` の名前空間を汚染しない
 - `memory_init` の拡張は追加的（既存ディレクトリ構造を壊さない）

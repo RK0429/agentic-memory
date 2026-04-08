@@ -144,6 +144,7 @@ classDiagram
         <<ValueObject>>
         +IntegrationAction action
         +KnowledgeId? targetId
+        +string? mergedContent
         +string? conflictDetail
     }
 
@@ -154,6 +155,8 @@ classDiagram
         LINK_RELATED
         SKIP_DUPLICATE
     }
+
+    note for IntegrationAction "LINK_RELATED は候補を新規登録した上で\n既存エントリと双方向に related を設定する\n複合アクション（CREATE + 相互 LINK）"
 
     KnowledgeEntry *-- KnowledgeId
     KnowledgeEntry *-- Domain
@@ -168,7 +171,7 @@ classDiagram
 ```
 
 **不変条件:**
-- `id` は `title + domain + content[:100]` から決定論的に生成（プレフィックス `k-`）。同一 ID の重複登録は不可（BR-1, BR-8）
+- `id` は `title + domain + content[:100]` から決定論的に生成（プレフィックス `k-`）。ファイルパスは `knowledge/{domain}/{id}.md`（`id` 自体が `k-` を含む）。同一 ID の重複登録は不可（BR-1, BR-8）
 - `sources` の更新はマージ（既存に追加。置換ではない）（BR-11）
 - 削除時、他エントリの `related` からの参照除去はアプリケーション層の責務（BR-14、判断記録 2 参照）
 
@@ -279,7 +282,7 @@ classDiagram
 ```
 
 **不変条件:**
-- `id` は `description + category` から決定論的に生成（プレフィックス `v-`）（BR-2）
+- `id` は `description + category` から決定論的に生成（プレフィックス `v-`）。ファイルパスは `values/{id}.md`（`id` 自体が `v-` を含む）（BR-2）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
 - `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）
 - 昇格条件: `confidence >= 0.8` AND `evidence.totalCount >= 5` AND `promoted == false`（BR-6）
@@ -308,9 +311,20 @@ classDiagram
         +string? category
     }
 
-    class DistillationCandidate {
+    class KnowledgeCandidate {
         <<ValueObject>>
+        +string title
         +string content
+        +string domain
+        +list~string~ tags
+        +string sourceRef
+        +string sourceSummary
+    }
+
+    class ValuesCandidate {
+        <<ValueObject>>
+        +string description
+        +string category
         +string sourceRef
         +string sourceSummary
     }
@@ -319,7 +333,10 @@ classDiagram
         <<ValueObject>>
         +list~ReportEntry~ entries
         +int newCount
-        +int updatedCount
+        +int mergedCount
+        +int linkedCount
+        +int reinforcedCount
+        +int contradictedCount
         +int skippedCount
     }
 
@@ -335,6 +352,7 @@ classDiagram
         <<Enumeration>>
         CREATED
         MERGED
+        LINKED
         REINFORCED
         CONTRADICTED
         SKIPPED
@@ -352,10 +370,13 @@ classDiagram
     ValuesDistillationRequest --|> DistillationRequest
     DistillationReport o-- ReportEntry
     ReportEntry --> DistillationOutcome
+    KnowledgeCandidate ..> KnowledgeDistillationRequest : "extract 結果"
+    ValuesCandidate ..> ValuesDistillationRequest : "extract 結果"
 ```
 
 **補足:**
 - 蒸留の「抽出」自体は LLM のエージェント処理。ツールはトリガーと結果の永続化を担う
+- `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。`lastDistilledAt` は `_state.md` に `last_knowledge_distilled_at` / `last_values_distilled_at` として種別ごとに永続化する
 - `DistillationTrigger.shouldDistill()` の条件: 前回から10ノート以上 OR 7日以上経過 OR ユーザー明示要求（BR-12）
 
 ---
@@ -440,9 +461,10 @@ stateDiagram-v2
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
 | Distillation | Memory ノート群から Knowledge/Values を抽出するプロセス全体 | DistillationRequest |
-| DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | DistillationCandidate |
-| DistillationCandidate | LLM が抽出した Knowledge/Values の候補。統合前の中間表現 | DistillationReport |
-| DistillationReport | 蒸留結果の報告。新規・更新・スキップの件数と詳細 | DistillationOutcome |
+| DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | KnowledgeCandidate, ValuesCandidate |
+| KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
+| ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
+| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
 | DistillationTrigger | 蒸留実行の推奨判定ロジック。ノート数閾値(10)・期間閾値(7日)で判定 | DistillationRequest |
 
 ---
