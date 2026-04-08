@@ -242,6 +242,10 @@ memory/
 - 各エントリは Markdown + YAML frontmatter で人間可読
 - `_knowledge.jsonl` / `_values.jsonl` は検索用インデックス（既存 `_index.jsonl` と同じ設計思想）
 
+**生成タイミング（eager / lazy）:**
+- `memory_init` が作成するもの（eager）: `knowledge/` ディレクトリ、`values/` ディレクトリ、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー（全て冪等）
+- 初回操作時に作成するもの（lazy）: `_knowledge.jsonl`（初回 `memory_knowledge_add` 時）、`_values.jsonl`（初回 `memory_values_add` 時）、`_state.md` の蒸留日時フロントマター（初回蒸留完了時）
+
 ---
 
 #### REQ-FUNC-004: Knowledge 登録
@@ -753,9 +757,11 @@ memory/
 1. 前回の蒸留以降に作成されたノートが 10 件以上
 2. 前回の蒸留から 7 日以上経過
 
-**補足:** ユーザーが `memory_distill_knowledge` / `memory_distill_values` を直接呼び出した場合はトリガー判定をバイパスし、即座に蒸留を実行する。上記条件はセッション終了時の自動推奨判定にのみ使用する。
+**2 つの起動経路:**
+- *セッション終了時の自動推奨*: 上記条件（10 ノート以上 OR 7 日以上経過）を評価し、満たす場合に蒸留を推奨する
+- *ユーザーの直接呼び出し* (`memory_distill_knowledge` / `memory_distill_values`): トリガー判定をバイパスし、即座に蒸留パイプラインを実行する
 
-**実装方針:** `_state.md` に蒸留種別ごとの最終蒸留日時を記録する（`last_knowledge_distilled_at` / `last_values_distilled_at`）。Knowledge と Values の蒸留は独立にトリガーされるため、日時を個別に管理する。
+**実装方針:** `_state.md` の YAML フロントマターに蒸留種別ごとの最終蒸留日時を記録する（`last_knowledge_distilled_at` / `last_values_distilled_at`）。Knowledge と Values の蒸留は独立にトリガーされるため、日時を個別に管理する。これらの日時は `dry_run=false` かつ 1 件以上の永続化が発生した蒸留完了時にのみ更新される。
 
 ---
 
@@ -775,6 +781,12 @@ memory/
 3. `accuracy` をファクトチェック結果に応じて設定（複数ソース確認 → `verified` / 単一 → `likely` / 未確認 → `uncertain`）
 4. `memory_knowledge_add` で登録（`source_type: user_taught`）
 
+**ファクトチェック結果の永続化:** エントリレベルの `source_type` は `user_taught`（知識の出自を示す）を維持する。`sources` リストには以下を含める:
+- ユーザー教示の Source: `type: user_taught`, `ref`: セッション参照, `summary`: ユーザーの発言要約
+- ファクトチェック結果の Source（検証を実施した場合）: `type: autonomous_research`, `ref`: 確認に使用した URL やドキュメント参照, `summary`: 検証結果の要約
+
+これにより、エントリレベルの `source_type`（出自分類）と個別 `sources[].type`（各引用元の出自）が独立に管理され、ファクトチェックの根拠が追跡可能になる。
+
 ---
 
 #### REQ-FUNC-028: 昇格 Values の同期
@@ -788,9 +800,11 @@ memory/
 - **関連要件**: REQ-FUNC-016, REQ-FUNC-022
 
 **チェック項目:**
-1. `promoted: true` の Values エントリが AGENTS.md セクションに存在するか
-2. AGENTS.md セクションに記載があるが `promoted: true` でないエントリはないか
-3. AGENTS.md の記述と Values エントリの `description` が一致するか
+1. `promoted: true` の Values エントリが AGENTS.md セクションに存在するか（`id` による存在チェック）
+2. AGENTS.md セクションに記載があるが `promoted: true` でないエントリはないか（`id` による逆方向チェック）
+3. AGENTS.md の記述と Values エントリの `description` が一致するか（内容チェック）
+
+**同期スコープ:** `id`（存在有無）と `description`（内容一致）のみをチェック対象とする。AGENTS.md に表示される `confidence` と `evidence` 件数はプロモーション実行時点のスナップショット値であり、Values エントリ更新時に追従しないため、同期チェックの対象外とする。
 
 ---
 

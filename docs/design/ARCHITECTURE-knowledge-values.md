@@ -104,7 +104,7 @@ graph TB
     DS --> VS
     DS --> DX
     PS --> PM
-    PS --> VS
+    PS --> VR
     PS --> AA
     KR --> KIdx
     VR --> VIdx
@@ -130,12 +130,12 @@ graph TB
 | **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（判断記録 2） | ドメイン層、インフラ層 |
 | | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み | ドメイン層、インフラ層 |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
-| | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御 | ドメイン層、`AgentsMdAdapter` |
+| | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御 | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
 | **ドメイン層** | `KnowledgeEntry` | Knowledge の不変条件の保護（ID 生成、sources マージ等） | なし（自己完結） |
 | | `ValuesEntry` | Values の不変条件の保護（confidence 範囲、evidence 保持上限、昇格条件判定） | なし |
 | | `KnowledgeIntegrator` | 蒸留候補と既存 Knowledge の重複検出・マージ判定 | なし |
 | | `ValuesIntegrator` | 蒸留候補と既存 Values の重複検出・confidence 更新判定 | なし |
-| | `PromotionManager` | 昇格条件判定、降格提案判定など純粋なドメインポリシー（`confirm` は受け取らない） | なし |
+| | `PromotionManager` | 昇格条件判定、昇格/降格実行など純粋なドメインポリシー（`confirm` は受け取らない）。降格提案判定は `PromotionState.shouldSuggestDemotion()` に委譲（判断記録 3） | なし |
 | **インフラ層** | `KnowledgeRepository` | Knowledge の永続化（Markdown + frontmatter）、インデックス同期 | `SearchEngine` |
 | | `ValuesRepository` | Values の永続化、インデックス同期 | `SearchEngine` |
 | | `SearchEngine` | BM25+ スコアリングの汎用化（既存 `scorer.py` / `search.py` の拡張） | なし |
@@ -296,7 +296,11 @@ sequenceDiagram
     PT-->>A: AGENTS.md 更新差分
 ```
 
-**部分失敗時の整合性:** AGENTS.md 書き込み（不可逆影響が大きい操作）を先に実行し、成功後に Values エントリを更新する。Values エントリの更新が失敗した場合、AGENTS.md と `promoted` フラグの間に不整合が生じるが、`memory_health_check`（REQ-FUNC-028）がこの不整合を検出・報告する。復旧はオペレーターが `memory_values_promote` を再実行する。`promoted` がまだ `false` のため昇格条件を再び満たし、`AgentsMdAdapter` が既存エントリの重複追記を ID チェックで防止する（ADR-003）ため、冪等に完了する。
+**部分失敗時の整合性:** AGENTS.md 書き込み（不可逆影響が大きい操作）を先に実行し、成功後に Values エントリを更新する。Values エントリの更新が失敗した場合、以下の整合性保証が働く:
+
+1. **検出**: `memory_health_check`（REQ-FUNC-028）の `syncCheck()` が「AGENTS.md にエントリが存在するが、対応する Values の `promoted` が `false`」という方向の不整合を検出・報告する
+2. **復旧**: オペレーターが `memory_values_promote` を再実行する。`promoted` がまだ `false` のため昇格条件を再び満たす。`AgentsMdAdapter.appendEntry()` は ID チェックで既存エントリの重複追記を防止する（ADR-003）ため、AGENTS.md 側は変更なし。続いて Values エントリの `promoted` フラグが `true` に更新され、整合性が回復する
+3. **順序の根拠**: health check は不整合の**検出**を担い、`memory_values_promote` の再実行が**復旧**を担う。両者は独立した操作であり、実行順序の制約はない
 
 ---
 
@@ -502,7 +506,7 @@ REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesS
 | `appendEntry(entry)` | `END:PROMOTED_VALUES` マーカーの直前に新規行を挿入 |
 | `removeEntry(id)` | セクション内から `id: {id}` を含む行ブロックを削除 |
 | `listEntries()` | セクション内の全エントリを `ValuesId` 付きでパース |
-| `syncCheck()` | Values ストアの `promoted: true` とセクション内容の差分を検出 |
+| `syncCheck()` | Values ストアの `promoted: true` とセクション内容の差分を検出。比較対象は `id`（存在有無）と `description`（内容一致）。`confidence` / `evidence` 件数はプロモーション時点のスナップショット値であり、同期チェックの対象外（後述の同期スコープ参照） |
 | `writeAtomically(entries)` | `fcntl` ロック取得後に temp file + `os.replace()` でセクション全体を更新 |
 
 ### 9.4 ACL（腐敗防止層）の必要性
@@ -526,6 +530,22 @@ AGENTS.md のパスは以下の優先順位で解決する:
 - 書き込み前に `BEGIN/END` マーカーの存在を検証し、欠落時は fail-fast でエラーにする（マーカー挿入は `memory_init` の責務。昇格/降格時に欠落していれば `memory_init` の再実行を案内する）
 - `memory_health_check` は `promoted=true` の Values と AGENTS.md セクションの双方向整合性を検証する
 
+### 9.7 同期スコープ
+
+AGENTS.md に表示される `confidence` と `evidence` 件数はプロモーション実行時点のスナップショット値であり、Values エントリの更新に追従して自動更新はしない。理由:
+
+- 毎回の `memory_values_update` で AGENTS.md を書き換えると、ファイルロック競合と不要な差分が増加する
+- AGENTS.md はエージェントの行動指針テキストとして読まれるため、description の正確性が最重要。数値メタデータの即時反映は必須でない
+
+`syncCheck()` の比較対象:
+
+| フィールド | 同期チェック対象 | 理由 |
+|---|---|---|
+| `id` | **対象**（存在有無の双方向チェック） | 昇格/降格の整合性の根幹 |
+| `description` | **対象**（内容一致チェック） | 行動指針テキストの正確性 |
+| `confidence` | 対象外 | プロモーション時のスナップショット値 |
+| `evidence` 件数 | 対象外 | プロモーション時のスナップショット値 |
+
 ---
 
 ## 10. 蒸留フロー詳細
@@ -545,11 +565,12 @@ stateDiagram-v2
 
 **collect:**
 
-1. `DistillationTrigger.shouldDistill()` でトリガー条件を評価（`_state.md` の蒸留種別ごとの最終蒸留日時を参照。Knowledge は `last_knowledge_distilled_at`、Values は `last_values_distilled_at`）
-2. 対象期間の Memory ノートを `_index.jsonl` から選定
-3. ノート内容（「判断」「注意点・残課題」「成果」「作業ログ」セクション）を読み込み
-4. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
-5. 抽出用の `DistillationSnapshot` を構築
+1. **起動経路の判定**: ユーザーが `memory_distill_*` を直接呼び出した場合はステップ 2 をスキップし、ステップ 3 へ進む
+2. `DistillationTrigger.shouldDistill()` でトリガー条件を評価（セッション終了時の自動推奨経路でのみ実行。`_state.md` の蒸留種別ごとの最終蒸留日時を参照。Knowledge は `last_knowledge_distilled_at`、Values は `last_values_distilled_at`）。条件を満たさない場合は蒸留を推奨せずに終了
+3. 対象期間の Memory ノートを `_index.jsonl` から選定
+4. ノート内容（「判断」「注意点・残課題」「成果」「作業ログ」セクション）を読み込み
+5. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
+6. 抽出用の `DistillationSnapshot` を構築
 
 **extract:**
 
@@ -561,7 +582,7 @@ stateDiagram-v2
 1. 各候補に対して `KnowledgeIntegrator` / `ValuesIntegrator` で統合判定
 2. `dry_run=false` の場合のみ CRUD 操作を実行
 3. `DistillationReport` を生成・返却
-4. 永続化が発生した場合のみ `_state.md` の該当種別の最終蒸留日時を更新（`last_knowledge_distilled_at` または `last_values_distilled_at`）
+4. `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した場合にのみ、`_state.md` の該当種別の最終蒸留日時を更新（`last_knowledge_distilled_at` または `last_values_distilled_at`）。`dry_run=true` や永続化 0 件の実行では更新しない
 
 ### 10.2 蒸留トリガー条件
 
@@ -569,9 +590,9 @@ stateDiagram-v2
 |---|---|---|
 | ノート数 | 10件以上（前回蒸留以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の該当種別の最終蒸留日時 |
 | 経過日数 | 7日以上 | 現在日時 vs `_state.md` の該当種別の最終蒸留日時 |
-| ユーザー明示要求 | — | `memory_distill_*` の直接呼び出し自体がトリガー（`shouldDistill()` をバイパス） |
+| ユーザー明示要求 | — | `memory_distill_*` の直接呼び出し自体がトリガー（`shouldDistill()` をバイパスし即座にパイプラインを実行） |
 
-**最終蒸留日時の保存先:** `_state.md` の YAML フロントマターに `last_knowledge_distilled_at` と `last_values_distilled_at` を個別に保持する。既存のセクション構造（「現在のフォーカス」「主要な判断」等）には変更を加えない。`state.py` にフロントマター読み書き機能を追加する（セクション 11.1 参照）。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの最終実行日時を区別して管理する。
+**最終蒸留日時の保存先:** `_state.md` の YAML フロントマターに `last_knowledge_distilled_at` と `last_values_distilled_at` を個別に保持する。既存のセクション構造（「現在のフォーカス」「主要な判断」等）には変更を加えない。`state.py` にフロントマター読み書き機能を追加する（セクション 11.1 参照）。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの最終実行日時を区別して管理する。これらの日時は `dry_run=false` かつ 1 件以上の永続化が発生した蒸留完了時にのみ更新される（セクション 10.1 integrate 参照）。
 
 ---
 
@@ -585,7 +606,7 @@ stateDiagram-v2
 | `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加 | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
-| `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md マーカー idempotent 自動挿入 | 低（追加のみ） |
+| `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（初回蒸留完了時に遅延追加） | 低（追加のみ） |
 | `state.py` | `_state.md` フロントマターへの蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at`）読み書き機能を追加。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
 
 ### 11.2 変更しない既存モジュール

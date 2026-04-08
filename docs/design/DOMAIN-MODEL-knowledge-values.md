@@ -91,6 +91,8 @@ classDiagram
         +addSources(list~Source~) KnowledgeEntry
         +linkRelated(KnowledgeId) KnowledgeEntry
         +changeAccuracy(Accuracy) KnowledgeEntry
+        +updateTags(list~string~) KnowledgeEntry
+        +changeUserUnderstanding(UserUnderstanding) KnowledgeEntry
         +removeRelated(KnowledgeId) KnowledgeEntry
     }
 
@@ -192,6 +194,7 @@ classDiagram
         +PromotionState promotionState
         +datetime createdAt
         +datetime updatedAt
+        +updateDescription(string) ValuesEntry
         +addEvidence(Evidence) ValuesEntry
         +adjustConfidence(float) ValuesEntry
         +isPromotionCandidate() bool
@@ -381,7 +384,10 @@ classDiagram
 **補足:**
 - 蒸留の「抽出」は `DistillationExtractorPort` 経由で LLM に委譲する。ツールは collect（ノート選定）→ extract（抽出委譲）→ integrate（統合・永続化）の全段階をオーケストレーションする
 - `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。`lastDistilledAt` は `_state.md` に `last_knowledge_distilled_at` / `last_values_distilled_at` として種別ごとに永続化する
-- `DistillationTrigger.shouldDistill()` の条件: 前回から10ノート以上 OR 7日以上経過（BR-12）。ユーザーが `memory_distill_*` を直接呼び出した場合は `shouldDistill()` をバイパスして即座に実行するため、トリガーの入力フィールドとしてはモデル化しない
+- **2つの起動経路と `shouldDistill()` の適用範囲**:
+  - *セッション終了時の自動推奨*: `DistillationTrigger.shouldDistill()` を評価し、条件を満たす場合にのみ蒸留を推奨する。条件: 前回から10ノート以上 OR 7日以上経過（BR-12）
+  - *ユーザーの直接呼び出し* (`memory_distill_*`): `shouldDistill()` を**バイパス**して即座に蒸留パイプライン（collect → extract → integrate）を実行する。トリガー条件は評価しない
+- **`lastDistilledAt` の更新タイミング**: `dry_run=false` の蒸留が完了し、1件以上の永続化（create / merge / reinforce）が発生した場合にのみ更新する。`dry_run=true` や永続化が0件の実行では更新しない。起動経路（直接呼び出し / 自動推奨）による差異はない
 
 ---
 
@@ -456,8 +462,8 @@ stateDiagram-v2
 | Confidence | 確信度（0.0〜1.0）。evidence 蓄積で上昇、矛盾で低下。デフォルト 0.3 | ValuesEntry |
 | Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付で構成 | ValuesEntry |
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
-| PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持 | ValuesEntry |
-| PromotionManager | 昇格条件判定・昇格/降格実行を行うドメインサービス | PromotionState |
+| PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3） | ValuesEntry |
+| PromotionManager | 昇格条件判定・昇格/降格実行を行うドメインサービス。降格提案判定は `PromotionState` に委譲 | PromotionState |
 | ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス | Confidence |
 
 ### 5.4 蒸留コンテキスト
@@ -469,7 +475,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
-| DistillationTrigger | 蒸留実行の自動推奨判定ロジック。ノート数閾値(10)・期間閾値(7日)で判定。ユーザーの直接呼び出し時はバイパスされる | DistillationRequest |
+| DistillationTrigger | セッション終了時の蒸留自動推奨判定ロジック。ノート数閾値(10)・期間閾値(7日)で判定する。ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる（2つの起動経路） | DistillationRequest |
 
 ---
 
@@ -528,7 +534,7 @@ stateDiagram-v2
 | BR-9 | Values 登録時、類似既存エントリがあれば警告（登録は許可） | REQ-FUNC-007 |
 | BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
-| BR-12 | 蒸留トリガー条件（自動推奨）: 前回から10ノート以上 OR 7日以上経過。ユーザーの直接呼び出しはトリガー判定をバイパスする | REQ-FUNC-026 |
+| BR-12 | 蒸留トリガー条件（セッション終了時の自動推奨のみに適用）: 前回から10ノート以上 OR 7日以上経過。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格提案条件: confidence が昇格時から 0.2 以上低下 | REQ-FUNC-034 |
