@@ -127,8 +127,8 @@ graph TB
 
 | レイヤー | コンポーネント | 責務 | 依存先 |
 |---|---|---|---|
-| **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok`/`warnings` エンベロープ形式でのレスポンス整形 | アプリケーション層 |
-| **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（判断記録 2） | ドメイン層、インフラ層 |
+| **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok` 常在・`warnings` は警告時のみ付与のエンベロープ形式でのレスポンス整形 | アプリケーション層 |
+| **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（[判断記録 2](DOMAIN-MODEL-knowledge-values.md#判断記録-2-knowledge-削除時の-related-一括更新をアプリケーション層の責務とする)） | ドメイン層、インフラ層 |
 | | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み。`promoted: true` のエントリ削除時は `PromotionService.onDelete(id)` を呼び出し AGENTS.md からの除去を委譲する | ドメイン層、インフラ層、`PromotionService` |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
 | | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御。`onDelete(id)` メソッドで promoted Values 削除時の AGENTS.md 除去も担当する（`ValuesService` から委譲される） | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
@@ -136,7 +136,7 @@ graph TB
 | | `ValuesEntry` | Values の不変条件の保護（confidence 範囲、evidence 保持上限、状態遷移メソッド `promote()` / `demote()`） | なし |
 | | `KnowledgeIntegrator` | 蒸留候補と既存 Knowledge の重複検出・マージ判定 | なし |
 | | `ValuesIntegrator` | 蒸留候補と既存 Values の重複検出・confidence 更新判定 | なし |
-| | `PromotionManager` | 昇格条件判定、昇格/降格実行など純粋なドメインポリシー（`confirm` は受け取らない）。降格提案判定は `PromotionState.shouldSuggestDemotion()` に委譲（判断記録 3） | なし |
+| | `PromotionManager` | 昇格条件判定、昇格/降格実行など純粋なドメインポリシー（`confirm` は受け取らない）。降格提案判定は `PromotionState.shouldSuggestDemotion()` に委譲（[判断記録 3](DOMAIN-MODEL-knowledge-values.md#判断記録-3-shouldsuggestdemotion-の配置)） | なし |
 | | `DistillationTrigger` | 蒸留トリガー条件の正規定義（REQ-FUNC-026: 10 ノート以上 OR 7 日以上経過）。蒸留種別（Knowledge / Values）ごとにインスタンス化し、ノート数閾値・期間閾値を保持する。トリガー条件は最終評価日時（`last_*_evaluated_at`）を基準に判定する。`DistillationService` の内部コンポーネントであり、公開 API としては露出しない。トリガー条件の評価はエージェント/スキル側が公開ツールレスポンスから行う（セクション 13 Phase 7 補足参照） | なし（`_state.md` の蒸留日時は `DistillationService` 経由で取得） |
 | **インフラ層** | `KnowledgeRepository` | Knowledge の永続化（Markdown + frontmatter）、インデックス同期 | `SearchEngine` |
 | | `ValuesRepository` | Values の永続化、インデックス同期 | `SearchEngine` |
@@ -150,7 +150,7 @@ graph TB
 |---|---|---|
 | `KnowledgeService` | `core/knowledge/service.py` | `note.py` と並列。ファイル作成ユーティリティは `note.py` から流用可 |
 | `ValuesService` | `core/values/service.py` | 同上 |
-| `DistillationService` | `core/distillation/service.py` | 新規。ノート読み込みに `search.py` の `load_index` を利用 |
+| `DistillationService` | `core/distillation/service.py` | 新規。ノート読み込みに `scorer.py` の `load_index` を利用 |
 | `DistillationExtractorPort` | `core/distillation/extractor.py` | 新規。CLI / API / 将来の provider を差し替える抽出境界 |
 | `DistillationTrigger` | `core/distillation/trigger.py` | 新規。蒸留トリガー条件の正規定義（`DistillationService` 内部コンポーネント）。`_state.md` の最終評価日時（`last_*_evaluated_at`）と最終永続化日時（`last_*_distilled_at`）を `DistillationService` 経由で取得 |
 | `PromotionService` | `core/values/promotion.py` | `state.py` のセクション操作パターンを参考にする |
@@ -158,7 +158,7 @@ graph TB
 | `ValuesEntry` | `core/values/model.py` | 新規。`dataclass` ベース |
 | `KnowledgeRepository` | `core/knowledge/repository.py` | `index.py` の upsert/load パターンを踏襲 |
 | `ValuesRepository` | `core/values/repository.py` | 同上 |
-| `SearchEngine`（汎用化） | `core/scorer.py`（拡張） | 既存の `IndexEntry` / `score_entry` を汎用化 |
+| `SearchEngine`（汎用化） | `core/scorer.py` + `core/search.py`（拡張） | 既存の `IndexEntry` / `score_entry` / 検索関数を汎用化。`scorer.py` にフィールドマッピング受け取りの `score_generic_entry` を追加、`search.py` にインデックスパスとエントリ型をパラメータ化した汎用検索関数を追加 |
 | `AgentsMdAdapter` | `core/values/agents_md.py` | 新規。Markdown セクション操作 |
 | `SecretScanPolicy` | `core/security.py` | 新規実装。正規表現ベースのシークレット検出ユーティリティ |
 
@@ -242,7 +242,7 @@ sequenceDiagram
 
     A->>DT: date_from, date_to, domain, dry_run
     DT->>DS: run(params)
-    DS->>IX: load_index + date/domain filter
+    DS->>IX: load_index + date filter
     IX-->>DS: 対象ノート一覧
     DS->>DS: ノート内容をバッチ読み込み
     DS->>DX: extract(snapshot, mode=knowledge)
@@ -315,7 +315,7 @@ sequenceDiagram
 |---|---|---|
 | Knowledge/Values CRUD | **同期** | ファイル I/O + インデックス更新。レイテンシは低い（ミリ秒単位） |
 | Knowledge/Values 検索 | **同期** | BM25+ スコアリング。p95 500ms 以内の要件を同期で達成可能 |
-| 蒸留・前処理（ノート選定） | **同期** | インデックス読み込み + フィルタリング。軽量処理 |
+| 蒸留・前処理（ノート選定） | **同期** | インデックス読み込み + 日付範囲フィルタリング。軽量処理 |
 | 蒸留・抽出 | **同期（外部 extractor 呼び出し）** | 公開ツール呼び出しの中で `DistillationExtractorPort` を経由して外部 LLM/CLI を呼ぶ |
 | 蒸留・後処理（統合・永続化） | **同期** | 統合判定 + CRUD 呼び出し。ツール内で同期完了 |
 | AGENTS.md 書き込み | **同期** | 単一ファイル更新だが、複数セッション競合に備えて `fcntl` ロック + atomic write を行う |
@@ -583,7 +583,7 @@ stateDiagram-v2
 
 **extract:**
 
-1. `DistillationExtractorPort` が `DistillationSnapshot` を受け取り、LLM へ抽出依頼
+1. `DistillationExtractorPort` が `DistillationSnapshot` を受け取り、LLM へ抽出依頼。`domain`（Knowledge 蒸留の場合）または `category`（Values 蒸留の場合）が指定されている場合、抽出対象を当該ドメイン/カテゴリに限定する指示として `DistillationExtractorPort` に渡す。collect 段でのソースノートフィルタは行わない（Memory ノートにドメイン/カテゴリのメタデータが存在しないため）
 2. 候補リスト（`KnowledgeCandidate[]` または `ValuesCandidate[]`）を返す
 
 **integrate:**
@@ -592,7 +592,7 @@ stateDiagram-v2
 2. `dry_run=false` の場合のみ CRUD 操作を実行
 3. `DistillationReport` を生成・返却
 4. `_state.md` の蒸留日時フィールドを更新する:
-   - **最終永続化日時**（`last_knowledge_distilled_at` / `last_values_distilled_at`）: `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した場合にのみ更新
+   - **最終永続化日時**（`last_knowledge_distilled_at` / `last_values_distilled_at`）: `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した場合にのみ更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない
    - **最終評価日時**（`last_knowledge_evaluated_at` / `last_values_evaluated_at`）: `dry_run=false` の蒸留が完了した時点で更新（永続化 0 件でも更新。トリガー条件はこの日時を基準に判定する）
    - `dry_run=true` の実行ではいずれも更新しない
 
@@ -604,12 +604,15 @@ stateDiagram-v2
 |---|---|---|
 | ノート数 | 10件以上（前回評価以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の該当種別の最終評価日時（`last_knowledge_evaluated_at` / `last_values_evaluated_at`） |
 | 経過日数 | 7日以上 | 現在日時 vs `_state.md` の該当種別の最終評価日時 |
+| Bootstrap | ノート1件以上 | `last_*_evaluated_at` が未設定（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す |
 | ユーザー明示要求 | — | `memory_distill_*` の直接呼び出し（条件評価なしで即座にパイプラインを実行） |
 
 **蒸留日時の保存先:** `_state.md` の YAML フロントマターに蒸留種別ごとに以下の 4 フィールドを保持する（セクション 10.1 参照）。既存のセクション構造（「現在のフォーカス」「主要な判断」等）には変更を加えない。`state.py` にフロントマター読み書き機能を追加する（セクション 11.1 参照）。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの日時を区別して管理する。
 
-- `last_knowledge_distilled_at` / `last_values_distilled_at`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化が発生した蒸留完了時にのみ更新
+- `last_knowledge_distilled_at` / `last_values_distilled_at`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した蒸留完了時にのみ更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない
 - `last_knowledge_evaluated_at` / `last_values_evaluated_at`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で更新（永続化 0 件でも更新。トリガー条件はこの日時を基準に判定する）
+
+各フィールドは `memory_init` 時には作成せず、それぞれの更新条件を初めて満たした時点で独立に遅延追加する。したがって `last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時に追加されるが、`last_*_distilled_at` は永続化が発生するまで追加されない。
 
 ---
 
@@ -623,8 +626,8 @@ stateDiagram-v2
 | `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加 | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
-| `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（初回蒸留完了時に遅延追加） | 低（追加のみ） |
-| `state.py` | `_state.md` の YAML フロントマターに蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）の読み書き機能を追加。更新条件はフィールドごとに異なる（セクション 10.1 参照）。これにより `_state.md` のファイル形式は拡張される（パスは据え置き）。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
+| `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（各フィールド独立に遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時。セクション 10.2 参照） | 低（追加のみ） |
+| `state.py` | `_state.md` の YAML フロントマターに蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）の読み書き機能を追加。各フィールドは独立に遅延追加され、更新条件もフィールドごとに異なる（セクション 10.2 参照）。これにより `_state.md` のファイル形式は拡張される（パスは据え置き）。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
 
 **既存ツールの追加的レスポンス拡張（REQ-FUNC-021/029 の判定データ提供）:**
 

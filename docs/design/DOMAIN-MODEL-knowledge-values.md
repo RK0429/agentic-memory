@@ -59,7 +59,8 @@ graph LR
 
 | パターン | 適用箇所 | 理由 |
 |---|---|---|
-| 同期読み取り | Memory → 蒸留 | 蒸留は `memory_distill_*` の同期呼び出しで実行され、Memory ノートと `_state.md` を直接読み取る。概念的には Memory の蓄積が蒸留のトリガーだが、実装はイベント駆動ではなくポーリング型（トリガー条件の判定）である |
+| 同期読み取り | MemoryNote → 蒸留（Knowledge / Values 共通） | 蒸留は `memory_distill_*` の同期呼び出しで実行され、MemoryNote を直接読み取る。概念的には Memory の蓄積が蒸留のトリガーだが、実装はイベント駆動ではなくポーリング型（トリガー条件の判定）である |
+| 同期読み取り | MemoryState → Values 蒸留のみ | Values 蒸留は MemoryNote に加えて `_state.md` の「主要な判断」セクションも読み取る。Knowledge 蒸留は MemoryState を入力としない |
 | 公開ホストサービス (OHS) | 蒸留 → Knowledge/Values | 蒸留結果を標準的な候補フォーマットで公開し、各コンテキストの Integrator が受け取る |
 | 腐敗防止層 (ACL) | Values コンテキスト → AGENTS.md | AGENTS.md は Markdown テキスト形式の外部ファイルであり、Values ドメインモデルとの表現形式が異なる。ACL はアプリケーション層の `PromotionService` が `AgentsMdAdapter` を介して実現する（`PromotionManager` はドメインポリシー判定のみを担い、外部システムと直接通信しない） |
 
@@ -176,6 +177,7 @@ classDiagram
 **集約不変条件:**
 - `id` は作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier（プレフィックス `k-`）。更新で再計算しない。ファイルパスは `knowledge/{id}.md`。同一 ID の重複登録は不可（BR-1, BR-8）
 - `sources` の更新はマージ（既存に追加。置換ではない）（BR-11）
+- `sourceType` は作成時に一度だけ設定される immutable フィールド。`Source.type` とは独立にエントリレベルの出自分類を表す。MERGE_EXISTING（BR-11）時は既存エントリの `sourceType` を維持し、変更しない。新規 Source はそれぞれの `type` を持って `sources` リストに追加される
 
 **アプリケーション層の運用制約:**
 - 削除時、他エントリの `related` からの参照除去はアプリケーション層（`KnowledgeService`）の責務（BR-14、判断記録 2 参照）
@@ -230,7 +232,7 @@ classDiagram
         +string date
     }
 
-    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)"
+    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)\ndate: YYYY-MM-DD 形式の日付文字列"
 
     class EvidenceList {
         <<ValueObject>>
@@ -295,8 +297,10 @@ classDiagram
 - `id` は作成時に `description + category` から一度だけ生成される immutable identifier（プレフィックス `v-`）。更新で再計算しない。ファイルパスは `values/{id}.md`。同一 ID の重複登録は不可（BR-2, BR-9）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
 - `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）
-- 昇格条件: `confidence >= 0.8` AND `evidence.totalCount >= 5` AND `promoted == false`（BR-6）
 - ID は異なるが意味的に類似するエントリの登録は警告付きで許可（エラーではない）（BR-9）
+
+**ドメインサービスポリシー:**
+- 昇格条件（BR-6: `confidence >= 0.8` AND `totalCount >= 5` AND `promoted == false`）は集約不変条件ではなく、`PromotionManager.checkCandidate()` が一元的に担うドメインサービスポリシーである。`Confidence.meetsPromotionThreshold()` と `EvidenceList.meetsPromotionCount()` に委譲して判定する
 
 **アプリケーション層の運用制約:**
 - 昇格にはユーザー確認が必須。`confirm` パラメータはアプリケーション層（`PromotionService`）で消費する（BR-7）
@@ -388,15 +392,17 @@ classDiagram
 ```
 
 **補足:**
+- Values 蒸留は MemoryNote に加えて MemoryState（`_state.md`）の「主要な判断」セクションも入力とする。Knowledge 蒸留の入力は MemoryNote のみ
 - 蒸留の「抽出」は `DistillationExtractorPort` 経由で LLM に委譲する。ツールは collect（ノート選定）→ extract（抽出委譲）→ integrate（統合・永続化）の全段階をオーケストレーションする
 - `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。`lastEvaluatedAt` は `_state.md` に `last_knowledge_evaluated_at` / `last_values_evaluated_at` として、`lastDistilledAt` は `last_knowledge_distilled_at` / `last_values_distilled_at` として種別ごとに永続化する
+- **Bootstrap rule**: `lastEvaluatedAt` が null（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す。これにより、蒸留未経験のワークスペースでも初回蒸留が推奨される
 - **2つの起動経路と `shouldDistill()` の適用範囲**:
-  - *セッション終了時の自動推奨*: `DistillationTrigger.shouldDistill()` を評価し、条件を満たす場合にのみ蒸留を推奨する。条件: 前回評価から10ノート以上 OR 7日以上経過（BR-12）
+  - *公開 API ベースの推奨判定*: エージェント/スキルが `memory_state_show`（最終評価日時）と `memory_stats`（前回評価以降のノート蓄積数）を取得し、`DistillationTrigger.shouldDistill()` と同じ条件（BR-12）を評価する。条件充足時に蒸留を推奨する（自動実行ではない）。セッション終了時の振り返り（REQ-FUNC-021）と retrospective スキル（REQ-FUNC-029）がこの経路に該当する
   - *ユーザーの直接呼び出し* (`memory_distill_*`): `shouldDistill()` を**バイパス**して即座に蒸留パイプライン（collect → extract → integrate）を実行する。トリガー条件は評価しない
-- **タイムスタンプの更新タイミング**: `_state.md` には蒸留種別ごとに2つの日時を記録する:
-  - `lastDistilledAt`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した場合にのみ更新
-  - `lastEvaluatedAt`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で更新（永続化 0 件でも更新）。`DistillationTrigger.shouldDistill()` はこの日時を基準に判定する
-  - `dry_run=true` の実行ではいずれも更新しない。起動経路（直接呼び出し / 自動推奨）による差異はない
+- **タイムスタンプの永続化と更新**: `_state.md` のフロントマターには蒸留種別ごとに 2 つの日時フィールドを記録する。各フィールドは `memory_init` 時には作成せず、更新条件を初めて満たした時点で独立に遅延追加する:
+  - `lastEvaluatedAt`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で追加または更新（永続化 0 件でも更新）。`DistillationTrigger.shouldDistill()` はこの日時を基準に判定する。初回 `dry_run=false` 蒸留完了時にフィールドが出現する
+  - `lastDistilledAt`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / reinforce）が発生した場合にのみ追加または更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない。永続化が発生しない蒸留では `lastEvaluatedAt` のみが存在し、`lastDistilledAt` は null のままとなりうる
+  - `dry_run=true` の実行ではいずれも更新しない。起動経路による差異はない
 
 ---
 
@@ -459,7 +465,8 @@ stateDiagram-v2
 | KnowledgeEntry | 抽象的な宣言的知識のエンティティ。事実・概念・ルールを含む | Source, Accuracy |
 | KnowledgeId | `k-` プレフィックス付き識別子。作成時に `title + domain + content[:100]` から一度だけ生成される immutable identifier | KnowledgeEntry |
 | Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
-| Source | Knowledge の引用元。型（蒸留/リサーチ/教示）・参照先・要約で構成 | SourceType |
+| Source | Knowledge の引用元。型（`SourceType`）・参照先・要約で構成。MERGE_EXISTING 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | SourceType |
+| SourceType | Knowledge の出自分類。`MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT` の3値。`KnowledgeEntry.sourceType`（エントリレベル）と `Source.type`（個別引用元レベル）の両方で使用される。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry, Source |
 | Accuracy | Knowledge の品質指標。verified（複数ソース確認）/ likely（単一ソース）/ uncertain（未確認） | KnowledgeEntry |
 | UserUnderstanding | ユーザーのその知識に対する理解度。unknown / novice / familiar / proficient / expert の5段階 | KnowledgeEntry |
 | KnowledgeIntegrator | 蒸留候補と既存 Knowledge の重複検出・マージを行うドメインサービス | IntegrationAction |
@@ -472,7 +479,7 @@ stateDiagram-v2
 | ValuesId | `v-` プレフィックス付き識別子。作成時に `description + category` から一度だけ生成される immutable identifier | ValuesEntry |
 | Category | Values の分類軸（coding-style, communication, workflow 等）。自由入力を kebab-case に正規化する | ValuesEntry |
 | Confidence | 確信度（0.0〜1.0）。evidence 蓄積で上昇、矛盾で低下。デフォルト 0.3 | ValuesEntry |
-| Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付で構成 | ValuesEntry |
+| Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付（`YYYY-MM-DD` 形式）で構成 | ValuesEntry |
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3） | ValuesEntry |
 | PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` に委譲）、`applyPromotion()` / `applyDemotion(entry, reason)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲 | PromotionState |
@@ -487,7 +494,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
-| DistillationTrigger | セッション終了時の蒸留自動推奨判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(7日)で判定する。ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる（2つの起動経路） | DistillationRequest |
+| DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(7日)で判定する（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計。想定実装先は `core/distillation/extractor.py`（提案。詳細はアーキテクチャ文書 4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---
@@ -547,7 +554,7 @@ stateDiagram-v2
 | BR-9 | Values 登録時、同一 ID が存在すればエラー（厳密重複拒否）。ID は異なるが意味的に類似する既存エントリがあれば警告（登録は許可） | REQ-FUNC-007 |
 | BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
-| BR-12 | 蒸留トリガー条件（セッション終了時の自動推奨のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 7日以上経過。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する | REQ-FUNC-026 |
+| BR-12 | 蒸留トリガー条件（公開 API ベースの推奨判定のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 7日以上経過。`lastEvaluatedAt` が null（初回蒸留前）の場合はノート 1 件以上で条件充足。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
