@@ -577,13 +577,13 @@ memory/
 
 #### REQ-FUNC-015: 昇格判定
 
-- **説明**: 高確信度の Values を AGENTS.md 昇格候補として検出する。`memory_values_update` のレスポンスに組み込む。
+- **説明**: 高確信度の Values を AGENTS.md 昇格候補として検出する。`memory_values_add` および `memory_values_update` のレスポンスに組み込む。
 - **受け入れ基準**:
-  - Given `confidence >= 0.8`, `evidence_count >= 5`, `promoted == false` の Values, When 更新レスポンス, Then 昇格候補である旨が通知される
-  - Given `confidence >= 0.8` だが `evidence_count < 5` の Values, When 更新レスポンス, Then 昇格候補として通知されない
+  - Given `confidence >= 0.8`, `evidence_count >= 5`, `promoted == false` の Values, When `memory_values_add` または `memory_values_update` のレスポンス, Then 昇格候補である旨が通知される
+  - Given `confidence >= 0.8` だが `evidence_count < 5` の Values, When `memory_values_add` または `memory_values_update` のレスポンス, Then 昇格候補として通知されない
 - **優先度**: Must
 - **出典**: ユーザー確認済み
-- **関連要件**: REQ-FUNC-009, REQ-FUNC-016
+- **関連要件**: REQ-FUNC-007, REQ-FUNC-009, REQ-FUNC-016
 
 **昇格条件（すべて満たすこと）:**
 - `confidence >= 0.8`
@@ -996,6 +996,7 @@ REQ-FUNC-010 (Knowledge 蒸留) → REQ-FUNC-004 (Knowledge 登録)
 REQ-FUNC-010 (Knowledge 蒸留) → REQ-FUNC-012 (Knowledge 統合)
 REQ-FUNC-011 (Values 蒸留) → REQ-FUNC-007 (Values 登録)
 REQ-FUNC-011 (Values 蒸留) → REQ-FUNC-013 (Values 統合)
+REQ-FUNC-015 (昇格判定) → REQ-FUNC-007 (Values 登録)
 REQ-FUNC-015 (昇格判定) → REQ-FUNC-009 (Values 更新)
 REQ-FUNC-016 (AGENTS.md 反映) → REQ-FUNC-015 (昇格判定)
 REQ-FUNC-016 (AGENTS.md 反映) → REQ-FUNC-022 (昇格 Values セクション)
