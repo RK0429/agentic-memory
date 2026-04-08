@@ -16,7 +16,7 @@
 | 1 | **後方互換性** | 既存 19 MCP ツール・270+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
 | 2 | **保守性** | 既存 `core/` のフラットモジュール構造に Knowledge/Values/蒸留の3コンテキストを追加するため、モジュール境界の明確化が不可欠 |
 | 3 | **拡張性** | 将来的な push 型配信・横断検索・降格メカニズム等の Could 要件への対応余地を確保 |
-| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは CI ランナーまたは開発者ラップトップ相当の環境で計測する。既存 BM25+ エンジンの流用で達成可能 |
+| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`、2 vCPU、7GB RAM）または開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）で計測する。既存 BM25+ エンジンの流用で達成可能 |
 | 5 | **運用性** | `memory_init` のみでマイグレーション完了（REQ-NF-005）、health check 統合（REQ-NF-004） |
 
 ---
@@ -43,7 +43,7 @@ graph TB
 
 **システム境界の説明:**
 
-- **agentic-memory MCP サーバー**: Knowledge/Values の CRUD・検索・昇格・蒸留パイプライン全体を担う。蒸留の「抽出」は内部の `DistillationExtractorPort` 経由で LLM に委譲し、トリガー判定・抽出依頼・統合判定・結果永続化をオーケストレーションする
+- **agentic-memory MCP サーバー**: Knowledge/Values の CRUD・検索・昇格・蒸留パイプライン全体を担う。蒸留の「抽出」は内部の `DistillationExtractorPort` 経由で LLM に委譲し、抽出依頼・統合判定・結果永続化をオーケストレーションする。蒸留トリガー条件の正規定義（`DistillationTrigger`）を保持するが、ランタイムでの条件評価は行わない（エージェント/スキル側が公開ツールレスポンスから評価する。セクション 4.1・10.1・10.2 参照）
 - **ローカルファイルシステム `memory/`**: 記憶ディレクトリ。現行実装の `config.py` は legacy の `daily_note/` ディレクトリも既定候補として扱うが、本設計では `memory/` を前提とする。`daily_note/` 配下に Knowledge/Values ディレクトリを作成するかは既存の `memory_dir` 解決ロジックに従い、本設計では明示的に対象外としない（`memory_dir` がどのパスに解決されても同じストレージ設計が適用される）
 - **AGENTS.md**: Values 昇格時の書き込み先。外部システムとして ACL を介してアクセスする
 - **LLM**: 蒸留パイプラインにおける抽出処理を担当。agentic-memory の外部依存として位置づける
@@ -129,15 +129,15 @@ graph TB
 |---|---|---|---|
 | **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok` 常在・`warnings` は警告時のみ付与のエンベロープ形式でのレスポンス整形 | アプリケーション層 |
 | **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（[判断記録 2](DOMAIN-MODEL-knowledge-values.md#判断記録-2-knowledge-削除時の-related-一括更新をアプリケーション層の責務とする)） | ドメイン層、インフラ層 |
-| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み。`promoted: true` のエントリ削除時は `PromotionService.onDelete(id)` を呼び出し AGENTS.md からの除去を委譲する | ドメイン層、インフラ層、`PromotionService` |
+| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み（`add` 時と `update` 時の両方で `PromotionManager.checkCandidate()` を呼び出し、条件充足時にレスポンスに通知を含める）。`promoted: true` のエントリ削除時は `PromotionService.onDelete(id)` を呼び出し AGENTS.md からの除去を委譲する | ドメイン層、インフラ層、`PromotionService` |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
 | | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御。`onDelete(id)` メソッドで promoted Values 削除時の AGENTS.md 除去も担当する（`ValuesService` から委譲される） | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
 | **ドメイン層** | `KnowledgeEntry` | Knowledge の不変条件の保護（ID 生成、sources マージ等） | なし（自己完結） |
-| | `ValuesEntry` | Values の不変条件の保護（confidence 範囲、evidence 保持上限、状態遷移メソッド `promote()` / `demote()`） | なし |
+| | `ValuesEntry` | Values の不変条件の保護（confidence 範囲、evidence 保持上限、状態遷移メソッド `promote()` / `demote(reason, now)`）。降格時の理由と日時は `PromotionState` に記録される | なし |
 | | `KnowledgeIntegrator` | 蒸留候補と既存 Knowledge の重複検出・マージ判定 | なし |
 | | `ValuesIntegrator` | 蒸留候補と既存 Values の重複検出・confidence 更新判定 | なし |
 | | `PromotionManager` | 昇格条件判定、昇格/降格実行など純粋なドメインポリシー（`confirm` は受け取らない）。降格提案判定は `PromotionState.shouldSuggestDemotion()` に委譲（[判断記録 3](DOMAIN-MODEL-knowledge-values.md#判断記録-3-shouldsuggestdemotion-の配置)） | なし |
-| | `DistillationTrigger` | 蒸留トリガー条件の正規定義（REQ-FUNC-026: 10 ノート以上 OR 7 日以上経過）。蒸留種別（Knowledge / Values）ごとにインスタンス化し、ノート数閾値・期間閾値を保持する。トリガー条件は最終評価日時（`last_*_evaluated_at`）を基準に判定する。`DistillationService` の内部コンポーネントであり、公開 API としては露出しない。トリガー条件の評価はエージェント/スキル側が公開ツールレスポンスから行う（セクション 13 Phase 7 補足参照） | なし（`_state.md` の蒸留日時は `DistillationService` 経由で取得） |
+| | `DistillationTrigger` | 蒸留トリガー条件の**正規定義**（REQ-FUNC-026: 10 ノート以上 OR 7 日以上経過）。蒸留種別（Knowledge / Values）ごとにインスタンス化し、ノート数閾値・期間閾値を保持する。トリガー条件は最終評価日時（`last_*_evaluated_at`）を基準に判定する。`DistillationService` の内部コンポーネントであり、公開 API としては露出しない。**ランタイムでのトリガー条件評価はエージェント/スキル側が公開ツールレスポンス（`memory_state_show` + `memory_stats`）から行う。MCP サーバー側はトリガー条件を自動評価しない**。`DistillationTrigger` の役割は条件定数の正規ソースおよびユニットテスト時の判定ロジック提供に限定される（セクション 13 Phase 7 補足参照） | なし（`_state.md` の蒸留日時は `DistillationService` 経由で取得） |
 | **インフラ層** | `KnowledgeRepository` | Knowledge の永続化（Markdown + frontmatter）、インデックス同期 | `SearchEngine` |
 | | `ValuesRepository` | Values の永続化、インデックス同期 | `SearchEngine` |
 | | `SearchEngine` | BM25+ スコアリングの汎用化（既存 `scorer.py` / `search.py` の拡張） | なし |
@@ -348,6 +348,8 @@ memory/
 └── YYYY-MM-DD/              # 既存（変更なし）
 ```
 
+**列挙値の表記規約:** 要件定義書（REQ）では API レベルの表現として小文字スネークケース（例: `verified`, `likely`, `uncertain`, `unknown`, `novice`）を使用し、ドメインモデルでは言語非依存の列挙表記として大文字（例: `VERIFIED`, `LIKELY`, `UNCERTAIN`, `UNKNOWN`, `NOVICE`）を使用する。永続化層（YAML frontmatter / JSONL）では要件定義書の小文字表記に従う。
+
 ### 7.2 Knowledge エントリ形式（例）
 
 ```markdown
@@ -406,10 +408,14 @@ Rust の所有権ルール:
   "promoted": true,
   "promoted_at": "2026-04-05T14:00:00",
   "promoted_confidence": 0.85,
+  "demotion_reason": null,
+  "demoted_at": null,
   "created_at": "2026-03-10T09:00:00",
   "updated_at": "2026-04-05T14:00:00"
 }
 ```
+
+**補足:** `demotion_reason` / `demoted_at` は降格が実行された場合にのみ値が設定される。降格後に再昇格された場合、`promoted` が `true` に戻り、`demotion_reason` / `demoted_at` は直近の降格記録として残る。
 
 ### 7.5 検索インデックスの設計方針
 
@@ -574,9 +580,9 @@ stateDiagram-v2
 
 **collect:**
 
-`memory_distill_*` が呼び出された時点で直接パイプラインを実行する。トリガー条件の評価はエージェント/スキル側の責務であり（セクション 13 Phase 7 補足参照）、パイプライン内では行わない。
+`memory_distill_*` が呼び出された時点で直接パイプラインを実行する。**MCP サーバー（`DistillationService`）はトリガー条件を評価しない。**トリガー条件の評価はエージェント/スキル側が公開ツールレスポンス（`memory_state_show` + `memory_stats`）を用いて行う責務であり（セクション 13 Phase 7 補足参照）、パイプライン内では行わない。
 
-1. 対象期間の Memory ノートを `_index.jsonl` から選定
+1. 対象期間の Memory ノートを `_index.jsonl` から選定（`date_from` / `date_to` は `YYYY-MM-DD` 形式、両端 inclusive。無効な範囲はバリデーションエラー。詳細は REQ-FUNC-010 参照）
 2. ノート内容の Decisions / Pitfalls & Remaining Issues / Results / Work Log セクション（日本語エイリアス: 判断 / 注意点・残課題 / 成果 / 作業ログ）を読み込み。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う
 3. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
 4. 抽出用の `DistillationSnapshot` を構築
@@ -623,7 +629,7 @@ stateDiagram-v2
 | モジュール | 変更内容 | 影響度 |
 |---|---|---|
 | `server.py` | 新規ツール関数の追加 + 既存 2 ツールの追加的レスポンス拡張（下記参照） | 低（追加のみ） |
-| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加 | 低（チェック追加） |
+| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し）を追加 | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（各フィールド独立に遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時。セクション 10.2 参照） | 低（追加のみ） |
@@ -787,16 +793,16 @@ stateDiagram-v2
 |---|---|---|---|
 | **Phase 1** | データモデル + ストレージ + `memory_init` 拡張 + 検索エンジン汎用化 | REQ-FUNC-001, 002, 003, REQ-NF-001, REQ-NF-005 | なし |
 | **Phase 2** | Knowledge CRUD（add / search / update） | REQ-FUNC-004, 005, 006 | Phase 1 |
-| **Phase 3** | Values CRUD（add / search / update / list） | REQ-FUNC-007, 008, 009, 025 | Phase 1 |
+| **Phase 3** | Values CRUD（add / search / update）+ 一括参照 | REQ-FUNC-007, 008, 009, **025** | Phase 1 |
 | **Phase 4** | health check 拡張 | REQ-NF-004 | Phase 2, 3 |
 | **Phase 5** | 蒸留エンジン（collect / extract / integrate） | REQ-FUNC-010, 011, 012, 013 | Phase 2, 3 |
 | **Phase 6** | Values 昇格 + AGENTS.md 連携 | REQ-FUNC-015, 016, 022 | Phase 3 |
-| **Phase 7** | AGENTS.md セクション改修（Must）+ 削除・一括参照・トリガー・教示・同期・retrospective（Should） | REQ-FUNC-019-021（Must）, 023-029（Should） | Phase 5, 6 |
+| **Phase 7** | AGENTS.md セクション改修（Must）+ 削除・トリガー・教示・同期・retrospective（Should） | REQ-FUNC-019-021（Must）, 023-024, 026-029（Should） | Phase 5, 6 |
 | **Phase 8** | Could 要件（統計、横断検索、降格） | REQ-FUNC-030-034 | Phase 7 |
 
 **補足:**
 - 検索エンジン汎用化（ADR-005）を Phase 1 に含めることで、Phase 2/3 の Knowledge/Values 検索ツールが `score_generic_entry` を利用できる。Phase 2 と Phase 3 は相互に独立しており、並行実装が可能
-- Phase 7 は Must 要件（REQ-FUNC-019-021: AGENTS.md セクション改修）と Should 要件（REQ-FUNC-023-029）を含む。Must 要件を先行実装し、Should 要件は Phase 7 内で後続とする
+- Phase 7 は Must 要件（REQ-FUNC-019-021: AGENTS.md セクション改修）と Should 要件（REQ-FUNC-023-024, 026-029）を含む。REQ-FUNC-025（Values 一括参照）は Phase 3 に含まれる。Must 要件を先行実装し、Should 要件は Phase 7 内で後続とする
 
 **Phase 7 の AGENTS.md / retrospective 連携設計:**
 

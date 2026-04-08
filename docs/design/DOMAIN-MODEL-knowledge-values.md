@@ -152,6 +152,8 @@ classDiagram
         +string? conflictDetail
     }
 
+    note for KnowledgeIntegrationResult "targetId の意味:\n- MERGE_EXISTING: マージ先の既存エントリ ID\n- LINK_RELATED: リンク先の既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null"
+
     class IntegrationAction {
         <<Enumeration>>
         CREATE_NEW
@@ -160,7 +162,7 @@ classDiagram
         SKIP_DUPLICATE
     }
 
-    note for IntegrationAction "LINK_RELATED は候補を新規登録した上で\n既存エントリと双方向に related を設定する\n複合アクション（CREATE + 相互 LINK）"
+    note for IntegrationAction "LINK_RELATED は候補を新規登録した上で\n既存エントリと双方向に related を設定する\n複合アクション（CREATE + 相互 LINK）\ntargetId はリンク先の既存エントリ ID を指す"
 
     KnowledgeEntry *-- KnowledgeId
     KnowledgeEntry *-- Domain
@@ -201,8 +203,8 @@ classDiagram
         +updateDescription(string) ValuesEntry
         +addEvidence(Evidence) ValuesEntry
         +adjustConfidence(float) ValuesEntry
-        +promote(datetime) ValuesEntry
-        +demote(string reason) ValuesEntry
+        +promote(datetime now) ValuesEntry
+        +demote(string reason, datetime now) ValuesEntry
     }
 
     class ValuesId {
@@ -247,8 +249,10 @@ classDiagram
         +bool promoted
         +datetime? promotedAt
         +float? promotedConfidence
-        +promote(datetime, float confidence) PromotionState
-        +demote() PromotionState
+        +string? demotionReason
+        +datetime? demotedAt
+        +promote(datetime now, float confidence) PromotionState
+        +demote(string reason, datetime now) PromotionState
         +shouldSuggestDemotion(float currentConfidence) bool
     }
 
@@ -256,10 +260,10 @@ classDiagram
         <<DomainService>>
         +checkCandidate(ValuesEntry) bool
         +applyPromotion(ValuesEntry, datetime now) ValuesEntry
-        +applyDemotion(ValuesEntry, string reason) ValuesEntry
+        +applyDemotion(ValuesEntry, string reason, datetime now) ValuesEntry
     }
 
-    note for PromotionManager "ポリシー判定を担当:\n- checkCandidate(): 昇格条件の充足を判定\n  （Confidence.meetsPromotionThreshold() AND\n   EvidenceList.meetsPromotionCount() に委譲）\n- applyPromotion/applyDemotion(): ポリシー検証後に\n  ValuesEntry.promote()/demote(reason) を呼び出す\nValuesEntry 自身の promote()/demote(reason) は\n状態遷移のみを担当（不変条件の保護）"
+    note for PromotionManager "ポリシー判定を担当:\n- checkCandidate(): 昇格条件の充足を判定\n  （Confidence.meetsPromotionThreshold() AND\n   EvidenceList.meetsPromotionCount() に委譲）\n- applyPromotion/applyDemotion(): ポリシー検証後に\n  ValuesEntry.promote(now)/demote(reason, now) を呼び出す\nValuesEntry 自身の promote(now)/demote(reason, now) は\n状態遷移のみを担当（不変条件の保護）\n降格時の reason は PromotionState に\ndemotionReason/demotedAt として記録\nnow は呼び出し元が供給する現在日時"
 
     class ValuesIntegrator {
         <<DomainService>>
@@ -296,7 +300,7 @@ classDiagram
 **集約不変条件:**
 - `id` は作成時に `description + category` から一度だけ生成される immutable identifier（プレフィックス `v-`）。更新で再計算しない。ファイルパスは `values/{id}.md`。同一 ID の重複登録は不可（BR-2, BR-9）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
-- `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）
+- `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）。**作成時にも同じ 10 件保持ルールを適用する**。`totalCount` は提供された `evidence` の件数で初期化される（未提供時は 0）
 - ID は異なるが意味的に類似するエントリの登録は警告付きで許可（エラーではない）（BR-9）
 
 **ドメインサービスポリシー:**
@@ -316,6 +320,8 @@ classDiagram
         +string? dateTo
         +bool dryRun
     }
+
+    note for DistillationRequest "dateFrom / dateTo: YYYY-MM-DD 形式\n両端 inclusive\ndateFrom > dateTo はバリデーションエラー"
 
     class KnowledgeDistillationRequest {
         <<ValueObject>>
@@ -417,10 +423,13 @@ stateDiagram-v2
     [*] --> Verified : 登録（複数ソース確認済み）
 
     Uncertain --> Likely : 単一ソースで確認
+    Uncertain --> Verified : 複数ソースで一括確認
     Likely --> Verified : 追加ソースで確認
     Verified --> Uncertain : 蒸留で矛盾検出
     Likely --> Uncertain : 蒸留で矛盾検出
 ```
+
+**補足:** `Uncertain → Verified` の直接遷移は、複数の信頼できるソースが同時に追加された場合に発生する（例: ファクトチェックで複数の独立したソースを一括で確認した場合）。`changeAccuracy(Accuracy)` メソッドは任意の遷移を許可するが、呼び出し元（`KnowledgeService` / エージェント）がソース数に基づく適切な `accuracy` を選択する責務を負う。
 
 ### 4.2 Values — ライフサイクル
 
@@ -434,17 +443,17 @@ stateDiagram-v2
         PromotionReady --> Growing : confidence低下
     }
 
-    PromotionReady --> Promoted : promote()（ユーザー確認済）
+    PromotionReady --> Promoted : promote(now)（ユーザー確認済）
     Promoted --> Promoted : evidence追加 / confidence変動
-    Promoted --> Active : demote(reason)（理由を記録）
+    Promoted --> Active : demote(reason, now)（理由と日時を PromotionState に記録）
     Active --> Deleted : 削除
     Promoted --> Deleted : 削除（AGENTS.mdからも除去）
     Deleted --> [*]
 ```
 
 **補足:**
-- `PromotionReady` はエンティティに保存される状態ではなく、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` から導出される条件。`memory_values_update` のレスポンスで昇格候補として通知される。昇格遷移は `PromotionReady` サブステートからのみ発生する（`Growing` からの直接昇格は不可）
-- **降格提案と降格実行の区別**: `demote(reason)` は理由の指定のみを必要とし、confidence 低下を前提条件としない。一方、BR-15 の「confidence が昇格時から 0.2 以上低下」は降格の**自動提案条件**（`PromotionState.shouldSuggestDemotion()`）であり、エージェントに降格を推奨するトリガーである。ユーザーは confidence 低下以外の理由（例: 明示的な撤回、方針変更）でも `memory_values_demote(id, reason)` を呼び出せる
+- `PromotionReady` はエンティティに保存される状態ではなく、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` から導出される条件。`memory_values_update` および `memory_values_add`（作成時に条件を満たす場合）のレスポンスで昇格候補として通知される。昇格遷移は `PromotionReady` サブステートからのみ発生する（`Growing` からの直接昇格は不可）
+- **降格提案と降格実行の区別**: `demote(reason, now)` は理由と日時の指定を必要とするが、confidence 低下を前提条件としない。一方、BR-15 の「confidence が昇格時から 0.2 以上低下」は降格の**自動提案条件**（`PromotionState.shouldSuggestDemotion()`）であり、エージェントに降格を推奨するトリガーである。ユーザーは confidence 低下以外の理由（例: 明示的な撤回、方針変更）でも `memory_values_demote(id, reason)` を呼び出せる
 - **昇格候補判定の責務配置**: 昇格候補の判定は `PromotionManager.checkCandidate()` が一元的に担い、`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` AND `PromotionState.promoted == false` に委譲する。`ValuesEntry` 自身は昇格候補判定メソッドを持たない（判定ロジックの二重化を避けるため）
 
 ---
@@ -481,8 +490,8 @@ stateDiagram-v2
 | Confidence | 確信度（0.0〜1.0）。evidence 蓄積で上昇、矛盾で低下。デフォルト 0.3 | ValuesEntry |
 | Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付（`YYYY-MM-DD` 形式）で構成 | ValuesEntry |
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
-| PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3） | ValuesEntry |
-| PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` に委譲）、`applyPromotion()` / `applyDemotion(entry, reason)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲 | PromotionState |
+| PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3）。降格時には `demotionReason`（降格理由）と `demotedAt`（降格日時）を記録する（判断記録 4） | ValuesEntry |
+| PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` に委譲）、`applyPromotion(ValuesEntry, datetime now)` / `applyDemotion(entry, reason, now)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲。降格時の理由と日時は `PromotionState.demotionReason` / `demotedAt` に記録される | PromotionState |
 | ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス | Confidence |
 
 ### 5.4 蒸留コンテキスト
@@ -537,6 +546,19 @@ stateDiagram-v2
 - **等価性への影響**: 理論等価（ロジック配置の変更であり、振る舞いは同一）
 - **語彙への影響**: なし
 
+### 判断記録 4: PromotionState に降格理由と降格日時を記録する
+
+- **日付**: 2026-04-09
+- **関連コンテキスト**: Values コンテキスト
+- **判断内容**: `PromotionState` に `demotionReason`（降格理由）と `demotedAt`（降格日時）フィールドを追加し、降格の監査証跡を `PromotionState` 内に閉じ込める
+- **根拠**:
+  - 観測事実（判断前）: `ValuesEntry.demote(reason)` および `PromotionManager.applyDemotion(entry, reason)` は降格理由を受け取るが、`PromotionState.demote()` が理由を保持せず、永続化時に理由が失われる。本判断により `PromotionState.demote(reason, now)` へ変更し、`now` を全シグネチャに伝播させた（クラス図参照）
+  - 代替案 A: 降格履歴テーブル（別エンティティ）に理由を記録する
+  - 代替案 B: `ValuesEntry` のトップレベルフィールドとして記録する
+  - 分離証人: 代替案 A は新たなストレージ概念の導入コストが不要な段階では過剰。代替案 B は昇格/降格という関心事が `PromotionState` に凝集しているモデルと不整合。`PromotionState` に含めることで、昇格・降格のライフサイクル全体が値オブジェクト内で表現される
+- **等価性への影響**: 非等価（新フィールド追加により、降格理由の監査が可能になる）
+- **語彙への影響**: なし
+
 ---
 
 ## 7. ビジネスルール一覧
@@ -558,3 +580,4 @@ stateDiagram-v2
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
+| BR-16 | Knowledge / Values の削除は Markdown ファイル（`knowledge/{id}.md` / `values/{id}.md`）と JSONL インデックスエントリ（`_knowledge.jsonl` / `_values.jsonl`）の両方を原子的に削除する。片方のみの削除は不整合を引き起こす | REQ-FUNC-023, REQ-FUNC-024 |
