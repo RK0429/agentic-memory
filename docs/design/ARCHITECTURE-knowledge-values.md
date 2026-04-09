@@ -7,6 +7,13 @@
 | 関連要件 | [REQ-knowledge-values.md](../requirements/REQ-knowledge-values.md) |
 | 関連ドメインモデル | [DOMAIN-MODEL-knowledge-values.md](DOMAIN-MODEL-knowledge-values.md) |
 
+## 変更履歴
+
+| バージョン | 日付 | 変更内容 |
+|---|---|---|
+| 0.1.0 | 2026-04-08 | 初版作成 |
+| — | 2026-04-09 | レビュー指摘対応: F-01〜F-10（蒸留時機密スキップ、_state.md 日付フィルタ除外、CONTRADICT_EXISTING 根拠追記、BR-16 事後修復統一・削除部分失敗戦略追加、promoted 削除マーカー検証、REQ-NF-002 計測境界明確化、蒸留トリガー _state.md 除外根拠、health check lazy 生成セマンティクス） |
+
 ---
 
 ## 1. 品質特性と優先順位
@@ -269,10 +276,10 @@ sequenceDiagram
     end
 
     DS-->>DT: DistillationReport
-    DT-->>A: {new: N, merged: M, linked: L, skipped: K}
+    DT-->>A: {new: N, merged: M, linked: L, skipped: K, secret_skipped: S}
 ```
 
-**補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new: N, reinforced: R, contradicted: C, skipped: K}` を返す（`merged` / `linked` は 0、代わりに `reinforced` / `contradicted` を使用）。`DistillationReport` は6種の集計フィールド（`newCount` / `mergedCount` / `linkedCount` / `reinforcedCount` / `contradictedCount` / `skippedCount`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。
+**補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new: N, reinforced: R, contradicted: C, skipped: K, secret_skipped: S}` を返す（`merged` / `linked` は 0、代わりに `reinforced` / `contradicted` を使用）。`DistillationReport` は7種の集計フィールド（`newCount` / `mergedCount` / `linkedCount` / `reinforcedCount` / `contradictedCount` / `skippedCount` / `secretSkippedCount`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。`secretSkippedCount` は蒸留種別を問わず、integrate 段で機密検出によりスキップされたエントリ数を計上する。
 
 **`LINK_RELATED` の `update` 呼び出しセマンティクス:** シーケンス図中の `update(id, related=[...])` は REQ-FUNC-006 の `related` パラメータ定義に従い、既存の `related` リストへの**追加**（マージ）として動作する。既存の `related` を置換するものではない。
 
@@ -323,11 +330,13 @@ sequenceDiagram
 |---|---|---|
 | Knowledge/Values CRUD | **同期** | ファイル I/O + インデックス更新。レイテンシは低い（ミリ秒単位） |
 | Knowledge/Values 検索 | **同期** | BM25+ スコアリング。p95 500ms 以内の要件を同期で達成可能 |
-| 蒸留・前処理（ノート選定） | **同期** | インデックス読み込み + 日付範囲フィルタリング。軽量処理 |
-| 蒸留・抽出 | **同期（外部 extractor 呼び出し）** | 公開ツール呼び出しの中で `DistillationExtractorPort` を経由して外部 LLM/CLI を呼ぶ |
-| 蒸留・後処理（統合・永続化） | **同期** | 統合判定 + CRUD 呼び出し。ツール内で同期完了 |
+| 蒸留・前処理（collect: ノート選定） | **同期** | インデックス読み込み + 日付範囲フィルタリング。軽量処理 |
+| 蒸留・抽出（extract） | **同期（外部 extractor 呼び出し）** | 公開ツール呼び出しの中で `DistillationExtractorPort` を経由して外部 LLM/CLI を呼ぶ |
+| 蒸留・後処理（integrate: 統合・永続化） | **同期** | 統合判定 + CRUD 呼び出し。ツール内で同期完了 |
 | AGENTS.md 書き込み | **同期** | 単一ファイル更新だが、複数セッション競合に備えて `fcntl` ロック + atomic write を行う |
 | health check | **同期** | ファイルシステム走査。既存パターンと同一 |
+
+**蒸留の性能境界:** collect + integrate の合計処理時間は REQ-NF-002 により 100 ノートあたり 5 秒以内。extract は外部依存（LLM）のため計測対象外。
 
 **蒸留の公開 API 方針**: `memory_distill_knowledge` / `memory_distill_values` の公開パラメータは REQ-FUNC-010/011 に定義されたものから増やさない。内部では以下の3段階で処理する:
 
@@ -444,6 +453,15 @@ REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesS
 - 実装:
   正規表現ベースのシークレット検出器を `core/security.py` として新規実装する（既存リポジトリ内に再利用可能な検出器は存在しない）。一般的なシークレットパターン（AWS キー、API トークン、GitHub PAT 等）をカバーする薄いユーティリティとし、Memory 本体には影響させない
 
+### 7.7 削除の部分失敗戦略
+
+Knowledge / Values の削除はファイル（`knowledge/{id}.md` / `values/{id}.md`）→ インデックス（`_knowledge.jsonl` / `_values.jsonl`）の順序で実行する。
+
+- **ファイル削除成功 → インデックス削除失敗**: `memory_health_check` が orphan index entry（ファイルなしのインデックスエントリ）として検出・報告する
+- **ファイル削除失敗**: エラーを返し、インデックスは変更しない
+
+事後検出・事後修復モデルであり、トランザクション保証は持たない（セクション 5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針）。
+
 ---
 
 ## 8. 検索エンジン統合方針
@@ -551,7 +569,7 @@ AGENTS.md のパスは以下の優先順位で解決する:
 
 **解決失敗時の挙動（REQ-FUNC-003 準拠）:**
 - `memory_init`: マーカー挿入をスキップし警告を返す（AGENTS.md が存在しなくても init 自体は成功する）
-- `memory_values_promote` / `memory_values_demote` / `memory_values_delete`（promoted エントリ）: エラーを返す（書き込み先が存在しない状態での操作は不正）
+- `memory_values_promote` / `memory_values_demote` / `memory_values_delete`（promoted エントリ）: エラーを返す（書き込み先が存在しない状態での操作は不正）。特に `memory_values_delete`（promoted エントリ）では、マーカー欠落状態で Values エントリのみ削除すると AGENTS.md に孤立した昇格テキストが残り修復不能となるため、削除全体を拒否する
 
 ### 9.6 書き込み整合性
 
@@ -598,7 +616,7 @@ stateDiagram-v2
 
 1. 対象期間の Memory ノートを `_index.jsonl` から選定（`date_from` / `date_to` は `YYYY-MM-DD` 形式、両端 inclusive。無効な範囲はバリデーションエラー。詳細は REQ-FUNC-010 参照）
 2. ノート内容の Decisions / Pitfalls & Remaining Issues / Results / Work Log セクション（日本語エイリアス: 判断 / 注意点・残課題 / 成果 / 作業ログ）を読み込み。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う
-3. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める
+3. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める。`_state.md` は日付フィルタ（`date_from` / `date_to`）の対象外。Memory ノートの日付範囲に関わらず、常に `_state.md` の「主要な判断」セクション全文をスナップショットに含める
 4. 抽出用の `DistillationSnapshot` を構築
 
 **extract:**
@@ -610,9 +628,10 @@ stateDiagram-v2
 
 1. 各候補に対して `KnowledgeIntegrator` / `ValuesIntegrator` で統合判定
 2. `dry_run=false` の場合のみ CRUD 操作を実行
-3. `DistillationReport` を生成・返却
+3. add/update 呼び出しで機密検出警告が返された場合、該当エントリの永続化をスキップし `secret_skipped` に計上する
+4. `DistillationReport` を生成・返却
 4. `_state.md` の蒸留日時フィールドを更新する:
-   - **最終永続化日時**（`last_knowledge_distilled_at` / `last_values_distilled_at`）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した場合にのみ更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない
+   - **最終永続化日時**（`last_knowledge_distilled_at` / `last_values_distilled_at`）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した場合にのみ更新。`CONTRADICT_EXISTING` は既存エントリの `confidence` を低下させ `memory_values_update` で永続化するが、`last_*_distilled_at` の目的は新たなエントリの追加・統合の発生記録であり、既存エントリの品質指標調整はこれに該当しないため除外する
    - **最終評価日時**（`last_knowledge_evaluated_at` / `last_values_evaluated_at`）: `dry_run=false` の蒸留が完了した時点で更新（永続化 0 件でも更新。トリガー条件はこの日時を基準に判定する）
    - `dry_run=true` の実行ではいずれも更新しない
 
@@ -628,13 +647,15 @@ stateDiagram-v2
 | 経過時間 | 168 時間（7日相当）以上 | 現在日時 vs `_state.md` の該当種別の最終評価日時（タイムスタンプ精度で比較） |
 | Bootstrap | ノート1件以上 | `last_*_evaluated_at` が未設定（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す |
 
+**`_state.md` の除外:** `_state.md` の「主要な判断」セクションの更新はトリガー条件に含めない。`_state.md` はセッションごとに頻繁に更新されるローリングステートであり、変更検出をトリガーにすると蒸留が過度に頻発する。ノート数カウントが間接的にカバーし、168 時間の経過時間条件がフォールバックとして機能する。
+
 #### 10.2.2 ユーザー直接呼び出し
 
 ユーザーが `memory_distill_knowledge` / `memory_distill_values` を直接呼び出した場合は、上記トリガー条件の評価をバイパスし即座に蒸留パイプラインを実行する。この経路は `DistillationTrigger` を経由しない。
 
 **蒸留日時の保存先:** `_state.md` の YAML フロントマターに蒸留種別ごとに以下の 4 フィールドを保持する（セクション 10.1 参照）。既存のセクション構造（「現在のフォーカス」「主要な判断」等）には変更を加えない。`state.py` にフロントマター読み書き機能を追加する（セクション 11.1 参照）。Knowledge と Values の蒸留は独立にトリガーされるため、それぞれの日時を区別して管理する。
 
-- `last_knowledge_distilled_at` / `last_values_distilled_at`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した蒸留完了時にのみ更新。矛盾検出による `confidence` 低下（`CONTRADICT_EXISTING`）は永続化にカウントしない
+- `last_knowledge_distilled_at` / `last_values_distilled_at`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した蒸留完了時にのみ更新。`CONTRADICT_EXISTING` は既存エントリの `confidence` を低下させ `memory_values_update` で永続化するが、`last_*_distilled_at` の目的は新たなエントリの追加・統合の発生記録であり、既存エントリの品質指標調整はこれに該当しないため除外する
 - `last_knowledge_evaluated_at` / `last_values_evaluated_at`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で更新（永続化 0 件でも更新。トリガー条件はこの日時を基準に判定する）
 
 各フィールドは `memory_init` 時には作成せず、それぞれの更新条件を初めて満たした時点で独立に遅延追加する。したがって `last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時に追加されるが、`last_*_distilled_at` は永続化が発生するまで追加されない。
@@ -648,7 +669,7 @@ stateDiagram-v2
 | モジュール | 変更内容 | 影響度 |
 |---|---|---|
 | `server.py` | 新規ツール関数の追加 + 既存 2 ツールの追加的レスポンス拡張（下記参照） | 低（追加のみ） |
-| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し）を追加 | 低（チェック追加） |
+| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。インデックスファイルの lazy 生成を考慮し、インデックス不在時はディレクトリ内のファイル有無で健全性を判定する（詳細は REQ-NF-004 参照）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し）を追加 | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（各フィールド独立に遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時。セクション 10.2 参照） | 低（追加のみ） |
