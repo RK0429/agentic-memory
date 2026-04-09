@@ -307,7 +307,9 @@ memory/
 | `related` | list[string] | No | 追加する関連 Knowledge ID（既存にマージ） |
 | `tags` | list[string] | No | 置換後のタグリスト |
 
-**処理:** 指定された属性のみ更新。`updated_at` を自動更新。`.md` ファイルと `_knowledge.jsonl` を同期更新。
+**処理:** `id` 以外のパラメータが一つも指定されていない場合はバリデーションエラーを返す。指定された属性のみ更新。`updated_at` を自動更新。`.md` ファイルと `_knowledge.jsonl` を同期更新。
+
+**出力:** 更新されたエントリの `id`。
 
 ---
 
@@ -386,7 +388,7 @@ memory/
 - **閾値**: BM25+ 正規化スコア 0.7 以上（暫定値。運用データの蓄積後に調整する）
 - **対象**: 厳密重複（内容ベースで同一と判定されたもの）を除外した既存エントリ全件
 
-**出力:** 作成されたエントリの `id`。類似既存エントリがある場合はその ID と description も返す。昇格候補条件（REQ-FUNC-015）を満たす場合は `promotion_candidate: true` を返す（満たさない場合はフィールド自体を省略）。
+**出力:** 作成されたエントリの `id`。昇格候補条件（REQ-FUNC-015）を満たす場合は `promotion_candidate: true` を返す（満たさない場合はフィールド自体を省略）。類似既存エントリがある場合はその情報を `warnings` に含める（例: `"Similar value exists: v-xxxxxxxx — {description}"`）。
 
 ---
 
@@ -436,10 +438,11 @@ memory/
 | `description` | string | No | 更新後の記述 |
 
 **処理:**
-1. 指定属性を更新
-2. `add_evidence` 指定時: evidence リストの先頭に追加し、最新10件を保持。超過分は `evidence_count` のみインクリメント
-3. `updated_at` を自動更新
-4. `.md` ファイルと `_values.jsonl` を同期更新
+1. `id` 以外のパラメータが一つも指定されていない場合はバリデーションエラーを返す
+2. 指定属性を更新
+3. `add_evidence` 指定時: evidence リストの先頭に追加し、最新10件を保持。超過分は `evidence_count` のみインクリメント
+4. `updated_at` を自動更新
+5. `.md` ファイルと `_values.jsonl` を同期更新
 
 **出力:** 更新されたエントリの `id`。更新後に昇格候補条件（REQ-FUNC-015）を満たす場合は `promotion_candidate: true` を返す（満たさない場合はフィールド自体を省略）。
 

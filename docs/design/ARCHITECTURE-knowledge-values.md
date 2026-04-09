@@ -274,6 +274,8 @@ sequenceDiagram
 
 **補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new: N, reinforced: R, contradicted: C, skipped: K}` を返す（`merged` / `linked` は 0、代わりに `reinforced` / `contradicted` を使用）。`DistillationReport` は6種の集計フィールド（`newCount` / `mergedCount` / `linkedCount` / `reinforcedCount` / `contradictedCount` / `skippedCount`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。
 
+**`LINK_RELATED` の `update` 呼び出しセマンティクス:** シーケンス図中の `update(id, related=[...])` は REQ-FUNC-006 の `related` パラメータ定義に従い、既存の `related` リストへの**追加**（マージ）として動作する。既存の `related` を置換するものではない。
+
 **LINK_RELATED の部分失敗時の整合性:** `LINK_RELATED` は3ステップの複合操作（候補の新規登録 → 新規エントリに `related` 追加 → 既存エントリに `related` 追加）であり、途中で失敗すると片方向リンクが残る可能性がある。以下の整合性保証が働く:
 
 1. **検出**: `memory_health_check`（REQ-NF-004 のインデックス整合性チェック拡張）で、`related` に含まれる ID が存在しないエントリを参照している orphan link を検出する。また、片方向リンク（A→B は存在するが B→A が存在しない）も検出する
@@ -670,7 +672,7 @@ stateDiagram-v2
 
 ### 11.3 後方互換性の保証方針
 
-- 既存の 19 MCP ツールの関数シグネチャは変更しない。レスポンスは `memory_state_show` と `memory_stats` の 2 ツールのみ追加的フィールド拡張を行う（詳細はセクション 11.1 参照）。既存フィールドの削除・型変更は行わないため、既存クライアントの後方互換を維持する。上記 2 ツール以外の既存ツールのレスポンス形式には変更を加えない
+- 既存の 19 MCP ツールの関数シグネチャは変更しない。レスポンスは `memory_state_show` と `memory_stats` の 2 ツールのみ追加的フィールド拡張を行う（詳細はセクション 11.1 参照）。`as_json=true`（デフォルト）の場合は `frontmatter` を独立した dict フィールドとして追加するのみであり、既存フィールドの削除・型変更は行わないため後方互換を維持する。`as_json=false` の場合は rendered markdown の先頭に `## 蒸留メタデータ` セクションが追加されるため、`output` 文字列を位置依存でパースしているクライアントには影響しうる（セクション名による探索であれば影響なし）。上記 2 ツール以外の既存ツールのレスポンス形式には変更を加えない
 - `_index.jsonl` のスキーマに変更を加えない
 - 新規モジュールは `core/knowledge/`、`core/values/`、`core/distillation/` として分離し、既存 `core/` の名前空間を汚染しない
 - `memory_init` の拡張は追加的（既存ディレクトリ構造を壊さない）

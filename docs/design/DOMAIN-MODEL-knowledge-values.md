@@ -263,7 +263,7 @@ classDiagram
         +applyDemotion(ValuesEntry, string reason, datetime now) ValuesEntry
     }
 
-    note for PromotionManager "ポリシー判定を担当:\n- checkCandidate(): 昇格条件の充足を判定\n  （Confidence.meetsPromotionThreshold() AND\n   EvidenceList.meetsPromotionCount() に委譲）\n- applyPromotion/applyDemotion(): ポリシー検証後に\n  ValuesEntry.promote(now)/demote(reason, now) を呼び出す\nValuesEntry 自身の promote(now)/demote(reason, now) は\n状態遷移のみを担当（不変条件の保護）\n降格時の reason は PromotionState に\ndemotionReason/demotedAt として記録\nnow は呼び出し元が供給する現在日時"
+    note for PromotionManager "ポリシー判定を担当:\n- checkCandidate(): 昇格条件の充足を判定\n  （Confidence.meetsPromotionThreshold() AND\n   EvidenceList.meetsPromotionCount() AND\n   PromotionState.promoted == false に委譲）\n- applyPromotion/applyDemotion(): ポリシー検証後に\n  ValuesEntry.promote(now)/demote(reason, now) を呼び出す\nValuesEntry 自身の promote(now)/demote(reason, now) は\n状態遷移のみを担当（不変条件の保護）\n降格時の reason は PromotionState に\ndemotionReason/demotedAt として記録\nnow は呼び出し元が供給する現在日時"
 
     class ValuesIntegrator {
         <<DomainService>>
@@ -491,7 +491,7 @@ stateDiagram-v2
 | Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付（`YYYY-MM-DD` 形式）で構成 | ValuesEntry |
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3）。降格時には `demotionReason`（降格理由）と `demotedAt`（降格日時）を記録する（判断記録 4） | ValuesEntry |
-| PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` に委譲）、`applyPromotion(ValuesEntry, datetime now)` / `applyDemotion(entry, reason, now)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲。降格時の理由と日時は `PromotionState.demotionReason` / `demotedAt` に記録される | PromotionState |
+| PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` AND `PromotionState.promoted == false` に委譲）、`applyPromotion(ValuesEntry, datetime now)` / `applyDemotion(entry, reason, now)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲。降格時の理由と日時は `PromotionState.demotionReason` / `demotedAt` に記録される | PromotionState |
 | ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス | Confidence |
 
 ### 5.4 蒸留コンテキスト
