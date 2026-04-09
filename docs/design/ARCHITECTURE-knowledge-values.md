@@ -17,6 +17,10 @@
 | — | 2026-04-09 | レビュー指摘対応（第3回）: §8.5 の類似判定スコア正規化を Values 限定に修正（Knowledge の BM25 正規化はREQ/DOMAIN未定義のため除外） |
 | — | 2026-04-09 | §9.8 ステップ4 復旧手順を `memory_values_promote` → `memory_health_check` 自動修復に変更（REQ-FUNC-016 再昇格禁止との矛盾解消） |
 | — | 2026-04-09 | §9.8 ステップ4 復旧欄を実装に存在する操作のみで記述（`appendEntry` 冪等再挿入・promoted sync 差分修復の記述を除去） |
+| — | 2026-04-09 | レビュー指摘対応（cross-doc review）: §15 要件トレーサビリティマトリクス追加、§10.1 collect を K/V 蒸留ごとに分離、§5.2 LINK_RELATED 復旧トリガーを明確化（`memory_health_check(fix=true)` のみ）、§11.1 health.py に related リンク整合性・promoted 同期 detect-only を明記 |
+| — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: §15 に REQ-FUNC-014 を追加 |
+| — | 2026-04-09 | レビュー指摘対応: §15 導入文のスコープを「Must 要件ごとに」→「全 Must + 設計対応のある Should」に修正（REQ-NF-007 は Should） |
+| — | 2026-04-09 | §15 導入文のスコープ記述を「設計上の対応が存在する Should 要件」→「REQ-NF-007（Should）」に限定（表の実際の行集合と一致させる） |
 
 ---
 
@@ -289,8 +293,8 @@ sequenceDiagram
 
 **LINK_RELATED の部分失敗時の整合性:** `LINK_RELATED` は3ステップの複合操作（候補の新規登録 → 新規エントリに `related` 追加 → 既存エントリに `related` 追加）であり、途中で失敗すると片方向リンクが残る可能性がある。以下の整合性保証が働く:
 
-1. **検出**: `memory_health_check`（REQ-NF-004 のインデックス整合性チェック拡張）で、`related` に含まれる ID が存在しないエントリを参照している orphan link を検出する。また、片方向リンク（A→B は存在するが B→A が存在しない）も検出する
-2. **復旧**: orphan link は `KnowledgeService` が `related` から除去する。片方向リンクは逆方向の link を追加して双方向に揃える
+1. **検出**: `memory_health_check`（REQ-NF-004 の `related` リンク整合性チェック）で、`related` に含まれる ID が存在しないエントリを参照している orphan link を検出する。また、片方向リンク（A→B は存在するが B→A が存在しない）も検出する
+2. **復旧**: `memory_health_check(fix=true)` 実行時に `KnowledgeService` を介して修復する。orphan link は `related` から除去し、片方向リンクは逆方向の link を追加して双方向に揃える。**修復トリガーは `memory_health_check(fix=true)` のみ**であり、CRUD 操作中に自動修復は行わない
 3. **設計判断**: ファイルベースストレージでトランザクション保証がないため、操作単位でのロールバックではなく、事後検出・事後修復のアプローチを採用する（Values 昇格フロー §5.3 の部分失敗戦略と同じ方針）
 
 ### 5.3 Values 昇格フロー
@@ -653,9 +657,15 @@ stateDiagram-v2
 
 `memory_distill_*` が呼び出された時点で直接パイプラインを実行する。**MCP サーバー（`DistillationService`）はトリガー条件を評価しない。**トリガー条件の評価はエージェント/スキル側が公開ツールレスポンス（`memory_state_show` + `memory_stats`）を用いて行う責務であり（セクション 13「Phase 7 の AGENTS.md / retrospective 連携設計」参照）、パイプライン内では行わない。
 
+**Knowledge 蒸留（`memory_distill_knowledge`）の collect:**
 1. 対象期間の Memory ノートを `_index.jsonl` から選定（`date_from` / `date_to` は `YYYY-MM-DD` 形式、両端 inclusive。無効な範囲はバリデーションエラー。詳細は REQ-FUNC-010 参照）
 2. ノート内容の Decisions / Pitfalls & Remaining Issues / Results / Work Log セクション（日本語エイリアス: 判断 / 注意点・残課題 / 成果 / 作業ログ）を読み込み。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う
-3. Values 蒸留の場合は、MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める。`_state.md` は日付フィルタ（`date_from` / `date_to`）の対象外。Memory ノートの日付範囲に関わらず、常に `_state.md` の「主要な判断」セクション全文をスナップショットに含める
+3. 抽出用の `DistillationSnapshot` を構築
+
+**Values 蒸留（`memory_distill_values`）の collect:**
+1. 対象期間の Memory ノートを `_index.jsonl` から選定（Knowledge 蒸留と同一の日付フィルタ仕様）
+2. ノート内容の Decisions セクション（日本語エイリアス: 判断）を重点的に読み込み。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う（REQ-FUNC-011 参照: Values 蒸留の入力は判断履歴に特化しており、Knowledge 蒸留の広範な4セクションとは異なる）
+3. MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める。`_state.md` は日付フィルタ（`date_from` / `date_to`）の対象外。Memory ノートの日付範囲に関わらず、常に `_state.md` の「主要な判断」セクション全文をスナップショットに含める
 4. `_state.md` 由来の Evidence.date は、エントリに付与された日付情報を `YYYY-MM-DD` に切り詰めて使用する。日付情報がないエントリは蒸留実行日をフォールバックとする
 5. 抽出用の `DistillationSnapshot` を構築
 
@@ -709,7 +719,7 @@ stateDiagram-v2
 | モジュール | 変更内容 | 影響度 |
 |---|---|---|
 | `server.py` | 新規ツール関数の追加 + 既存 2 ツールの追加的レスポンス拡張（下記参照） | 低（追加のみ） |
-| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。インデックスファイルの lazy 生成を考慮し、インデックス不在時はディレクトリ内のファイル有無で健全性を判定する（詳細は REQ-NF-004 参照）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し）を追加 | 低（チェック追加） |
+| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。インデックスファイルの lazy 生成を考慮し、インデックス不在時はディレクトリ内のファイル有無で健全性を判定する（詳細は REQ-NF-004 参照）。Knowledge の `related` リンク整合性チェック（orphan link・片方向リンク検出。`fix=true` 時は `KnowledgeService` 経由で修復。§5.2 参照）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し。detect-only。`fix=true` でも promoted 同期差分は自動修復しない。修復は `memory_values_promote` の再実行で行う） | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（各フィールド独立に遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時。セクション 10.2 参照） | 低（追加のみ） |
@@ -911,3 +921,41 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | extractor 未設定・外部依存の失敗 | 中 | `memory_distill_*` 呼び出し時に `DistillationExtractorPort` の設定を検証し、未設定時は明確な設定エラーを返す。`memory_init` の冪等性は維持する（extractor 未設定でも init は成功する） |
 | インデックスファイルの肥大化 | 低 | エントリ数 1,000 件は JSONL で数 MB 程度。性能問題が顕在化してから対応 |
 | `_state.md` への蒸留日時記録がステート肥大化を招く | 低 | フロントマターに4フィールド追加のみ（永続化日時×2 + 評価日時×2）。既存のセクション構造・ステートキャップに影響しない |
+
+---
+
+## 15. 要件トレーサビリティマトリクス
+
+全 Must 要件および REQ-NF-007（Should）について、本設計文書内の対応セクションを示す。
+
+| 要件 ID | 要件名 | 対応設計セクション |
+|---|---|---|
+| REQ-FUNC-001 | Knowledge データモデル | §3 コンテナ図（ドメイン層 `KnowledgeEntry`）、§4.1（ドメイン層）、§7 ストレージ設計、DOMAIN §3.1 |
+| REQ-FUNC-002 | Values データモデル | §3 コンテナ図（ドメイン層 `ValuesEntry`）、§4.1（ドメイン層）、§7 ストレージ設計、DOMAIN §3.2 |
+| REQ-FUNC-003 | ストレージ設計 | §7 ストレージ設計 |
+| REQ-FUNC-004 | Knowledge 登録 | §4.1（`KnowledgeService`）、§7.6 機密スキャン |
+| **REQ-FUNC-005** | **Knowledge 検索** | **§8 検索エンジン統合方針（§8.1 汎用化、§8.2 フィールド重み）** |
+| REQ-FUNC-006 | Knowledge 更新 | §4.1（`KnowledgeService`）、§7.6 機密スキャン |
+| REQ-FUNC-007 | Values 登録 | §4.1（`ValuesService`）、§7.6 機密スキャン、§8.5 類似判定スコア正規化 |
+| **REQ-FUNC-008** | **Values 検索** | **§8 検索エンジン統合方針（§8.1 汎用化、§8.3 フィールド重み）** |
+| REQ-FUNC-009 | Values 更新 | §4.1（`ValuesService`、昇格候補通知）、§7.6 機密スキャン |
+| REQ-FUNC-010 | Knowledge 蒸留 | §5.2 蒸留フロー、§10 蒸留フロー詳細（§10.1 collect/extract/integrate） |
+| **REQ-FUNC-011** | **Values 蒸留** | **§5.2 蒸留フロー（Values 蒸留の DistillationReport 補足）、§10.1（collect ステップ 3: _state.md 入力、extract: category 限定）** |
+| REQ-FUNC-012 | Knowledge 統合 | §4.1（`KnowledgeIntegrator`）、§5.2 蒸留フロー（integrate ループ） |
+| REQ-FUNC-013 | Values 統合 | §4.1（`ValuesIntegrator`）、§5.2 蒸留フロー（補足: Values 蒸留の DistillationReport） |
+| REQ-FUNC-014 | リサーチ結果の Knowledge 登録 | §13 Phase 7（AGENTS.md ワークフロー定義。追加ツール不要、`memory_knowledge_add` を `source_type: autonomous_research` で使用） |
+| REQ-FUNC-015 | 昇格条件 | §4.1（`PromotionManager`）、§5.3 昇格フロー |
+| REQ-FUNC-016 | AGENTS.md 反映 | §5.3 昇格フロー、§9 AGENTS.md 連携設計 |
+| REQ-FUNC-017 | Knowledge 専用検索 | REQ-FUNC-005 の参照 alias。対応設計は REQ-FUNC-005 と同一 |
+| REQ-FUNC-018 | Values 判断時参照 | REQ-FUNC-008 の参照 alias。対応設計は REQ-FUNC-008 と同一 |
+| REQ-FUNC-019 | 記憶管理セクション拡張 | §13 Phase 7（AGENTS.md テキスト編集） |
+| REQ-FUNC-020 | セッション開始手順更新 | §13 Phase 7（`memory_values_search` 呼び出し） |
+| REQ-FUNC-021 | セッション終了手順更新 | §13 Phase 7（`memory_state_show` + `memory_stats` → 蒸留推奨判断） |
+| **REQ-FUNC-022** | **昇格 Values セクション** | **§9.1 セクション構造、§9.2 テキスト形式、§9.3 AgentsMdAdapter（`appendEntry`/`removeEntry`）** |
+| REQ-NF-001 | 検索応答時間 | §1 品質特性（優先度 4）、§8.4 dense/rerank 方針 |
+| REQ-NF-003 | 後方互換性 | §1 品質特性（優先度 1）、§4.1（既存ツール群）、§11.2 変更しないモジュール、ADR-005 |
+| REQ-NF-004 | Health Check 統合 | §4.1（`health.py` 拡張）、§5.2 LINK_RELATED 部分失敗（検出と復旧）、§5.3 昇格フロー部分失敗、§9.6 書き込み整合性、§11.1（`health.py` 変更内容） |
+| REQ-NF-005 | マイグレーション | §4.1（`config.py` 拡張）、§11.1（`config.py` 変更内容） |
+| **REQ-NF-006** | **AGENTS.md 書き込みガードレール** | **§4.1（`PromotionService`: `confirm` ガードレール消費）、§5.3 昇格フロー（ステップ 3: confirm 検証）、§9.8 promoted エントリ削除（ステップ 1: confirm 検証）、ADR-003** |
+| REQ-NF-007 | 機密情報の除外 | §7.6 機密スキャン |
+| **REQ-NF-008** | **テストカバレッジ** | **§13 実装フェーズ（各フェーズで対応ユニットテストを作成。Phase 1〜7 の各段階で CRUD 正常系・異常系、蒸留パイプライン、昇格メカニズムのテストを網羅）** |

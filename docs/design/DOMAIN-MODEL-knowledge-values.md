@@ -14,6 +14,8 @@
 | — | 2026-04-09 | レビュー指摘対応: F-01〜F-10（DistillationOutcome に SECRET_SKIPPED 追加、update 重複チェック BR-8/BR-9 追記、CONTRADICT_EXISTING 根拠追記、BR-16 事後修復モデルに統一、蒸留トリガー _state.md 除外 BR-12 追記） |
 | — | 2026-04-09 | レビュー指摘対応: Evidence.date 導出規則を注釈に追加（_state.md 由来のフォールバック明記）、ValuesIntegrationResult の targetId/confidenceDelta セマンティクスを Mermaid 注釈と用語集に追加 |
 | — | 2026-04-09 | レビュー指摘対応: 「実質同一」の同値条件を BR-8/BR-9 に明文化、evidence 10件保持の順序規則を明記、DistillationReport 用語集に secretSkippedCount/SECRET_SKIPPED を追記 |
+| — | 2026-04-09 | レビュー指摘対応（cross-doc review）: enum 表現の対応規約（UPPER_SNAKE_CASE ↔ lower_snake_case 変換表）追加、conflictDetail/contradictionDetail の用途・設定条件を注釈に追加、EvidenceList の newest-first 順序不変条件を明記、DistillationExtractorPort から実装ファイルパスを除去、BR-16 に promoted 同期 detect-only を明記 |
+| — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: enum 規約に用語集・BR の説明レイヤ規則を追加、用語集 SourceType を API 表現に統一 |
 
 ---
 
@@ -161,7 +163,7 @@ classDiagram
         +string? conflictDetail
     }
 
-    note for KnowledgeIntegrationResult "targetId の意味:\n- MERGE_EXISTING: マージ先の既存エントリ ID\n- LINK_RELATED: リンク先の既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null"
+    note for KnowledgeIntegrationResult "targetId の意味:\n- MERGE_EXISTING: マージ先の既存エントリ ID\n- LINK_RELATED: リンク先の既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null\n\nconflictDetail:\n- MERGE_EXISTING でマージ時に内容の\n  矛盾が検出された場合に設定される\n  内部診断文字列（LLM が生成した\n  矛盾箇所の説明）\n- それ以外のアクションでは null"
 
     class IntegrationAction {
         <<Enumeration>>
@@ -189,6 +191,17 @@ classDiagram
 - `id` は作成時に UUID を生成し `k-` プレフィックスを付与する immutable identifier。内容の変化に依存しない安定した識別子であり、更新で再計算しない。ファイルパスは `knowledge/{id}.md`。重複検出は `title` + `domain` + `content` の内容ベースで行い、同一内容の登録は不可（BR-1, BR-8）
 - `sources` の更新はマージ（既存に追加。置換ではない）（BR-11）
 - `sourceType` は作成時に一度だけ設定される immutable フィールド。`Source.type` とは独立にエントリレベルの出自分類を表す。MERGE_EXISTING（BR-11）時は既存エントリの `sourceType` を維持し、変更しない。新規 Source はそれぞれの `type` を持って `sources` リストに追加される
+
+**enum 表現の対応規約:** クラス図ではドメイン内部表現として `UPPER_SNAKE_CASE`（例: `VERIFIED`, `MEMORY_DISTILLATION`）を使用する。永続化層（JSONL / Markdown frontmatter）および MCP API レスポンスでは `lower_snake_case`（例: `verified`, `memory_distillation`）を使用する。変換はインフラ層（Repository）の責務であり、ドメインモデル内では `UPPER_SNAKE_CASE` を正とする。**用語集（§5）およびビジネスルール一覧（§7）では、外部から観測可能な振る舞いを記述するため API/永続化表現（`lower_snake_case`）を使用する。**
+
+| ドメイン内部（UPPER_SNAKE_CASE） | 永続化 / API（lower_snake_case） |
+|---|---|
+| `VERIFIED` / `LIKELY` / `UNCERTAIN` | `verified` / `likely` / `uncertain` |
+| `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT` | `memory_distillation` / `autonomous_research` / `user_taught` |
+| `UNKNOWN` / `NOVICE` / `FAMILIAR` / `PROFICIENT` / `EXPERT` | `unknown` / `novice` / `familiar` / `proficient` / `expert` |
+| `CREATE_NEW` / `MERGE_EXISTING` / `LINK_RELATED` / `SKIP_DUPLICATE` | `create_new` / `merge_existing` / `link_related` / `skip_duplicate` |
+| `REINFORCE_EXISTING` / `CONTRADICT_EXISTING` | `reinforce_existing` / `contradict_existing` |
+| `CREATED` / `MERGED` / `LINKED` / `REINFORCED` / `CONTRADICTED` / `SKIPPED` / `SECRET_SKIPPED` | `created` / `merged` / `linked` / `reinforced` / `contradicted` / `skipped` / `secret_skipped` |
 
 **アプリケーション層の運用制約:**
 - 削除時、他エントリの `related` からの参照除去はアプリケーション層（`KnowledgeService`）の責務（BR-14、判断記録 2 参照）
@@ -295,7 +308,7 @@ classDiagram
         SKIP_DUPLICATE
     }
 
-    note for ValuesIntegrationResult "targetId の意味:\n- REINFORCE_EXISTING: 強化対象の既存エントリ ID\n- CONTRADICT_EXISTING: 矛盾する既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null\n\nconfidenceDelta の意味:\n- REINFORCE_EXISTING: 正の値（confidence の増分）\n- CONTRADICT_EXISTING: 負の値（confidence の減分）\n- CREATE_NEW / SKIP_DUPLICATE: null"
+    note for ValuesIntegrationResult "targetId の意味:\n- REINFORCE_EXISTING: 強化対象の既存エントリ ID\n- CONTRADICT_EXISTING: 矛盾する既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null\n\nconfidenceDelta の意味:\n- REINFORCE_EXISTING: 正の値（confidence の増分）\n- CONTRADICT_EXISTING: 負の値（confidence の減分）\n- CREATE_NEW / SKIP_DUPLICATE: null\n\ncontradictionDetail:\n- CONTRADICT_EXISTING で矛盾が検出された\n  場合に設定される内部診断文字列\n  （LLM が生成した矛盾内容の説明）\n- それ以外のアクションでは null\n- ReportEntry.detail にも転記され\n  DistillationReport 経由で公開される"
 
     ValuesEntry *-- ValuesId
     ValuesEntry *-- Category
@@ -311,7 +324,7 @@ classDiagram
 **集約不変条件:**
 - `id` は作成時に UUID を生成し `v-` プレフィックスを付与する immutable identifier。内容の変化に依存しない安定した識別子であり、更新で再計算しない。ファイルパスは `values/{id}.md`。厳密重複検出は `description` + `category` の内容ベースで行い、同一内容の登録は不可（BR-2, BR-9）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
-- `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）。**作成時にも同じ 10 件保持ルールを適用する**: 提供リストの先頭10件を保持し、末尾を切り捨てる。`totalCount` は提供された `evidence` の件数で初期化される（未提供時は 0）
+- `evidence` リストは **newest-first 順序** で保持する（`EvidenceList.items` の先頭が最新）。`addEvidence()` は先頭に追加し、10件を超過した場合は末尾を切り捨てる。超過分は `totalCount` のみインクリメント（BR-5）。**作成時にも同じルールを適用する**: 提供リストの先頭10件を保持し、末尾を切り捨てる。`totalCount` は提供された `evidence` の件数で初期化される（未提供時は 0）
 - ID は異なるが意味的に類似するエントリの登録は警告付きで許可（エラーではない）（BR-9）
 
 **ドメインサービスポリシー:**
@@ -488,7 +501,7 @@ stateDiagram-v2
 | KnowledgeId | `k-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | KnowledgeEntry |
 | Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
 | Source | Knowledge の引用元。型（`SourceType`）・参照先・要約で構成。MERGE_EXISTING 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | SourceType |
-| SourceType | Knowledge の出自分類。`MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT` の3値。`KnowledgeEntry.sourceType`（エントリレベル）と `Source.type`（個別引用元レベル）の両方で使用される。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry, Source |
+| SourceType | Knowledge の出自分類。`memory_distillation` / `autonomous_research` / `user_taught` の3値（クラス図での内部表現は `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT`）。`KnowledgeEntry.sourceType`（エントリレベル）と `Source.type`（個別引用元レベル）の両方で使用される。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry, Source |
 | Accuracy | Knowledge の品質指標。verified（複数ソース確認）/ likely（単一ソース）/ uncertain（未確認） | KnowledgeEntry |
 | UserUnderstanding | ユーザーのその知識に対する理解度。unknown / novice / familiar / proficient / expert の5段階 | KnowledgeEntry |
 | KnowledgeIntegrator | 蒸留候補と既存 Knowledge の重複検出・マージを行うドメインサービス | IntegrationAction |
@@ -517,7 +530,7 @@ stateDiagram-v2
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `SECRET_SKIPPED`） | DistillationOutcome |
 | DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(168 時間)でタイムスタンプ精度の比較を行う（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
-| DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計。想定実装先は `core/distillation/extractor.py`（提案。詳細はアーキテクチャ文書 4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
+| DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---
 
@@ -593,4 +606,4 @@ stateDiagram-v2
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
-| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は自動修復も実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針） | REQ-FUNC-023, REQ-FUNC-024 |
+| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は orphan の自動修復を実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針。ただし AGENTS.md の promoted 同期差分は detect-only であり、`fix=true` でも自動修復しない。REQ-NF-004 参照） | REQ-FUNC-023, REQ-FUNC-024 |
