@@ -25,6 +25,7 @@
 | — | 2026-04-10 | レビュー残件対応: §10.1 collect の `_state.md` 由来 Evidence.date 導出規則をエントリの構造化日付プレフィックス（`[YYYY-MM-DD HH:MM]`）ベースに明確化 |
 | — | 2026-04-10 | must/should 指摘対応: ReportEntry 公開フィールド表の casing を snake_case に統一（`candidate_summary` / `target_id`、enum 値を lower_snake_case に）、§1 品質特性表の GitHub Actions ランナー仕様に GitHub Docs 出典 URL を追加 |
 | — | 2026-04-10 | レビュー差し戻し対応: §4.1 ValuesService 責務に降格提案通知（`demotion_candidate`）の経路を追記（`PromotionState.shouldSuggestDemotion()` 経由）、§15 REQ-FUNC-009 行に降格提案通知を追記、GitHub Actions 出典 URL を GitHub-hosted runners reference に修正 |
+| — | 2026-04-10 | must/should 指摘対応（再レビュー）: §7.7 に Knowledge/Values 削除成功レスポンス契約を追加、§15 REQ-FUNC-023/024 に §7.7 レスポンス契約のトレース追加、§5.2 ReportEntry の target_id を全 7 outcome について null/非 null を明記、§11.1 に `stats.py` を変更対象モジュールとして追加 |
 
 ---
 
@@ -35,7 +36,7 @@
 | 1 | **後方互換性** | 既存 19 MCP ツール・270+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
 | 2 | **保守性** | 既存 `core/` のフラットモジュール構造に Knowledge/Values/蒸留の3コンテキストを追加するため、モジュール境界の明確化が不可欠 |
 | 3 | **拡張性** | 将来的な push 型配信・横断検索・降格メカニズム等の Could 要件への対応余地を確保 |
-| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`。ハードウェア仕様はリポジトリ可視性により異なる: private 2 vCPU / 8 GB RAM、public 4 vCPU / 16 GB RAM。2026-04-09 時点、[GitHub Docs: GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) 準拠）または開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）で計測する。既存 BM25+ エンジンの流用で達成可能 |
+| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`。ハードウェア仕様はリポジトリ可視性により異なる: private 2 vCPU / 8 GB RAM、public 4 vCPU / 16 GB RAM。2026-04-09 時点、[GitHub Docs: GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) 準拠）を必須の計測環境とする。開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）は参考値であり合否判定には使用しない。既存 BM25+ エンジンの流用で達成可能 |
 | 5 | **運用性** | `memory_init` のみでマイグレーション完了（REQ-NF-005）、health check 統合（REQ-NF-004） |
 
 ---
@@ -312,7 +313,7 @@ sequenceDiagram
 |---|---|---|
 | `outcome` | DistillationOutcome | `created` / `merged` / `linked` / `reinforced` / `contradicted` / `skipped` / `secret_skipped` |
 | `candidate_summary` | string | 蒸留候補の要約 |
-| `target_id` | string? | 統合先の既存エントリ ID（`created` / `secret_skipped` では `null`） |
+| `target_id` | string? | 統合先の既存エントリ ID。`merged` / `linked` / `reinforced` / `contradicted` では対象の既存エントリ ID、`created` / `skipped` / `secret_skipped` では `null` |
 | `detail` | string? | 操作の補足情報（新規作成されたエントリ ID、マージ理由等。該当なしの場合は `null`） |
 
 `DistillationReport` の詳細なドメインモデル定義は [DOMAIN-MODEL-knowledge-values.md §3.3](DOMAIN-MODEL-knowledge-values.md#33-蒸留コンテキスト) を参照。
@@ -580,6 +581,11 @@ Knowledge / Values の削除はファイル（`knowledge/{id}.md` / `values/{id}
 
 事後検出・事後修復モデルであり、トランザクション保証は持たない（セクション 5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針）。
 
+**削除成功時のレスポンス契約:**
+
+- **Knowledge 削除** (`memory_knowledge_delete`): `{ok: true, deleted_id, title}`。`reason` が指定された場合はレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（REQ-FUNC-023 参照）
+- **Values 削除** (`memory_values_delete`): `{ok: true, deleted_id, description, was_promoted}`。`reason` が指定された場合はレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（REQ-FUNC-024 参照）
+
 ---
 
 ## 8. 検索エンジン統合方針
@@ -833,6 +839,7 @@ stateDiagram-v2
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（各フィールド独立に遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時。セクション 10.2 参照） | 低（追加のみ） |
+| `stats.py` | `memory_stats` のレスポンスに `notes_since_last_knowledge_evaluation` / `notes_since_last_values_evaluation` フィールドを追加。`_index.jsonl` のノート起点タイムスタンプと `_state.md` の評価日時を突合してノート数を算出する（セクション 11.1 既存ツールの追加的レスポンス拡張 参照） | 低（追加のみ） |
 | `state.py` | `_state.md` の YAML フロントマターに蒸留メタデータ（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）の読み書き機能を追加。各フィールドは独立に遅延追加され、更新条件もフィールドごとに異なる（セクション 10.2 参照）。これにより `_state.md` のファイル形式は拡張される（パスは据え置き）。既存のセクション操作ロジックは変更なし | 低（追加のみ） |
 
 **既存ツールの追加的レスポンス拡張（REQ-FUNC-021/029 の判定データ提供）:**
@@ -1078,8 +1085,8 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | REQ-FUNC-020 | セッション開始手順更新 | §13 Phase 7（`memory_values_search` 呼び出し） |
 | REQ-FUNC-021 | セッション終了手順更新 | §13 Phase 7（`memory_state_show` + `memory_stats` → 蒸留推奨判断） |
 | **REQ-FUNC-022** | **昇格 Values セクション** | **§9.1 セクション構造、§9.2 テキスト形式、§9.3 AgentsMdAdapter（`appendEntry`/`removeEntry`）** |
-| REQ-FUNC-023 | Knowledge 削除 | §4.1（`KnowledgeService`）、§7.7 削除の部分失敗戦略、§11.1（`health.py`: orphan 検出・修復） |
-| REQ-FUNC-024 | Values 削除 | §4.1（`ValuesService`、`PromotionService.onDelete`）、§5.6 promoted Values 削除プレビュー、§9.8 promoted エントリ削除の操作順序 |
+| REQ-FUNC-023 | Knowledge 削除 | §4.1（`KnowledgeService`）、§7.7 削除の部分失敗戦略・成功レスポンス契約、§11.1（`health.py`: orphan 検出・修復） |
+| REQ-FUNC-024 | Values 削除 | §4.1（`ValuesService`、`PromotionService.onDelete`）、§5.6 promoted Values 削除プレビュー、§7.7 削除成功レスポンス契約、§9.8 promoted エントリ削除の操作順序 |
 | REQ-FUNC-025 | Values 一括参照 | §5.4 Values 一括参照フロー |
 | REQ-FUNC-026 | 蒸留トリガー判定 | §4.1（`DistillationTrigger`）、§13 Phase 7（AGENTS.md / retrospective 連携設計: トリガー条件評価の責務分担） |
 | REQ-FUNC-027 | ユーザー教示の Knowledge 化 | §13 Phase 7（AGENTS.md ワークフロー → `memory_knowledge_add`（`source_type: user_taught`）） |

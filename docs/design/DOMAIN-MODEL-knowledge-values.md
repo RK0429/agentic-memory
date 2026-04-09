@@ -20,6 +20,7 @@
 | — | 2026-04-10 | レビュー残件対応: DistillationTrigger クラス図を閾値定義オブジェクト + ノート起点タイムスタンプベース判定に整合、補足を更新 |
 | — | 2026-04-10 | レビュー残件対応: 最終更新日修正、Evidence.date 導出規則の注釈にエントリ日付プレフィックス形式を明記、DistillationTrigger 用語集の datetime 精度記述を shouldDistill() の契約と整合 |
 | — | 2026-04-10 | must/should 指摘対応: Evidence 用語集定義を拡充し `_state.md` セクション参照と各フィールド名（`ref` / `summary` / `date`）を明記 |
+| — | 2026-04-10 | must/should 指摘対応（再レビュー）: BR-17（Knowledge 統合 4 アクション、REQ-FUNC-012）追加、BR-10 を Values 統合 4 アクションに拡充（REQ-FUNC-013）、KnowledgeIntegrationResult.conflictDetail の公開経路（ReportEntry.detail 転記）を明記、ReportEntry.targetId の outcome 別 null/非 null を注釈に追加、DistillationTrigger の `time` 未設定時フォールバック（`T23:59:59`）を §3.3 補足と §5.4 用語集に追加 |
 
 ---
 
@@ -167,7 +168,7 @@ classDiagram
         +string? conflictDetail
     }
 
-    note for KnowledgeIntegrationResult "targetId の意味:\n- MERGE_EXISTING: マージ先の既存エントリ ID\n- LINK_RELATED: リンク先の既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null\n\nconflictDetail:\n- MERGE_EXISTING でマージ時に内容の\n  矛盾が検出された場合に設定される\n  内部診断文字列（LLM が生成した\n  矛盾箇所の説明）\n- それ以外のアクションでは null"
+    note for KnowledgeIntegrationResult "targetId の意味:\n- MERGE_EXISTING: マージ先の既存エントリ ID\n- LINK_RELATED: リンク先の既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null\n\nconflictDetail:\n- MERGE_EXISTING でマージ時に内容の\n  矛盾が検出された場合に設定される\n  内部診断文字列（LLM が生成した\n  矛盾箇所の説明）\n- それ以外のアクションでは null\n- ReportEntry.detail にも転記され\n  DistillationReport 経由で公開される"
 
     class IntegrationAction {
         <<Enumeration>>
@@ -422,6 +423,8 @@ classDiagram
 
     KnowledgeDistillationRequest --|> DistillationRequest
     ValuesDistillationRequest --|> DistillationRequest
+    note for ReportEntry "targetId の意味（outcome 別）:\n- MERGED: マージ先の既存 Knowledge ID\n- LINKED: リンク先の既存 Knowledge ID\n- REINFORCED: 強化対象の既存 Values ID\n- CONTRADICTED: 矛盾する既存 Values ID\n- CREATED / SKIPPED / SECRET_SKIPPED: null\n\ndetail:\n- conflictDetail / contradictionDetail が\n  設定されている場合にそのまま転記\n- CREATED では新規作成されたエントリ ID\n- 該当なしの場合は null"
+
     DistillationReport o-- ReportEntry
     ReportEntry --> DistillationOutcome
     KnowledgeCandidate ..> KnowledgeDistillationRequest : "extract 結果"
@@ -431,7 +434,7 @@ classDiagram
 **補足:**
 - Values 蒸留は MemoryNote に加えて MemoryState（`_state.md`）の「主要な判断」セクションも入力とする。Knowledge 蒸留の入力は MemoryNote のみ
 - 蒸留の「抽出」は `DistillationExtractorPort` 経由で LLM に委譲する。ツールは collect（ノート選定）→ extract（抽出委譲）→ integrate（統合・永続化）の全段階をオーケストレーションする
-- `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。閾値は全種別で共通だが、`shouldDistill()` に渡す `lastEvaluatedAt` は `_state.md` に `last_knowledge_evaluated_at` / `last_values_evaluated_at` として種別ごとに永続化する。`notesSince` の算出にはノート起点タイムスタンプ（`_index.jsonl` の `date` + `time` フィールド由来、再インデックスで不変）を使用する
+- `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。閾値は全種別で共通だが、`shouldDistill()` に渡す `lastEvaluatedAt` は `_state.md` に `last_knowledge_evaluated_at` / `last_values_evaluated_at` として種別ごとに永続化する。`notesSince` の算出にはノート起点タイムスタンプ（`_index.jsonl` の `date` + `time` フィールド由来、再インデックスで不変）を使用する。`time` が未設定の場合は当日末 `T23:59:59` にフォールバックする
 - **Bootstrap rule**: `lastEvaluatedAt` が null（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す。これにより、蒸留未経験のワークスペースでも初回蒸留が推奨される
 - **2つの起動経路と `shouldDistill()` の適用範囲**:
   - *公開 API ベースの推奨判定*: エージェント/スキルが `memory_state_show`（最終評価日時）と `memory_stats`（前回評価以降のノート蓄積数）を取得し、`DistillationTrigger.shouldDistill()` と同じ条件（BR-12）を評価する。条件充足時に蒸留を推奨する（自動実行ではない）。セッション終了時の振り返り（REQ-FUNC-021）と retrospective スキル（REQ-FUNC-029）がこの経路に該当する
@@ -534,7 +537,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `secret_skipped`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
-| DistillationTrigger | 蒸留推奨の閾値定義と判定を担う値オブジェクト。蒸留種別（Knowledge / Values）ごとにインスタンス化され、最終評価日時（`lastEvaluatedAt`）からの経過ノート数（≥ 10）または経過時間（≥ 168 時間）が閾値を超えた場合に `shouldDistill()` が true を返す（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。`shouldDistill()` は事前算出された整数値（`notesSince`, `hoursSince`）を閾値と比較する。`notesSince` の算出時にノート起点タイムスタンプと `lastEvaluatedAt` を `datetime` 精度（`YYYY-MM-DD HH:MM`）で比較する。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
+| DistillationTrigger | 蒸留推奨の閾値定義と判定を担う値オブジェクト。蒸留種別（Knowledge / Values）ごとにインスタンス化され、最終評価日時（`lastEvaluatedAt`）からの経過ノート数（≥ 10）または経過時間（≥ 168 時間）が閾値を超えた場合に `shouldDistill()` が true を返す（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。`shouldDistill()` は事前算出された整数値（`notesSince`, `hoursSince`）を閾値と比較する。`notesSince` の算出時にノート起点タイムスタンプと `lastEvaluatedAt` を `datetime` 精度（`YYYY-MM-DD HH:MM`）で比較する（`time` 未設定時は当日末 `T23:59:59` にフォールバック）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---
@@ -605,10 +608,11 @@ stateDiagram-v2
 | BR-7 | 昇格にはユーザー確認が必須（`confirm` はアプリケーション層で消費） | REQ-FUNC-016 |
 | BR-8 | Knowledge 登録時、`title` + `domain` + `content` が既存エントリと実質同一であればエラー（完全重複拒否。内容ベースで判定）。update 時も同一条件で重複チェックを行う（自エントリを除外して判定）。**「実質同一」の同値条件**: 各フィールドに対して NFC 正規化 → 前後空白 trim → 連続空白の単一スペース圧縮を適用した後、case-sensitive の完全一致で判定する | REQ-FUNC-004, REQ-FUNC-006 |
 | BR-9 | Values 登録時、`description` + `category` が既存エントリと実質同一であればエラー（厳密重複拒否。内容ベースで判定）。意味的に類似する既存エントリがあれば警告（登録は許可）。update 時も厳密重複チェックを行う（自エントリを除外して判定）。「実質同一」の同値条件は BR-8 と同一（NFC 正規化 → trim → 空白圧縮 → case-sensitive 完全一致） | REQ-FUNC-007, REQ-FUNC-009 |
-| BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
+| BR-10 | 蒸留で抽出された Values に対する統合判定: 既存と同傾向なら confidence 上昇（`reinforce_existing`）、矛盾なら confidence 低下（`contradict_existing`）、該当する既存エントリがなければ新規作成（`create_new`）、厳密重複なら登録スキップ（`skip_duplicate`） | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
 | BR-12 | 蒸留トリガー条件（公開 API ベースの推奨判定のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 168 時間（7日相当）以上経過（タイムスタンプ精度で比較）。`lastEvaluatedAt` が null（初回蒸留前）の場合はノート 1 件以上で条件充足。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する。`_state.md` の変更はトリガー条件に含めない（設計意図: REQ-FUNC-026 参照） | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
+| BR-17 | 蒸留で抽出された Knowledge に対する統合判定: 同一トピックなら既存エントリにマージ（`merge_existing`）、類似だが別トピックなら新規登録+相互リンク（`link_related`）、該当する既存エントリがなければ新規作成（`create_new`）、厳密重複なら登録スキップ（`skip_duplicate`） | REQ-FUNC-012 |
 | BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は orphan の自動修復を実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の `link_related` 部分失敗時の整合性保証と同じ方針）。AGENTS.md の promoted 同期差分についても `fix=true` 時は自動修復する（REQ-FUNC-028 の「復旧経路」参照: 欠落エントリの再挿入、孤立エントリの除去、不一致テキストの上書き。REQ-NF-004 参照） | REQ-FUNC-023, REQ-FUNC-024, REQ-FUNC-028, REQ-NF-004 |
