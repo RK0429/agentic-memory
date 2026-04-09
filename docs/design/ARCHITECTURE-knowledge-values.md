@@ -21,6 +21,7 @@
 | — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: §15 に REQ-FUNC-014 を追加 |
 | — | 2026-04-09 | レビュー指摘対応: §15 導入文のスコープを「Must 要件ごとに」→「全 Must + 設計対応のある Should」に修正（REQ-NF-007 は Should） |
 | — | 2026-04-09 | §15 導入文のスコープ記述を「設計上の対応が存在する Should 要件」→「REQ-NF-007（Should）」に限定（表の実際の行集合と一致させる） |
+| — | 2026-04-10 | レビュー残件対応: Phase 7 行/補足に REQ-FUNC-014 を反映、蒸留トリガー判定データをノート起点タイムスタンプ（`date` + `time`）ベース・`datetime` 精度に修正 |
 
 ---
 
@@ -799,7 +800,7 @@ stateDiagram-v2
 
 | 条件 | 閾値 | 判定データ |
 |---|---|---|
-| ノート数 | 10件以上（前回評価以降） | `_index.jsonl` のエントリ日付 vs `_state.md` の該当種別の最終評価日時（`last_knowledge_evaluated_at` / `last_values_evaluated_at`） |
+| ノート数 | 10件以上（前回評価以降） | `_index.jsonl` の `date` + `time` フィールドから構成するノート起点タイムスタンプ（ノートヘッダーの `- Date: YYYY-MM-DD` + `- Time: HH:MM - HH:MM` の開始時刻由来。再インデックスで不変）vs `_state.md` の該当種別の最終評価日時（`last_knowledge_evaluated_at` / `last_values_evaluated_at`）。比較は `datetime` 精度（`time` 未設定時は当日末 `T23:59:59` にフォールバック） |
 | 経過時間 | 168 時間（7日相当）以上 | 現在日時 vs `_state.md` の該当種別の最終評価日時（タイムスタンプ精度で比較） |
 | Bootstrap | ノート1件以上 | `last_*_evaluated_at` が未設定（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す |
 
@@ -836,7 +837,7 @@ stateDiagram-v2
 蒸留推奨判定（セクション 10.2、Phase 7 参照）に必要なデータを公開するため、以下の 2 ツールのレスポンスに追加フィールドを設ける。既存フィールドの削除・型変更は行わず、追加のみとする:
 
 - **`memory_state_show`**: 既存の `sections` フィールドに加え、`frontmatter` フィールドを追加する。`_state.md` の YAML フロントマター（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）を返却し、エージェント/スキル側が蒸留トリガー条件を評価できるようにする。`as_json=true`（デフォルト）の場合は `frontmatter` を独立した dict フィールドとして `sections` と同階層に配置する。`as_json=false` の場合は `output` 文字列の先頭に `## 蒸留メタデータ` セクションとして rendered markdown に含める（既存セクション群の前に配置）。**Bootstrap 契約**: 蒸留が未実行の場合、各日時フィールドは `null` を返す（フィールド自体は常に存在し省略しない。REQ-FUNC-026 参照）
-- **`memory_stats`**: 既存の統計フィールドに加え、`notes_since_last_knowledge_evaluation` / `notes_since_last_values_evaluation` フィールドを追加する。各蒸留種別の最終評価日時以降に作成されたノート数を、`_index.jsonl` のエントリタイムスタンプと `_state.md` の評価日時を突合して算出する（日単位ではなくタイムスタンプ精度）。**Bootstrap 契約**: 対応する `last_*_evaluated_at` が `null`（蒸留未実行）の場合、全ノート数を返す（REQ-FUNC-026 参照）
+- **`memory_stats`**: 既存の統計フィールドに加え、`notes_since_last_knowledge_evaluation` / `notes_since_last_values_evaluation` フィールドを追加する。各蒸留種別の最終評価日時以降に作成されたノート数を、`_index.jsonl` の `date` + `time` フィールドから構成するノート起点タイムスタンプ（ノートヘッダー由来、再インデックスで不変。`time` 未設定時は当日末 `T23:59:59` にフォールバック）と `_state.md` の評価日時を突合して算出する（比較は `datetime` 精度）。**Bootstrap 契約**: 対応する `last_*_evaluated_at` が `null`（蒸留未実行）の場合、全ノート数を返す（REQ-FUNC-026 参照）
 
 ### 11.2 変更しない既存モジュール
 
@@ -993,12 +994,12 @@ stateDiagram-v2
 | **Phase 4** | health check 拡張 | REQ-NF-004 | Phase 2, 3 |
 | **Phase 5** | 蒸留エンジン（collect / extract / integrate） | REQ-FUNC-010, 011, 012, 013 | Phase 2, 3 |
 | **Phase 6** | Values 昇格 + AGENTS.md 連携 | REQ-FUNC-015, 016, 022 | Phase 3 |
-| **Phase 7** | AGENTS.md セクション改修（Must）+ 削除・トリガー・教示・同期・retrospective（Should） | REQ-FUNC-019-021（Must）, 023-024, 026-029（Should） | Phase 5, 6 |
+| **Phase 7** | AGENTS.md セクション改修 + リサーチ登録（Must）+ 削除・トリガー・教示・同期・retrospective（Should） | REQ-FUNC-014, 019-021（Must）, 023-024, 026-029（Should） | Phase 5, 6 |
 | **Phase 8** | Could 要件（統計、横断検索、降格） | REQ-FUNC-030-034 | Phase 7 |
 
 **補足:**
 - 検索エンジン汎用化（ADR-005）を Phase 1 に含めることで、Phase 2/3 の Knowledge/Values 検索ツールが `score_generic_entry` を利用できる。Phase 2 と Phase 3 は相互に独立しており、並行実装が可能
-- Phase 7 は Must 要件（REQ-FUNC-019-021: AGENTS.md セクション改修）と Should 要件（REQ-FUNC-023-024, 026-029）を含む。REQ-FUNC-025（Values 一括参照）は Phase 3 に含まれる。Must 要件を先行実装し、Should 要件は Phase 7 内で後続とする
+- Phase 7 は Must 要件（REQ-FUNC-014: リサーチ登録、REQ-FUNC-019-021: AGENTS.md セクション改修）と Should 要件（REQ-FUNC-023-024, 026-029）を含む。REQ-FUNC-025（Values 一括参照）は Phase 3 に含まれる。Must 要件を先行実装し、Should 要件は Phase 7 内で後続とする
 
 **Phase 7 の AGENTS.md / retrospective 連携設計:**
 
@@ -1021,13 +1022,13 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 
 | Phase | テスト対象 | 正常系 | 異常系 |
 |---|---|---|---|
-| **Phase 1** | データモデル（`KnowledgeEntry`, `ValuesEntry`）、ストレージ（Repository）、`memory_init` 拡張、`score_generic_entry` | エントリ生成・永続化・読み込みの往復、`memory_init` の冪等性、BM25 スコア算出 | 不変条件違反（confidence 範囲外、ID 重複）、存在しないパスでの init |
+| **Phase 1** | データモデル（`KnowledgeEntry`, `ValuesEntry`）、ストレージ（Repository）、`memory_init` 拡張、`score_generic_entry` | エントリ生成・永続化・読み込みの往復、`memory_init` の冪等性、BM25 スコア算出 | 不変条件違反（confidence 範囲外、ID 重複）、既存設定ファイルの読み込みエラー（`_rag_config.json` 破損） |
 | **Phase 2** | `memory_knowledge_add` / `search` / `update` | CRUD 正常フロー、検索ヒット・ランキング順序、`related` 双方向リンク | 重複登録、存在しない ID の update、機密スキャン検出 |
 | **Phase 3** | `memory_values_add` / `search` / `update` / `list` | CRUD 正常フロー、confidence フィルタ・ソート順、昇格候補通知、一括参照 | 重複登録、類似エントリ警告、confidence 範囲外 |
 | **Phase 4** | `memory_health_check` 拡張 | orphan 検出（双方向）、promoted 同期チェック、`fix=true` 修復 | マーカー欠落、片方向リンク修復 |
 | **Phase 5** | 蒸留パイプライン（collect / extract / integrate） | 正常蒸留フロー、`dry_run=true` の非永続化、日付フィルタ、`_state.md` 入力 | extract エラー時のフォールバック、空ノート集合 |
 | **Phase 6** | 昇格フロー（`promote`）、AGENTS.md 連携 | 昇格条件充足→AGENTS.md 書き込み、`confirm` ガードレール | 条件未充足、再昇格拒否、マーカー欠落 |
-| **Phase 7** | 削除（promoted）、降格、トリガー判定、同期 | promoted エントリ削除→AGENTS.md 除去、降格→状態更新、トリガー条件評価 | `confirm` 未指定での削除拒否（プレビュー返却）、部分失敗検出 |
+| **Phase 7** | AGENTS.md セクション改修、削除（Knowledge/Values）、トリガー判定、教示、同期、retrospective | AGENTS.md セクション反映確認、promoted エントリ削除→AGENTS.md 除去、トリガー条件評価、教示→Knowledge 登録（`source_type: user_taught`）、同期チェック・修復、retrospective→蒸留推奨判断 | `confirm` 未指定での削除拒否（プレビュー返却）、部分失敗検出 |
 
 テストは既存テストスイート（270+ テストケース）と同じ `pytest` フレームワークで作成し、各 Phase 完了時に CI でリグレッションを確認する。
 

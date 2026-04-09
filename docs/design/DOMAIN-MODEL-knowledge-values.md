@@ -16,6 +16,8 @@
 | — | 2026-04-09 | レビュー指摘対応: 「実質同一」の同値条件を BR-8/BR-9 に明文化、evidence 10件保持の順序規則を明記、DistillationReport 用語集に secretSkippedCount/SECRET_SKIPPED を追記 |
 | — | 2026-04-09 | レビュー指摘対応（cross-doc review）: enum 表現の対応規約（UPPER_SNAKE_CASE ↔ lower_snake_case 変換表）追加、conflictDetail/contradictionDetail の用途・設定条件を注釈に追加、EvidenceList の newest-first 順序不変条件を明記、DistillationExtractorPort から実装ファイルパスを除去、BR-16 に promoted 同期チェック（detect + `fix=true` 時自動修復）を明記 |
 | — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: enum 規約に用語集・BR の説明レイヤ規則を追加、用語集 SourceType を API 表現に統一 |
+| — | 2026-04-10 | レビュー指摘対応: DistillationTrigger 用語集の表現を閾値定義オブジェクトとしての役割に整合するよう修正 |
+| — | 2026-04-10 | レビュー残件対応: DistillationTrigger クラス図を閾値定義オブジェクト + ノート起点タイムスタンプベース判定に整合、補足を更新 |
 
 ---
 
@@ -410,11 +412,10 @@ classDiagram
 
     class DistillationTrigger {
         <<ValueObject>>
-        +datetime? lastEvaluatedAt
-        +datetime? lastDistilledAt
-        +int notesSinceLastEvaluation
-        +int hoursSinceLastEvaluation
-        +shouldDistill() bool
+        +int noteCountThreshold = 10
+        +int elapsedHoursThreshold = 168
+        +int bootstrapNoteThreshold = 1
+        +shouldDistill(lastEvaluatedAt: datetime?, notesSince: int, hoursSince: int) bool
     }
 
     KnowledgeDistillationRequest --|> DistillationRequest
@@ -428,7 +429,7 @@ classDiagram
 **補足:**
 - Values 蒸留は MemoryNote に加えて MemoryState（`_state.md`）の「主要な判断」セクションも入力とする。Knowledge 蒸留の入力は MemoryNote のみ
 - 蒸留の「抽出」は `DistillationExtractorPort` 経由で LLM に委譲する。ツールは collect（ノート選定）→ extract（抽出委譲）→ integrate（統合・永続化）の全段階をオーケストレーションする
-- `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。`lastEvaluatedAt` は `_state.md` に `last_knowledge_evaluated_at` / `last_values_evaluated_at` として、`lastDistilledAt` は `last_knowledge_distilled_at` / `last_values_distilled_at` として種別ごとに永続化する
+- `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。閾値は全種別で共通だが、`shouldDistill()` に渡す `lastEvaluatedAt` は `_state.md` に `last_knowledge_evaluated_at` / `last_values_evaluated_at` として種別ごとに永続化する。`notesSince` の算出にはノート起点タイムスタンプ（`_index.jsonl` の `date` + `time` フィールド由来、再インデックスで不変）を使用する
 - **Bootstrap rule**: `lastEvaluatedAt` が null（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す。これにより、蒸留未経験のワークスペースでも初回蒸留が推奨される
 - **2つの起動経路と `shouldDistill()` の適用範囲**:
   - *公開 API ベースの推奨判定*: エージェント/スキルが `memory_state_show`（最終評価日時）と `memory_stats`（前回評価以降のノート蓄積数）を取得し、`DistillationTrigger.shouldDistill()` と同じ条件（BR-12）を評価する。条件充足時に蒸留を推奨する（自動実行ではない）。セッション終了時の振り返り（REQ-FUNC-021）と retrospective スキル（REQ-FUNC-029）がこの経路に該当する
@@ -531,7 +532,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `secret_skipped`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
-| DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(168 時間)でタイムスタンプ精度の比較を行う（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
+| DistillationTrigger | 蒸留推奨の閾値定義と判定を担う値オブジェクト。蒸留種別（Knowledge / Values）ごとにインスタンス化され、最終評価日時（`lastEvaluatedAt`）からの経過ノート数（≥ 10）または経過時間（≥ 168 時間）が閾値を超えた場合に `shouldDistill()` が true を返す（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。タイムスタンプの比較は `datetime` 精度で行う。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---
