@@ -13,6 +13,7 @@
 | 0.1.0 | 2026-04-08 | 初版作成 |
 | — | 2026-04-09 | レビュー指摘対応: F-01〜F-10（DistillationOutcome に SECRET_SKIPPED 追加、update 重複チェック BR-8/BR-9 追記、CONTRADICT_EXISTING 根拠追記、BR-16 事後修復モデルに統一、蒸留トリガー _state.md 除外 BR-12 追記） |
 | — | 2026-04-09 | レビュー指摘対応: Evidence.date 導出規則を注釈に追加（_state.md 由来のフォールバック明記）、ValuesIntegrationResult の targetId/confidenceDelta セマンティクスを Mermaid 注釈と用語集に追加 |
+| — | 2026-04-09 | レビュー指摘対応: 「実質同一」の同値条件を BR-8/BR-9 に明文化、evidence 10件保持の順序規則を明記、DistillationReport 用語集に secretSkippedCount/SECRET_SKIPPED を追記 |
 
 ---
 
@@ -310,7 +311,7 @@ classDiagram
 **集約不変条件:**
 - `id` は作成時に UUID を生成し `v-` プレフィックスを付与する immutable identifier。内容の変化に依存しない安定した識別子であり、更新で再計算しない。ファイルパスは `values/{id}.md`。厳密重複検出は `description` + `category` の内容ベースで行い、同一内容の登録は不可（BR-2, BR-9）
 - `confidence` は 0.0〜1.0 の範囲。デフォルト 0.3（BR-4）
-- `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）。**作成時にも同じ 10 件保持ルールを適用する**。`totalCount` は提供された `evidence` の件数で初期化される（未提供時は 0）
+- `evidence` リストは最新10件を保持。超過分は `totalCount` のみインクリメント（BR-5）。**作成時にも同じ 10 件保持ルールを適用する**: 提供リストの先頭10件を保持し、末尾を切り捨てる。`totalCount` は提供された `evidence` の件数で初期化される（未提供時は 0）
 - ID は異なるが意味的に類似するエントリの登録は警告付きで許可（エラーではない）（BR-9）
 
 **ドメインサービスポリシー:**
@@ -514,7 +515,7 @@ stateDiagram-v2
 | DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | KnowledgeCandidate, ValuesCandidate |
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
-| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する | DistillationOutcome |
+| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `SECRET_SKIPPED`） | DistillationOutcome |
 | DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(168 時間)でタイムスタンプ精度の比較を行う（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計。想定実装先は `core/distillation/extractor.py`（提案。詳細はアーキテクチャ文書 4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
@@ -581,15 +582,15 @@ stateDiagram-v2
 | BR-2 | Values ID は作成時に UUID を生成し `v-` プレフィックスを付与する immutable identifier。厳密重複検出は `description` + `category` の内容ベースで ID とは独立に行う | REQ-FUNC-002 |
 | BR-3 | Knowledge の accuracy は `verified` / `likely` / `uncertain` の3段階 | REQ-FUNC-001 |
 | BR-4 | Values の confidence は 0.0〜1.0 の範囲。デフォルト 0.3 | REQ-FUNC-002 |
-| BR-5 | Values の evidence リストは最新10件を保持。超過分は `totalCount`（永続化層では `evidence_count`）のみインクリメント | REQ-FUNC-002, REQ-FUNC-009 |
+| BR-5 | Values の evidence リストは最新10件を保持。超過分は `totalCount`（永続化層では `evidence_count`）のみインクリメント。作成時に 10 件超の evidence が提供された場合は、提供リストの先頭10件を保持し末尾を切り捨てる | REQ-FUNC-002, REQ-FUNC-009 |
 | BR-6 | 昇格条件: `confidence >= 0.8` AND `totalCount >= 5`（永続化層では `evidence_count >= 5`） AND `promoted == false` | REQ-FUNC-015 |
 | BR-7 | 昇格にはユーザー確認が必須（`confirm` はアプリケーション層で消費） | REQ-FUNC-016 |
-| BR-8 | Knowledge 登録時、`title` + `domain` + `content` が既存エントリと実質同一であればエラー（完全重複拒否。内容ベースで判定）。update 時も同一条件で重複チェックを行う（自エントリを除外して判定） | REQ-FUNC-004 |
-| BR-9 | Values 登録時、`description` + `category` が既存エントリと実質同一であればエラー（厳密重複拒否。内容ベースで判定）。意味的に類似する既存エントリがあれば警告（登録は許可）。update 時も厳密重複チェックを行う（自エントリを除外して判定） | REQ-FUNC-007 |
+| BR-8 | Knowledge 登録時、`title` + `domain` + `content` が既存エントリと実質同一であればエラー（完全重複拒否。内容ベースで判定）。update 時も同一条件で重複チェックを行う（自エントリを除外して判定）。**「実質同一」の同値条件**: 各フィールドに対して NFC 正規化 → 前後空白 trim → 連続空白の単一スペース圧縮を適用した後、case-sensitive の完全一致で判定する | REQ-FUNC-004 |
+| BR-9 | Values 登録時、`description` + `category` が既存エントリと実質同一であればエラー（厳密重複拒否。内容ベースで判定）。意味的に類似する既存エントリがあれば警告（登録は許可）。update 時も厳密重複チェックを行う（自エントリを除外して判定）。「実質同一」の同値条件は BR-8 と同一（NFC 正規化 → trim → 空白圧縮 → case-sensitive 完全一致） | REQ-FUNC-007 |
 | BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
 | BR-12 | 蒸留トリガー条件（公開 API ベースの推奨判定のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 168 時間（7日相当）以上経過（タイムスタンプ精度で比較）。`lastEvaluatedAt` が null（初回蒸留前）の場合はノート 1 件以上で条件充足。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する。`_state.md` の変更はトリガー条件に含めない（設計意図: REQ-FUNC-026 参照） | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
-| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針） | REQ-FUNC-023, REQ-FUNC-024 |
+| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は自動修復も実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針） | REQ-FUNC-023, REQ-FUNC-024 |
