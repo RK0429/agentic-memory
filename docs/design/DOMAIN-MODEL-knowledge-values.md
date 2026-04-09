@@ -12,6 +12,7 @@
 |---|---|---|
 | 0.1.0 | 2026-04-08 | 初版作成 |
 | — | 2026-04-09 | レビュー指摘対応: F-01〜F-10（DistillationOutcome に SECRET_SKIPPED 追加、update 重複チェック BR-8/BR-9 追記、CONTRADICT_EXISTING 根拠追記、BR-16 事後修復モデルに統一、蒸留トリガー _state.md 除外 BR-12 追記） |
+| — | 2026-04-09 | レビュー指摘対応: Evidence.date 導出規則を注釈に追加（_state.md 由来のフォールバック明記）、ValuesIntegrationResult の targetId/confidenceDelta セマンティクスを Mermaid 注釈と用語集に追加 |
 
 ---
 
@@ -241,7 +242,7 @@ classDiagram
         +string date
     }
 
-    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)\ndate: YYYY-MM-DD 形式の日付文字列"
+    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)\ndate: YYYY-MM-DD 形式の日付文字列\n導出規則:\n  Memory ノート由来: ノートの日付\n  _state.md 由来: エントリの日付\n  (不明時は蒸留実行日)"
 
     class EvidenceList {
         <<ValueObject>>
@@ -293,6 +294,8 @@ classDiagram
         SKIP_DUPLICATE
     }
 
+    note for ValuesIntegrationResult "targetId の意味:\n- REINFORCE_EXISTING: 強化対象の既存エントリ ID\n- CONTRADICT_EXISTING: 矛盾する既存エントリ ID\n- CREATE_NEW / SKIP_DUPLICATE: null\n\nconfidenceDelta の意味:\n- REINFORCE_EXISTING: 正の値（confidence の増分）\n- CONTRADICT_EXISTING: 負の値（confidence の減分）\n- CREATE_NEW / SKIP_DUPLICATE: null"
+
     ValuesEntry *-- ValuesId
     ValuesEntry *-- Category
     ValuesEntry *-- Confidence
@@ -315,7 +318,7 @@ classDiagram
 
 **アプリケーション層の運用制約:**
 - 昇格にはユーザー確認が必須。`confirm` パラメータはアプリケーション層（`PromotionService`）で消費する（BR-7）
-- `promoted: true` のエントリ削除時は AGENTS.md からも除去する。`ValuesService` が `PromotionService.onDelete(id)` に委譲（BR-13）
+- `promoted: true` のエントリ削除時は AGENTS.md からも除去する。`ValuesService` が `confirm` パラメータとともに `PromotionService.onDelete(id, confirm)` に委譲し、`confirm` ガードレール検証と AGENTS.md からの除去を `PromotionService` 側で行う（BR-13）
 
 ### 3.3 蒸留コンテキスト
 
@@ -501,7 +504,7 @@ stateDiagram-v2
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3）。降格時には `demotionReason`（降格理由）と `demotedAt`（降格日時）を記録する（判断記録 4） | ValuesEntry |
 | PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` AND `PromotionState.promoted == false` に委譲）、`applyPromotion(ValuesEntry, datetime now)` / `applyDemotion(entry, reason, now)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲。降格時の理由と日時は `PromotionState.demotionReason` / `demotedAt` に記録される | PromotionState |
-| ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス | Confidence |
+| ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス。`ValuesIntegrationResult` の `targetId` は操作対象の既存エントリ ID（CREATE_NEW / SKIP_DUPLICATE では null）、`confidenceDelta` は確信度の符号付き変化量（REINFORCE_EXISTING で正、CONTRADICT_EXISTING で負、それ以外は null） | Confidence |
 
 ### 5.4 蒸留コンテキスト
 

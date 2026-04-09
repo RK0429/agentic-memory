@@ -18,6 +18,7 @@
 | — | 2026-04-09 | レビュー指摘対応: Values 節配置移動、Evidence.date 形式明記、domain/category 適用タイミング補足 |
 | — | 2026-04-09 | レビュー指摘対応: Distillation 定義の Values 蒸留限定化、昇格候補通知の出力仕様具体化、REQ-FUNC-016 昇格条件チェック追加、REQ-FUNC-026 公開 API 契約追記、期間表記統一 |
 | — | 2026-04-09 | レビュー指摘対応: F-01〜F-10（REQ-NF-003 例外明記、蒸留時機密スキップ、_state.md 日付フィルタ除外、update 重複チェック、CONTRADICT_EXISTING 根拠追記、promoted 削除マーカー検証、REQ-NF-002 計測境界明確化、蒸留トリガー _state.md 除外根拠、health check lazy 生成セマンティクス） |
+| — | 2026-04-09 | レビュー指摘対応: BM25 max-normalization 定義（REQ-FUNC-007）、_state.md 由来 Evidence.date 導出規則（REQ-FUNC-011）、values_delete confirm ガードレール追加（REQ-FUNC-024）、削除 reason の非永続化明記（REQ-FUNC-023, REQ-FUNC-024）、未確定事項セクションの解決済み分離 |
 
 ---
 
@@ -386,8 +387,9 @@ memory/
 7. `_values.jsonl` にインデックスエントリを追加
 
 **類似判定の仕様:**
-- **アルゴリズム**: 候補の `description` を検索クエリとして `_values.jsonl` に対し BM25+ スコアリングを実行し、スコアが閾値以上の既存エントリを類似候補とする
-- **閾値**: BM25+ 正規化スコア 0.7 以上（暫定値。運用データの蓄積後に調整する）
+- **アルゴリズム**: 候補の `description` を検索クエリとして `_values.jsonl` に対し BM25+ スコアリングを実行し、正規化スコアが閾値以上の既存エントリを類似候補とする
+- **正規化方法**: 各エントリの BM25+ 生スコアをクエリ結果セット内の最大スコアで除算する（max-normalization）。結果は 0.0–1.0 の相対値となる。最大スコアが 0 の場合（ヒットなし）は類似候補なしとする
+- **閾値**: max-normalized スコア 0.7 以上（暫定値。運用データの蓄積後に調整する）
 - **対象**: 厳密重複（内容ベースで同一と判定されたもの）を除外した既存エントリ全件
 
 **出力:** 作成されたエントリの `id`。昇格候補条件（REQ-FUNC-015）を満たす場合は `promotion_candidate: true` を返す（満たさない場合はフィールド自体を省略）。類似既存エントリがある場合はその情報を `warnings` に含める（例: `"Similar value exists: v-xxxxxxxx — {description}"`）。
@@ -511,6 +513,10 @@ memory/
 | `dry_run` | bool | No | デフォルト: `true` |
 
 **日付パラメータの仕様:** `memory_distill_knowledge` と共通。REQ-FUNC-010 の「日付パラメータの仕様」を参照。`_state.md` の「主要な判断」セクションは日付フィルタ（`date_from` / `date_to`）の対象外であり、常に全文をスナップショットに含める。`_state.md` はローリングステートであり、個別の判断に日付メタデータを持たないため。
+
+**`_state.md` 由来 Evidence の日付導出:** `_state.md` の「主要な判断」セクションから抽出された Values の Evidence.date は、以下の優先順位で決定する:
+1. 参照元エントリに付与された日付情報が利用可能な場合: その日付を `YYYY-MM-DD` に切り詰めて使用する
+2. 利用不可能な場合: 蒸留実行日（`memory_distill_values` の呼び出し日）を使用する
 
 **処理:**
 1. 対象ノートの Decisions セクション（日本語エイリアス: 判断）と、ステートの「主要な判断」セクションを重点的にスキャン。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う
@@ -742,7 +748,9 @@ memory/
 | パラメータ | 型 | 必須 | 説明 |
 |---|---|---|---|
 | `id` | string | Yes | 削除対象の Knowledge ID |
-| `reason` | string | No | 削除理由（監査用に記録） |
+| `reason` | string | No | 削除理由 |
+
+**出力:** 削除結果（`deleted_id`, `title` の要約）。`reason` が指定された場合はレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（ファイル・インデックスともに削除済み）。削除理由の保存が必要な場合はエージェント側でセッションノートや `memory_state_add` に記録する。
 
 ---
 
@@ -753,6 +761,7 @@ memory/
   - Given 削除対象の Values, When 実行, Then `values/{id}.md` ファイルと `_values.jsonl` の対応エントリの両方が削除される
   - Given `promoted: true` の Values を削除, When 実行, Then AGENTS.md の「内面化された価値観」セクションから該当行も削除される
   - Given `promoted: true` の Values を削除, When AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカーが欠落, Then エラーを返し削除を拒否する。`memory_init` の再実行を案内する
+  - Given `promoted: true` の Values を削除, When `confirm: false` または未指定, Then エラーを返し、対象エントリの概要と AGENTS.md から除去される行のプレビューを含める
   - Given 削除実行後, When `memory_values_search` で検索, Then 該当エントリはヒットしない
 - **優先度**: Should
 - **出典**: エージェント推測（CRUD の D として必要）
@@ -764,11 +773,15 @@ memory/
 |---|---|---|---|
 | `id` | string | Yes | 削除対象の Values ID |
 | `reason` | string | No | 削除理由 |
+| `confirm` | bool | No | 削除確認フラグ（デフォルト: `false`）。`promoted: true` のエントリでは `confirm: true` が必須 |
 
 **処理:**
-1. `promoted: true` の場合、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー存在を検証する。欠落時はエラーを返し、`memory_init` の再実行を案内する
-2. AGENTS.md から該当行を削除する
-3. `values/{id}.md` と `_values.jsonl` を削除する
+1. `promoted: true` の場合、`confirm == true` を検証する。`false` または未指定の場合は削除プレビュー（エントリ概要 + AGENTS.md 該当行）を返しエラーとする
+2. `promoted: true` の場合、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー存在を検証する。欠落時はエラーを返し、`memory_init` の再実行を案内する
+3. AGENTS.md から該当行を削除する
+4. `values/{id}.md` と `_values.jsonl` を削除する
+
+**出力:** 削除結果（`deleted_id`, `description` の要約, `was_promoted`）。`reason` が指定された場合はレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（ファイル・インデックスともに削除済み）。削除理由の保存が必要な場合はエージェント側でセッションノートや `memory_state_add` に記録する。
 
 ---
 
@@ -1061,8 +1074,13 @@ REQ-FUNC-034 (降格) → REQ-FUNC-016 (AGENTS.md 反映)
 | # | 内容 | 関連要件 | 確認相手 | 暫定値 |
 |---|---|---|---|---|
 | 1 | 確信度更新の具体的アルゴリズム（LLM 判定 vs 固定数式） | REQ-FUNC-013 | プロダクトオーナー | LLM 判定（コンテキスト依存） |
-| 2 | Knowledge/Values の初期シードデータ（既存 AGENTS.md の設計方針等。CLAUDE.md は AGENTS.md への symlink）を移行するか | REQ-FUNC-001, REQ-FUNC-002 | プロダクトオーナー | **解決済み**: 自動シード/バックフィルは行わない。既存リポジトリは空の Knowledge/Values ストアから開始する。`memory_init` はディレクトリとマーカーを作成するが、既存 AGENTS.md や Memory ノートからの自動抽出は実施しない（REQ-NF-005 の「手動マイグレーション不要」と整合）。既存の設計方針等を Knowledge/Values として登録したい場合は、ユーザーまたはエージェントが `memory_knowledge_add` / `memory_values_add` / `memory_distill_*` を明示的に実行する |
 | 3 | Knowledge の `domain` 分類体系（固定リスト vs 自由入力） | REQ-FUNC-001, REQ-FUNC-004 | プロダクトオーナー | 自由入力 |
 | 4 | Values の `category` 分類体系（固定リスト vs 自由入力） | REQ-FUNC-002, REQ-FUNC-007 | プロダクトオーナー | 自由入力 |
-| 5 | `memory_values_add` の類似判定に使用するアルゴリズム（BM25 スコア閾値 vs LLM 判定） | REQ-FUNC-007 | 技術リード | **解決済み**: BM25+ 正規化スコア 0.7 以上（REQ-FUNC-007「類似判定の仕様」参照。運用データの蓄積後に閾値を調整する） |
-| 6 | 検索応答時間のベンチマーク環境（ハードウェアスペック） | REQ-NF-001 | 技術リード | **解決済み**: REQ-NF-001 に具体的な環境仕様を記載（GitHub Actions 標準ランナー / Apple Silicon M1+ or x86-64, 8GB+ RAM, SSD） |
+
+### 6.1 解決済み事項
+
+| # | 内容 | 関連要件 | 解決内容 |
+|---|---|---|---|
+| 2 | Knowledge/Values の初期シードデータ（既存 AGENTS.md の設計方針等。CLAUDE.md は AGENTS.md への symlink）を移行するか | REQ-FUNC-001, REQ-FUNC-002 | 自動シード/バックフィルは行わない。既存リポジトリは空の Knowledge/Values ストアから開始する。`memory_init` はディレクトリとマーカーを作成するが、既存 AGENTS.md や Memory ノートからの自動抽出は実施しない（REQ-NF-005 の「手動マイグレーション不要」と整合）。既存の設計方針等を Knowledge/Values として登録したい場合は、ユーザーまたはエージェントが `memory_knowledge_add` / `memory_values_add` / `memory_distill_*` を明示的に実行する |
+| 5 | `memory_values_add` の類似判定に使用するアルゴリズム（BM25 スコア閾値 vs LLM 判定） | REQ-FUNC-007 | BM25+ max-normalized スコア 0.7 以上（REQ-FUNC-007「類似判定の仕様」参照。正規化方法: 最大スコアで除算。運用データの蓄積後に閾値を調整する） |
+| 6 | 検索応答時間のベンチマーク環境（ハードウェアスペック） | REQ-NF-001 | REQ-NF-001 に具体的な環境仕様を記載（GitHub Actions 標準ランナー / Apple Silicon M1+ or x86-64, 8GB+ RAM, SSD） |
