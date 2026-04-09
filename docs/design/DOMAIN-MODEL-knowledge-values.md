@@ -498,7 +498,7 @@ stateDiagram-v2
 
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
-| Distillation | Memory ノート群から Knowledge/Values を抽出するプロセス全体 | DistillationRequest |
+| Distillation | Memory ノート群から Knowledge/Values を抽出するプロセス全体。Values 蒸留では MemoryState（`_state.md`）の「主要な判断」セクションも入力とする | DistillationRequest |
 | DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | KnowledgeCandidate, ValuesCandidate |
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |

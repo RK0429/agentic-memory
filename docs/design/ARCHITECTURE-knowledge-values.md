@@ -129,7 +129,7 @@ graph TB
 |---|---|---|---|
 | **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok` 常在・`warnings` は警告時のみ付与のエンベロープ形式でのレスポンス整形 | アプリケーション層 |
 | **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（[判断記録 2](DOMAIN-MODEL-knowledge-values.md#判断記録-2-knowledge-削除時の-related-一括更新をアプリケーション層の責務とする)） | ドメイン層、インフラ層 |
-| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み（`add` 時と `update` 時の両方で `PromotionManager.checkCandidate()` を呼び出し、条件充足時にレスポンスに通知を含める）。`promoted: true` のエントリ削除時は `PromotionService.onDelete(id)` を呼び出し AGENTS.md からの除去を委譲する | ドメイン層、インフラ層、`PromotionService` |
+| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み（`add` 時と `update` 時の両方で `PromotionManager.checkCandidate()` を呼び出し、条件充足時にレスポンスに `promotion_candidate: true` フィールドを含める。条件を満たさない場合はフィールド自体を省略する）。`promoted: true` のエントリ削除時は `PromotionService.onDelete(id)` を呼び出し AGENTS.md からの除去を委譲する | ドメイン層、インフラ層、`PromotionService` |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
 | | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御。`onDelete(id)` メソッドで promoted Values 削除時の AGENTS.md 除去も担当する（`ValuesService` から委譲される） | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
 | **ドメイン層** | `KnowledgeEntry` | Knowledge の不変条件の保護（ID 生成、sources マージ等） | なし（自己完結） |
@@ -273,6 +273,12 @@ sequenceDiagram
 ```
 
 **補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new: N, reinforced: R, contradicted: C, skipped: K}` を返す（`merged` / `linked` は 0、代わりに `reinforced` / `contradicted` を使用）。`DistillationReport` は6種の集計フィールド（`newCount` / `mergedCount` / `linkedCount` / `reinforcedCount` / `contradictedCount` / `skippedCount`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。
+
+**LINK_RELATED の部分失敗時の整合性:** `LINK_RELATED` は3ステップの複合操作（候補の新規登録 → 新規エントリに `related` 追加 → 既存エントリに `related` 追加）であり、途中で失敗すると片方向リンクが残る可能性がある。以下の整合性保証が働く:
+
+1. **検出**: `memory_health_check`（REQ-NF-004 のインデックス整合性チェック拡張）で、`related` に含まれる ID が存在しないエントリを参照している orphan link を検出する。また、片方向リンク（A→B は存在するが B→A が存在しない）も検出する
+2. **復旧**: orphan link は `KnowledgeService` が `related` から除去する。片方向リンクは逆方向の link を追加して双方向に揃える
+3. **設計判断**: ファイルベースストレージでトランザクション保証がないため、操作単位でのロールバックではなく、事後検出・事後修復のアプローチを採用する（Values 昇格フロー §5.3 の部分失敗戦略と同じ方針）
 
 ### 5.3 Values 昇格フロー
 
@@ -650,7 +656,7 @@ stateDiagram-v2
 
 蒸留推奨判定（セクション 10.2、Phase 7 参照）に必要なデータを公開するため、以下の 2 ツールのレスポンスに追加フィールドを設ける。既存フィールドの削除・型変更は行わず、追加のみとする:
 
-- **`memory_state_show`**: 既存の `sections` フィールドに加え、`frontmatter` フィールドを追加する。`_state.md` の YAML フロントマター（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）を返却し、エージェント/スキル側が蒸留トリガー条件を評価できるようにする
+- **`memory_state_show`**: 既存の `sections` フィールドに加え、`frontmatter` フィールドを追加する。`_state.md` の YAML フロントマター（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）を返却し、エージェント/スキル側が蒸留トリガー条件を評価できるようにする。`as_json=true`（デフォルト）の場合は `frontmatter` を独立した dict フィールドとして `sections` と同階層に配置する。`as_json=false` の場合は `output` 文字列の先頭に `## 蒸留メタデータ` セクションとして rendered markdown に含める（既存セクション群の前に配置）
 - **`memory_stats`**: 既存の統計フィールドに加え、`notes_since_last_knowledge_evaluation` / `notes_since_last_values_evaluation` フィールドを追加する。各蒸留種別の最終評価日時以降に作成されたノート数を、`_index.jsonl` のエントリタイムスタンプと `_state.md` の評価日時を突合して算出する（日単位ではなくタイムスタンプ精度）
 
 ### 11.2 変更しない既存モジュール
