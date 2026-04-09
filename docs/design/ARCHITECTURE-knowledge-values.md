@@ -23,6 +23,8 @@
 | — | 2026-04-09 | §15 導入文のスコープ記述を「設計上の対応が存在する Should 要件」→「REQ-NF-007（Should）」に限定（表の実際の行集合と一致させる） |
 | — | 2026-04-10 | レビュー残件対応: Phase 7 行/補足に REQ-FUNC-014 を反映、蒸留トリガー判定データをノート起点タイムスタンプ（`date` + `time`）ベース・`datetime` 精度に修正 |
 | — | 2026-04-10 | レビュー残件対応: §10.1 collect の `_state.md` 由来 Evidence.date 導出規則をエントリの構造化日付プレフィックス（`[YYYY-MM-DD HH:MM]`）ベースに明確化 |
+| — | 2026-04-10 | must/should 指摘対応: ReportEntry 公開フィールド表の casing を snake_case に統一（`candidate_summary` / `target_id`、enum 値を lower_snake_case に）、§1 品質特性表の GitHub Actions ランナー仕様に GitHub Docs 出典 URL を追加 |
+| — | 2026-04-10 | レビュー差し戻し対応: §4.1 ValuesService 責務に降格提案通知（`demotion_candidate`）の経路を追記（`PromotionState.shouldSuggestDemotion()` 経由）、§15 REQ-FUNC-009 行に降格提案通知を追記、GitHub Actions 出典 URL を GitHub-hosted runners reference に修正 |
 
 ---
 
@@ -33,7 +35,7 @@
 | 1 | **後方互換性** | 既存 19 MCP ツール・270+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
 | 2 | **保守性** | 既存 `core/` のフラットモジュール構造に Knowledge/Values/蒸留の3コンテキストを追加するため、モジュール境界の明確化が不可欠 |
 | 3 | **拡張性** | 将来的な push 型配信・横断検索・降格メカニズム等の Could 要件への対応余地を確保 |
-| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`。ハードウェア仕様はリポジトリ可視性により異なる: private 2 vCPU / 8 GB RAM、public 4 vCPU / 16 GB RAM。2026-04-09 時点）または開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）で計測する。既存 BM25+ エンジンの流用で達成可能 |
+| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`。ハードウェア仕様はリポジトリ可視性により異なる: private 2 vCPU / 8 GB RAM、public 4 vCPU / 16 GB RAM。2026-04-09 時点、[GitHub Docs: GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) 準拠）または開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）で計測する。既存 BM25+ エンジンの流用で達成可能 |
 | 5 | **運用性** | `memory_init` のみでマイグレーション完了（REQ-NF-005）、health check 統合（REQ-NF-004） |
 
 ---
@@ -146,7 +148,7 @@ graph TB
 |---|---|---|---|
 | **MCP ツール層** | `server.py` の新規ツール関数 | パラメータバリデーション、`memory_dir` 解決、アプリケーション層の呼び出し、`ok` 常在・`warnings` は警告時のみ付与のエンベロープ形式でのレスポンス整形 | アプリケーション層 |
 | **アプリケーション層** | `KnowledgeService` | Knowledge CRUD のオーケストレーション、related の逆引き一括更新（[判断記録 2](DOMAIN-MODEL-knowledge-values.md#判断記録-2-knowledge-削除時の-related-一括更新をアプリケーション層の責務とする)） | ドメイン層、インフラ層 |
-| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み（`add` 時と `update` 時の両方で `PromotionManager.checkCandidate()` を呼び出し、条件充足時にレスポンスに `promotion_candidate: true` フィールドを含める。条件を満たさない場合はフィールド自体を省略する）。`promoted: true` のエントリ削除時は `confirm` パラメータとともに `PromotionService.onDelete(id, confirm)` を呼び出し、AGENTS.md からの除去と `confirm` ガードレール検証を委譲する | ドメイン層、インフラ層、`PromotionService` |
+| | `ValuesService` | Values CRUD のオーケストレーション、昇格候補通知の組み込み（`add` 時と `update` 時の両方で `PromotionManager.checkCandidate()` を呼び出し、条件充足時にレスポンスに `promotion_candidate: true` フィールドを含める。条件を満たさない場合はフィールド自体を省略する）。降格提案通知の組み込み（`update` 時に `promoted: true` のエントリに対して `PromotionState.shouldSuggestDemotion(currentConfidence)` を呼び出し、条件充足時にレスポンスに `demotion_candidate: true` を含める。REQ-FUNC-034 参照）。`promoted: true` のエントリ削除時は `confirm` パラメータとともに `PromotionService.onDelete(id, confirm)` を呼び出し、AGENTS.md からの除去と `confirm` ガードレール検証を委譲する | ドメイン層、インフラ層、`PromotionService` |
 | | `DistillationService` | 公開ツール契約を維持しつつ、対象ノート選定・抽出依頼・統合永続化をオーケストレーションする | `KnowledgeService`, `ValuesService`, `DistillationExtractorPort` |
 | | `PromotionService` | 昇格/降格のワークフロー、`confirm` ガードレール（アプリケーション層で消費）、AGENTS.md 同期、排他制御。`onDelete(id, confirm)` メソッドで promoted Values 削除時の AGENTS.md 除去も担当する（`ValuesService` から委譲される）。promoted エントリの削除時は `confirm` ガードレールを `PromotionService.onDelete()` で消費する（promote と同等のパターン） | `PromotionManager`、`ValuesRepository`、`AgentsMdAdapter` |
 | **ドメイン層** | `KnowledgeEntry` | Knowledge の不変条件の保護（ID 生成、sources マージ等） | なし（自己完結） |
@@ -308,9 +310,9 @@ sequenceDiagram
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `outcome` | DistillationOutcome | `CREATED` / `MERGED` / `LINKED` / `REINFORCED` / `CONTRADICTED` / `SKIPPED` / `SECRET_SKIPPED` |
-| `candidateSummary` | string | 蒸留候補の要約 |
-| `targetId` | string? | 統合先の既存エントリ ID（`CREATED` / `SECRET_SKIPPED` では `null`） |
+| `outcome` | DistillationOutcome | `created` / `merged` / `linked` / `reinforced` / `contradicted` / `skipped` / `secret_skipped` |
+| `candidate_summary` | string | 蒸留候補の要約 |
+| `target_id` | string? | 統合先の既存エントリ ID（`created` / `secret_skipped` では `null`） |
 | `detail` | string? | 操作の補足情報（新規作成されたエントリ ID、マージ理由等。該当なしの場合は `null`） |
 
 `DistillationReport` の詳細なドメインモデル定義は [DOMAIN-MODEL-knowledge-values.md §3.3](DOMAIN-MODEL-knowledge-values.md#33-蒸留コンテキスト) を参照。
@@ -1062,7 +1064,7 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | REQ-FUNC-006 | Knowledge 更新 | §4.1（`KnowledgeService`）、§7.6 機密スキャン |
 | REQ-FUNC-007 | Values 登録 | §4.1（`ValuesService`）、§7.6 機密スキャン、§8.5 類似判定スコア正規化 |
 | **REQ-FUNC-008** | **Values 検索** | **§8 検索エンジン統合方針（§8.1 汎用化、§8.3 フィールド重み）** |
-| REQ-FUNC-009 | Values 更新 | §4.1（`ValuesService`、昇格候補通知）、§7.6 機密スキャン |
+| REQ-FUNC-009 | Values 更新 | §4.1（`ValuesService`、昇格候補通知・降格提案通知）、§7.6 機密スキャン |
 | REQ-FUNC-010 | Knowledge 蒸留 | §5.2 蒸留フロー、§10 蒸留フロー詳細（§10.1 collect/extract/integrate） |
 | **REQ-FUNC-011** | **Values 蒸留** | **§5.2 蒸留フロー（Values 蒸留の DistillationReport 補足）、§10.1（collect ステップ 3: _state.md 入力、extract: category 限定）** |
 | REQ-FUNC-012 | Knowledge 統合 | §4.1（`KnowledgeIntegrator`）、§5.2 蒸留フロー（integrate ループ） |

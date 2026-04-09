@@ -19,6 +19,7 @@
 | — | 2026-04-10 | レビュー指摘対応: DistillationTrigger 用語集の表現を閾値定義オブジェクトとしての役割に整合するよう修正 |
 | — | 2026-04-10 | レビュー残件対応: DistillationTrigger クラス図を閾値定義オブジェクト + ノート起点タイムスタンプベース判定に整合、補足を更新 |
 | — | 2026-04-10 | レビュー残件対応: 最終更新日修正、Evidence.date 導出規則の注釈にエントリ日付プレフィックス形式を明記、DistillationTrigger 用語集の datetime 精度記述を shouldDistill() の契約と整合 |
+| — | 2026-04-10 | must/should 指摘対応: Evidence 用語集定義を拡充し `_state.md` セクション参照と各フィールド名（`ref` / `summary` / `date`）を明記 |
 
 ---
 
@@ -518,7 +519,7 @@ stateDiagram-v2
 | ValuesId | `v-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | ValuesEntry |
 | Category | Values の分類軸（coding-style, communication, workflow 等）。自由入力を kebab-case に正規化する | ValuesEntry |
 | Confidence | 確信度（0.0〜1.0）。evidence 蓄積で上昇、矛盾で低下。デフォルト 0.3 | ValuesEntry |
-| Evidence | Values の根拠事例。Memory ノートへの参照・要約・日付（`YYYY-MM-DD` 形式）で構成 | ValuesEntry |
+| Evidence | Values の根拠事例。Memory ノートまたは `_state.md` セクション（例: `_state.md#主要な判断`）への参照（`ref`）・要約（`summary`）・日付（`YYYY-MM-DD` 形式の `date`）で構成 | ValuesEntry |
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3）。降格時には `demotionReason`（降格理由）と `demotedAt`（降格日時）を記録する（判断記録 4） | ValuesEntry |
 | PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` AND `PromotionState.promoted == false` に委譲）、`applyPromotion(ValuesEntry, datetime now)` / `applyDemotion(entry, reason, now)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲。降格時の理由と日時は `PromotionState.demotionReason` / `demotedAt` に記録される | PromotionState |
