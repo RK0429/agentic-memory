@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | バージョン | 0.1.0（ドラフト） |
-| 最終更新日 | 2026-04-09 |
+| 最終更新日 | 2026-04-10 |
 | ステータス | ドラフト — レビュー待ち |
 | 作成者 | エージェント（requirements-definer） |
 | レビュー者 | — |
@@ -23,6 +23,7 @@
 | — | 2026-04-09 | レビュー指摘対応（cross-doc review）: REQ-FUNC-025 出力契約追加、REQ-FUNC-034 受け入れ基準・処理・出力追加、REQ-NF-004 に related リンク整合性チェックと fix=true の修復スコープ明確化を追加、REQ-FUNC-017/018 を参照 alias として明確化 |
 | — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: REQ-FUNC-025 / REQ-FUNC-034 の出力節に `{ok: true, ...}` エンベロープ規約との対応を明示 |
 | — | 2026-04-10 | レビュー指摘対応: REQ-FUNC-034 から内部設計識別子（`syncCheck()`, `ValuesEntry.demote()`, `PromotionState`）を除去し観測可能な振る舞い記述へ変更、未確定事項 #3/#4（domain/category 分類体系）を解決済みへ移動 |
+| — | 2026-04-10 | レビュー残件対応: `_state.md` 由来 Evidence.date 導出規則をエントリの構造化日付プレフィックスベースに修正（3文書統一）、`memory_init` eager 生成の AGENTS.md マーカー条件付きスキップを明記 |
 
 ---
 
@@ -217,7 +218,7 @@ memory/
 - `_knowledge.jsonl` / `_values.jsonl` は検索用インデックス（既存 `_index.jsonl` と同じ設計思想）
 
 **生成タイミング（eager / lazy）:**
-- `memory_init` が作成するもの（eager）: `knowledge/` ディレクトリ、`values/` ディレクトリ、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー（全て冪等）。既存リポジトリへの導入時も自動シード/バックフィルは行わない（空のストアから開始）
+- `memory_init` が作成するもの（eager）: `knowledge/` ディレクトリ、`values/` ディレクトリ（全て冪等）、AGENTS.md の `BEGIN/END:PROMOTED_VALUES` マーカー（冪等。AGENTS.md が見つからない場合はスキップし警告を返す。パス解決規則は後述）。既存リポジトリへの導入時も自動シード/バックフィルは行わない（空のストアから開始）
 - 初回操作時に作成するもの（lazy）: `_knowledge.jsonl`（初回 `memory_knowledge_add` 時）、`_values.jsonl`（初回 `memory_values_add` 時）、`_state.md` の蒸留日時フロントマター（各フィールドは更新条件を初めて満たした時点で遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時に追加される）。lazy 生成ファイルの health check セマンティクスは REQ-NF-004 を参照
 
 **AGENTS.md のパス解決規則:**
@@ -517,13 +518,13 @@ memory/
 | `category` | string | No | 特定カテゴリに絞る |
 | `dry_run` | bool | No | デフォルト: `true` |
 
-**日付パラメータの仕様:** `memory_distill_knowledge` と共通。REQ-FUNC-010 の「日付パラメータの仕様」を参照。`_state.md` の「主要な判断」セクションは日付フィルタ（`date_from` / `date_to`）の対象外であり、常に全文をスナップショットに含める。理由: `_state.md` はローリングステートであり、個別の判断エントリに日付メタデータ（`date` フロントマター等）を持たないため、`date_from` / `date_to` によるフィルタリングが適用できない。
+**日付パラメータの仕様:** `memory_distill_knowledge` と共通。REQ-FUNC-010 の「日付パラメータの仕様」を参照。`_state.md` の「主要な判断」セクションは日付フィルタ（`date_from` / `date_to`）の対象外であり、常に全文をスナップショットに含める。理由: `_state.md` はローリングステートであり、エントリの追加・削除がノートの日付範囲とは独立に行われるため、`date_from` / `date_to` による期間フィルタの適用対象としない。個別エントリは `[YYYY-MM-DD HH:MM]` 形式の日付プレフィックスを持つが、これはエントリの記録日時であり、ノート選定の日付フィルタとは異なる粒度の情報である。
 
 **`_state.md` 由来 Evidence の日付導出:** `_state.md` の「主要な判断」セクションから抽出された Values の Evidence.date は、以下の優先順位で決定する:
-1. 判断エントリのテキスト内にインライン日付参照（例: `2026-04-01 に決定`）が含まれる場合: その日付を `YYYY-MM-DD` に切り詰めて使用する。LLM 抽出（`DistillationExtractorPort`）が日付を認識できた場合に限る
-2. 上記が利用不可能な場合: 蒸留実行日（`memory_distill_values` の呼び出し日）を使用する
+1. エントリの日付プレフィックス（`[YYYY-MM-DD HH:MM]` 形式）が存在する場合: `YYYY-MM-DD` に切り詰めて使用する
+2. 日付プレフィックスが存在しないまたは解析不能な場合: 蒸留実行日（`memory_distill_values` の呼び出し日）を使用する
 
-日付フィルタでは `_state.md` を除外しつつ Evidence.date では導出する理由: 日付フィルタはノート選定（collect 段）で適用され、個別エントリに日付メタデータがない `_state.md` には適用できない。一方、Evidence.date は抽出後（extract 段）の個別 Evidence に付与するメタデータであり、テキスト内容から推定可能な場合に活用する。
+日付フィルタでは `_state.md` を除外しつつ Evidence.date では導出する理由: 日付フィルタはノート選定（collect 段）で適用され、`_state.md` はローリングステートとして常に全文を含めるため対象外とする。一方、Evidence.date は抽出後（extract 段）の個別 Evidence に付与するメタデータであり、各エントリの日付プレフィックスから導出する。
 
 **処理:**
 1. 対象ノートの Decisions セクション（日本語エイリアス: 判断）と、ステートの「主要な判断」セクションを重点的にスキャン。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う

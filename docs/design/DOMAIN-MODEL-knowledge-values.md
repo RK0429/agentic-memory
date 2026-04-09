@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | バージョン | 0.1.0（ドラフト） |
-| 最終更新日 | 2026-04-09 |
+| 最終更新日 | 2026-04-10 |
 | 関連要件 | [REQ-knowledge-values.md](../requirements/REQ-knowledge-values.md) |
 
 ## 変更履歴
@@ -18,6 +18,7 @@
 | — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: enum 規約に用語集・BR の説明レイヤ規則を追加、用語集 SourceType を API 表現に統一 |
 | — | 2026-04-10 | レビュー指摘対応: DistillationTrigger 用語集の表現を閾値定義オブジェクトとしての役割に整合するよう修正 |
 | — | 2026-04-10 | レビュー残件対応: DistillationTrigger クラス図を閾値定義オブジェクト + ノート起点タイムスタンプベース判定に整合、補足を更新 |
+| — | 2026-04-10 | レビュー残件対応: 最終更新日修正、Evidence.date 導出規則の注釈にエントリ日付プレフィックス形式を明記、DistillationTrigger 用語集の datetime 精度記述を shouldDistill() の契約と整合 |
 
 ---
 
@@ -258,7 +259,7 @@ classDiagram
         +string date
     }
 
-    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)\ndate: YYYY-MM-DD 形式の日付文字列\n導出規則:\n  Memory ノート由来: ノートの日付\n  _state.md 由来: エントリの日付\n  (不明時は蒸留実行日)"
+    note for Evidence "ref: Memory ノートパス\nまたは _state.md セクション参照\n(例: _state.md#主要な判断)\ndate: YYYY-MM-DD 形式の日付文字列\n導出規則:\n  Memory ノート由来: ノートの日付\n  _state.md 由来: エントリの日付プレフィックス\n  ([YYYY-MM-DD HH:MM] → YYYY-MM-DD)\n  (不明時は蒸留実行日)"
 
     class EvidenceList {
         <<ValueObject>>
@@ -532,7 +533,7 @@ stateDiagram-v2
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `secret_skipped`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
-| DistillationTrigger | 蒸留推奨の閾値定義と判定を担う値オブジェクト。蒸留種別（Knowledge / Values）ごとにインスタンス化され、最終評価日時（`lastEvaluatedAt`）からの経過ノート数（≥ 10）または経過時間（≥ 168 時間）が閾値を超えた場合に `shouldDistill()` が true を返す（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。タイムスタンプの比較は `datetime` 精度で行う。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
+| DistillationTrigger | 蒸留推奨の閾値定義と判定を担う値オブジェクト。蒸留種別（Knowledge / Values）ごとにインスタンス化され、最終評価日時（`lastEvaluatedAt`）からの経過ノート数（≥ 10）または経過時間（≥ 168 時間）が閾値を超えた場合に `shouldDistill()` が true を返す（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。`shouldDistill()` は事前算出された整数値（`notesSince`, `hoursSince`）を閾値と比較する。`notesSince` の算出時にノート起点タイムスタンプと `lastEvaluatedAt` を `datetime` 精度（`YYYY-MM-DD HH:MM`）で比較する。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
 ---

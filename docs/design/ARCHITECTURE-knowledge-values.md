@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | バージョン | 0.1.0（ドラフト） |
-| 最終更新日 | 2026-04-09 |
+| 最終更新日 | 2026-04-10 |
 | 関連要件 | [REQ-knowledge-values.md](../requirements/REQ-knowledge-values.md) |
 | 関連ドメインモデル | [DOMAIN-MODEL-knowledge-values.md](DOMAIN-MODEL-knowledge-values.md) |
 
@@ -22,6 +22,7 @@
 | — | 2026-04-09 | レビュー指摘対応: §15 導入文のスコープを「Must 要件ごとに」→「全 Must + 設計対応のある Should」に修正（REQ-NF-007 は Should） |
 | — | 2026-04-09 | §15 導入文のスコープ記述を「設計上の対応が存在する Should 要件」→「REQ-NF-007（Should）」に限定（表の実際の行集合と一致させる） |
 | — | 2026-04-10 | レビュー残件対応: Phase 7 行/補足に REQ-FUNC-014 を反映、蒸留トリガー判定データをノート起点タイムスタンプ（`date` + `time`）ベース・`datetime` 精度に修正 |
+| — | 2026-04-10 | レビュー残件対応: §10.1 collect の `_state.md` 由来 Evidence.date 導出規則をエントリの構造化日付プレフィックス（`[YYYY-MM-DD HH:MM]`）ベースに明確化 |
 
 ---
 
@@ -773,7 +774,7 @@ stateDiagram-v2
 1. 対象期間の Memory ノートを `_index.jsonl` から選定（Knowledge 蒸留と同一の日付フィルタ仕様）
 2. ノート内容の Decisions セクション（日本語エイリアス: 判断）を重点的に読み込み。セクション識別はテンプレート言語に依存しない正規化済みセクション名で行う（REQ-FUNC-011 参照: Values 蒸留の入力は判断履歴に特化しており、Knowledge 蒸留の広範な4セクションとは異なる）
 3. MemoryNote に加えて `_state.md` の「主要な判断」セクションもスナップショットに含める。`_state.md` は日付フィルタ（`date_from` / `date_to`）の対象外。Memory ノートの日付範囲に関わらず、常に `_state.md` の「主要な判断」セクション全文をスナップショットに含める
-4. `_state.md` 由来の Evidence.date は、エントリに付与された日付情報を `YYYY-MM-DD` に切り詰めて使用する。日付情報がないエントリは蒸留実行日をフォールバックとする
+4. `_state.md` 由来の Evidence.date は、エントリの日付プレフィックス（`[YYYY-MM-DD HH:MM]` 形式）を `YYYY-MM-DD` に切り詰めて使用する。日付プレフィックスが存在しないまたは解析不能なエントリは蒸留実行日をフォールバックとする
 5. 抽出用の `DistillationSnapshot` を構築
 
 **extract:**
