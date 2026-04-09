@@ -17,7 +17,7 @@
 | — | 2026-04-09 | レビュー指摘対応（第3回）: §8.5 の類似判定スコア正規化を Values 限定に修正（Knowledge の BM25 正規化はREQ/DOMAIN未定義のため除外） |
 | — | 2026-04-09 | §9.8 ステップ4 復旧手順を `memory_values_promote` → `memory_health_check` 自動修復に変更（REQ-FUNC-016 再昇格禁止との矛盾解消） |
 | — | 2026-04-09 | §9.8 ステップ4 復旧欄を実装に存在する操作のみで記述（`appendEntry` 冪等再挿入・promoted sync 差分修復の記述を除去） |
-| — | 2026-04-09 | レビュー指摘対応（cross-doc review）: §15 要件トレーサビリティマトリクス追加、§10.1 collect を K/V 蒸留ごとに分離、§5.2 LINK_RELATED 復旧トリガーを明確化（`memory_health_check(fix=true)` のみ）、§11.1 health.py に related リンク整合性・promoted 同期 detect-only を明記 |
+| — | 2026-04-09 | レビュー指摘対応（cross-doc review）: §15 要件トレーサビリティマトリクス追加、§10.1 collect を K/V 蒸留ごとに分離、§5.2 LINK_RELATED 復旧トリガーを明確化（`memory_health_check(fix=true)` のみ）、§11.1 health.py に related リンク整合性・promoted 同期チェック（detect + `fix=true` 時自動修復）を明記 |
 | — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: §15 に REQ-FUNC-014 を追加 |
 | — | 2026-04-09 | レビュー指摘対応: §15 導入文のスコープを「Must 要件ごとに」→「全 Must + 設計対応のある Should」に修正（REQ-NF-007 は Should） |
 | — | 2026-04-09 | §15 導入文のスコープ記述を「設計上の対応が存在する Should 要件」→「REQ-NF-007（Should）」に限定（表の実際の行集合と一致させる） |
@@ -31,7 +31,7 @@
 | 1 | **後方互換性** | 既存 19 MCP ツール・270+ テストケースを破壊しないこと（REQ-NF-003）。最優先の制約 |
 | 2 | **保守性** | 既存 `core/` のフラットモジュール構造に Knowledge/Values/蒸留の3コンテキストを追加するため、モジュール境界の明確化が不可欠 |
 | 3 | **拡張性** | 将来的な push 型配信・横断検索・降格メカニズム等の Could 要件への対応余地を確保 |
-| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`、2 vCPU、7GB RAM）または開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）で計測する。既存 BM25+ エンジンの流用で達成可能 |
+| 4 | **検索性能** | エントリ数 1,000 件以下で p95 500ms 以内（REQ-NF-001）。ベンチマークは GitHub Actions 標準ランナー（`ubuntu-latest`。ハードウェア仕様はリポジトリ可視性により異なる: private 2 vCPU / 8 GB RAM、public 4 vCPU / 16 GB RAM。2026-04-09 時点）または開発者ラップトップ（Apple Silicon M1+ / x86-64、8GB+ RAM、SSD）で計測する。既存 BM25+ エンジンの流用で達成可能 |
 | 5 | **運用性** | `memory_init` のみでマイグレーション完了（REQ-NF-005）、health check 統合（REQ-NF-004） |
 
 ---
@@ -284,10 +284,34 @@ sequenceDiagram
     end
 
     DS-->>DT: DistillationReport
-    DT-->>A: {new: N, merged: M, linked: L, skipped: K, secret_skipped: S}
+    DT-->>A: {new_count: N, merged_count: M, linked_count: L, skipped_count: K, secret_skipped_count: S}
 ```
 
-**補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new: N, reinforced: R, contradicted: C, skipped: K, secret_skipped: S}` を返す（`merged` / `linked` は 0、代わりに `reinforced` / `contradicted` を使用）。`DistillationReport` は7種の集計フィールド（`newCount` / `mergedCount` / `linkedCount` / `reinforcedCount` / `contradictedCount` / `skippedCount` / `secretSkippedCount`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。`secretSkippedCount` は蒸留種別を問わず、integrate 段で機密検出によりスキップされたエントリ数を計上する。
+**補足**: 上記は Knowledge 蒸留のレスポンス。Values 蒸留（`memory_distill_values`）の場合、`DistillationReport` は `{new_count: N, reinforced_count: R, contradicted_count: C, skipped_count: K, secret_skipped_count: S}` を返す（`merged_count` / `linked_count` は 0、代わりに `reinforced_count` / `contradicted_count` を使用）。`DistillationReport` は7種の集計フィールド（`new_count` / `merged_count` / `linked_count` / `reinforced_count` / `contradicted_count` / `skipped_count` / `secret_skipped_count`）を持ち、蒸留種別に応じて該当フィールドのみ非ゼロとなる。`secret_skipped_count` は蒸留種別を問わず、integrate 段で機密検出によりスキップされたエントリ数を計上する。ドメインモデル（[DOMAIN-MODEL §3.3](DOMAIN-MODEL-knowledge-values.md#33-蒸留コンテキスト)）では camelCase（`newCount` 等）で定義しており、MCP ツール層（`server.py`）で snake_case wire 名に変換する。
+
+**`DistillationReport` の公開フィールド:**
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `new_count` | int | 新規作成されたエントリ数 |
+| `merged_count` | int | 既存エントリにマージされた数（Knowledge のみ非ゼロ） |
+| `linked_count` | int | 関連リンクで接続された数（Knowledge のみ非ゼロ） |
+| `reinforced_count` | int | 既存エントリの confidence が強化された数（Values のみ非ゼロ） |
+| `contradicted_count` | int | 既存エントリと矛盾が検出された数（Values のみ非ゼロ） |
+| `skipped_count` | int | 重複等によりスキップされた数 |
+| `secret_skipped_count` | int | 機密検出によりスキップされた数 |
+| `entries` | list[ReportEntry] | 候補ごとの詳細結果一覧 |
+
+各 `ReportEntry` は以下のフィールドを持つ（正規定義は [DOMAIN-MODEL-knowledge-values.md §3.3](DOMAIN-MODEL-knowledge-values.md#33-蒸留コンテキスト)）:
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `outcome` | DistillationOutcome | `CREATED` / `MERGED` / `LINKED` / `REINFORCED` / `CONTRADICTED` / `SKIPPED` / `SECRET_SKIPPED` |
+| `candidateSummary` | string | 蒸留候補の要約 |
+| `targetId` | string? | 統合先の既存エントリ ID（`CREATED` / `SECRET_SKIPPED` では `null`） |
+| `detail` | string? | 操作の補足情報（新規作成されたエントリ ID、マージ理由等。該当なしの場合は `null`） |
+
+`DistillationReport` の詳細なドメインモデル定義は [DOMAIN-MODEL-knowledge-values.md §3.3](DOMAIN-MODEL-knowledge-values.md#33-蒸留コンテキスト) を参照。
 
 **`LINK_RELATED` の `update` 呼び出しセマンティクス:** シーケンス図中の `update(id, related=[...])` は REQ-FUNC-006 の `related` パラメータ定義に従い、既存の `related` リストへの**追加**（マージ）として動作する。既存の `related` を置換するものではない。
 
@@ -327,8 +351,88 @@ sequenceDiagram
 **部分失敗時の整合性:** AGENTS.md 書き込み（不可逆影響が大きい操作）を先に実行し、成功後に Values エントリを更新する。Values エントリの更新が失敗した場合、以下の整合性保証が働く:
 
 1. **検出**: `memory_health_check`（REQ-FUNC-028）の `syncCheck()` が「AGENTS.md にエントリが存在するが、対応する Values の `promoted` が `false`」という方向の不整合を検出・報告する
-2. **復旧**: オペレーターが `memory_values_promote` を再実行する。`promoted` がまだ `false` のため昇格条件を再び満たす。`AgentsMdAdapter.appendEntry()` は ID チェックで既存エントリの重複追記を防止する（ADR-003）ため、AGENTS.md 側は変更なし。続いて Values エントリの `promoted` フラグが `true` に更新され、整合性が回復する
-3. **順序の根拠**: health check は不整合の**検出**を担い、`memory_values_promote` の再実行が**復旧**を担う。両者は独立した操作であり、実行順序の制約はない
+2. **復旧**: `memory_health_check(fix=true)` を実行する。promoted 同期の修復処理（REQ-FUNC-028 の「復旧経路」）により、AGENTS.md 側の孤立エントリを除去し、Values エントリ側の欠落を AGENTS.md に再挿入する。この修復は `memory_values_promote` の再実行とは異なる操作であり、既に `promoted: true` であるエントリの再昇格禁止（REQ-FUNC-016）には抵触しない
+
+### 5.4 Values 一括参照フロー
+
+**対応要件**: [REQ-FUNC-025](../requirements/REQ-knowledge-values.md#req-func-025-values-一括参照)
+
+`memory_values_list` は `ValuesService` を経由して `ValuesRepository` からエントリを取得し、フィルタリング・ソートを適用する。既存の検索パイプライン（`score_generic_entry`）は使用せず、インデックス（`_values.jsonl`）の直接走査で実現する。
+
+**処理フロー:**
+1. MCP ツール層: パラメータバリデーション（`min_confidence` の範囲チェック、`promoted_only` の型チェック、`top` の正整数チェック）
+2. `ValuesService.list(min_confidence, category, promoted_only, top)`: `ValuesRepository` から全エントリを取得
+3. フィルタ適用: `min_confidence` 指定時は `confidence >= min_confidence` で絞り込み。`category` 指定時は `category` が一致するエントリのみに絞り込み。`promoted_only=true` 時は `promoted == true` で絞り込み
+4. ソート: `confidence` 降順。同値の場合は `updated_at` 降順（REQ-FUNC-025 準拠）
+5. 件数制限: `top` 指定時はソート後の先頭 `top` 件に切り詰め（デフォルト: 20）
+6. レスポンス整形: `{ok: true, entries: [...]}` 形式。各エントリは `id`, `description`, `category`, `confidence`, `promoted`, `evidence_count` を含む
+
+### 5.5 Values 降格フロー
+
+**対応要件**: [REQ-FUNC-034](../requirements/REQ-knowledge-values.md#req-func-034-values-降格撤回)
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant DT as MCP ツール層
+    participant PS as PromotionService
+    participant AM as AgentsMdAdapter
+    participant VE as ValuesEntry
+    participant VR as ValuesRepository
+
+    A->>DT: memory_values_demote(id, reason)
+    DT->>PS: demote(id, reason)
+    PS->>VR: findById(id)
+    VR-->>PS: entry
+    PS->>PS: promoted==true を検証
+    PS->>AM: removeEntry(id)
+    AM-->>PS: ok
+    PS->>VE: entry.demote(reason, now)
+    VE-->>PS: updated entry
+    PS->>VR: save(updated entry)
+    VR-->>PS: ok
+    PS-->>DT: {id, description, reason, demoted_at}
+    DT-->>A: {ok: true, id, description, reason, demoted_at}
+```
+
+**責務配置:**
+- `PromotionService`: `reason` 検証（空文字拒否）、`promoted: true` 検証、AGENTS.md マーカー検証（`BEGIN/END:PROMOTED_VALUES`。欠落時は `memory_init` 再実行を案内するエラー）、`AgentsMdAdapter.removeEntry()` による AGENTS.md 除去、`ValuesEntry.demote()` の呼び出し
+- `AgentsMdAdapter`: AGENTS.md から該当エントリの行を削除（排他ロック + atomic write）
+- `ValuesEntry.demote(reason, now)`: `PromotionState` を更新（`promoted: false`, `demotionReason: reason`, `demotedAt: now`）
+- `ValuesRepository`: 更新された `values/{id}.md` と `_values.jsonl` を永続化
+
+**部分失敗:** 昇格フロー（§5.3）と同じ方針。AGENTS.md 除去を先行し、Values エントリ更新失敗時は `memory_health_check` の `syncCheck()` で検出する。
+
+### 5.6 Promoted Values 削除プレビュー
+
+**対応要件**: [REQ-FUNC-024](../requirements/REQ-knowledge-values.md#req-func-024-values-削除)（`promoted: true` かつ `confirm=false` の場合）
+
+`promoted: true` のエントリに対して `memory_values_delete(id, confirm=false)` が呼び出された場合、削除は実行せず、プレビューレスポンスを返す。
+
+**責務配置:**
+- `ValuesService.delete(id, reason, confirm)`: `promoted: true` を検出した場合、`PromotionService.onDelete(id, confirm)` に委譲
+- `PromotionService.onDelete(id, confirm=false)`: プレビュー生成を行いエラーレスポンスを返す
+  1. `ValuesRepository.findById(id)` でエントリを取得
+  2. エントリの `description`, `category`, `confidence` からプレビュー概要を生成
+  3. `AgentsMdAdapter.findEntryLine(id)` で AGENTS.md から該当行のテキストを取得
+  4. エラーレスポンスとして返却
+
+**プレビューレスポンス形状:**
+
+```json
+{
+  "ok": false,
+  "error": "confirmation_required",
+  "preview": {
+    "id": "v-...",
+    "description": "エントリの要約",
+    "category": "...",
+    "confidence": 0.85,
+    "agents_md_line": "AGENTS.md から除去される行のテキスト"
+  },
+  "message": "promoted Values の削除には confirm: true が必要です"
+}
+```
 
 ---
 
@@ -586,8 +690,8 @@ AGENTS.md は Markdown テキスト形式の外部ファイルであり、Values
 AGENTS.md のパスは以下の優先順位で解決する:
 
 1. 環境変数 `AGENTS_MD_PATH`（明示指定）
-2. `memory_dir` の親ディレクトリ（= リポジトリルート）の `AGENTS.md`
-3. `memory_dir` の親ディレクトリの `CLAUDE.md`（symlink 考慮）
+2. `memory_dir` の親ディレクトリの `AGENTS.md`（デフォルト構成ではリポジトリルートに相当するが、`memory_dir` が明示指定された場合は必ずしもリポジトリルートとは限らない）
+3. 同親ディレクトリの `CLAUDE.md`（symlink 考慮）
 
 **解決失敗時の挙動（REQ-FUNC-003 準拠）:**
 - `memory_init`: マーカー挿入をスキップし警告を返す（AGENTS.md が存在しなくても init 自体は成功する）
@@ -678,7 +782,7 @@ stateDiagram-v2
 
 1. 各候補に対して `KnowledgeIntegrator` / `ValuesIntegrator` で統合判定
 2. `dry_run=false` の場合のみ CRUD 操作を実行
-3. add/update 呼び出しで機密検出警告が返された場合、該当エントリの永続化をスキップし `secret_skipped` に計上する
+3. add/update 呼び出しで機密検出警告が返された場合、該当エントリの永続化をスキップし `secret_skipped_count` に計上する
 4. `DistillationReport` を生成・返却
 5. `_state.md` の蒸留日時フィールドを更新する:
    - **最終永続化日時**（`last_knowledge_distilled_at` / `last_values_distilled_at`）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した場合にのみ更新。`CONTRADICT_EXISTING` は既存エントリの `confidence` を低下させ `memory_values_update` で永続化するが、`last_*_distilled_at` の目的は新たなエントリの追加・統合の発生記録であり、既存エントリの品質指標調整はこれに該当しないため除外する
@@ -719,7 +823,7 @@ stateDiagram-v2
 | モジュール | 変更内容 | 影響度 |
 |---|---|---|
 | `server.py` | 新規ツール関数の追加 + 既存 2 ツールの追加的レスポンス拡張（下記参照） | 低（追加のみ） |
-| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。インデックスファイルの lazy 生成を考慮し、インデックス不在時はディレクトリ内のファイル有無で健全性を判定する（詳細は REQ-NF-004 参照）。Knowledge の `related` リンク整合性チェック（orphan link・片方向リンク検出。`fix=true` 時は `KnowledgeService` 経由で修復。§5.2 参照）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し。detect-only。`fix=true` でも promoted 同期差分は自動修復しない。修復は `memory_values_promote` の再実行で行う） | 低（チェック追加） |
+| `health.py` | `_knowledge.jsonl` / `_values.jsonl` の整合性チェック追加（REQ-NF-004: orphan 検出）。インデックスファイルの lazy 生成を考慮し、インデックス不在時はディレクトリ内のファイル有無で健全性を判定する（詳細は REQ-NF-004 参照）。Knowledge の `related` リンク整合性チェック（orphan link・片方向リンク検出。`fix=true` 時は `KnowledgeService` 経由で修復。§5.2 参照）。さらに REQ-FUNC-028 対応として、`promoted: true` の Values エントリと AGENTS.md「内面化された価値観」セクションの双方向整合性チェック（`AgentsMdAdapter.syncCheck()` を呼び出し）。`fix=true` 時は promoted 同期差分を自動修復する（REQ-FUNC-028 の「復旧経路」参照: 欠落エントリの再挿入、孤立エントリの除去、不一致テキストの上書き） | 低（チェック追加） |
 | `scorer.py` | 汎用スコアリング関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `search.py` | 汎用検索関数の追加（既存関数は変更なし） | 低（追加のみ） |
 | `config.py` | `memory_init` で `knowledge/` / `values/` ディレクトリ作成 + AGENTS.md `BEGIN/END:PROMOTED_VALUES` マーカー idempotent 自動挿入。インデックスファイル（`_knowledge.jsonl` / `_values.jsonl`）は作成しない（初回 add 時に遅延作成）。`_state.md` フロントマターの蒸留日時フィールドも作成しない（各フィールド独立に遅延追加。`last_*_evaluated_at` は初回 `dry_run=false` 蒸留完了時、`last_*_distilled_at` は初回の永続化発生時。セクション 10.2 参照） | 低（追加のみ） |
@@ -729,8 +833,8 @@ stateDiagram-v2
 
 蒸留推奨判定（セクション 10.2、Phase 7 参照）に必要なデータを公開するため、以下の 2 ツールのレスポンスに追加フィールドを設ける。既存フィールドの削除・型変更は行わず、追加のみとする:
 
-- **`memory_state_show`**: 既存の `sections` フィールドに加え、`frontmatter` フィールドを追加する。`_state.md` の YAML フロントマター（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）を返却し、エージェント/スキル側が蒸留トリガー条件を評価できるようにする。`as_json=true`（デフォルト）の場合は `frontmatter` を独立した dict フィールドとして `sections` と同階層に配置する。`as_json=false` の場合は `output` 文字列の先頭に `## 蒸留メタデータ` セクションとして rendered markdown に含める（既存セクション群の前に配置）
-- **`memory_stats`**: 既存の統計フィールドに加え、`notes_since_last_knowledge_evaluation` / `notes_since_last_values_evaluation` フィールドを追加する。各蒸留種別の最終評価日時以降に作成されたノート数を、`_index.jsonl` のエントリタイムスタンプと `_state.md` の評価日時を突合して算出する（日単位ではなくタイムスタンプ精度）
+- **`memory_state_show`**: 既存の `sections` フィールドに加え、`frontmatter` フィールドを追加する。`_state.md` の YAML フロントマター（`last_knowledge_distilled_at` / `last_values_distilled_at` / `last_knowledge_evaluated_at` / `last_values_evaluated_at`）を返却し、エージェント/スキル側が蒸留トリガー条件を評価できるようにする。`as_json=true`（デフォルト）の場合は `frontmatter` を独立した dict フィールドとして `sections` と同階層に配置する。`as_json=false` の場合は `output` 文字列の先頭に `## 蒸留メタデータ` セクションとして rendered markdown に含める（既存セクション群の前に配置）。**Bootstrap 契約**: 蒸留が未実行の場合、各日時フィールドは `null` を返す（フィールド自体は常に存在し省略しない。REQ-FUNC-026 参照）
+- **`memory_stats`**: 既存の統計フィールドに加え、`notes_since_last_knowledge_evaluation` / `notes_since_last_values_evaluation` フィールドを追加する。各蒸留種別の最終評価日時以降に作成されたノート数を、`_index.jsonl` のエントリタイムスタンプと `_state.md` の評価日時を突合して算出する（日単位ではなくタイムスタンプ精度）。**Bootstrap 契約**: 対応する `last_*_evaluated_at` が `null`（蒸留未実行）の場合、全ノート数を返す（REQ-FUNC-026 参照）
 
 ### 11.2 変更しない既存モジュール
 
@@ -909,6 +1013,22 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 
 **補足**: REQ-FUNC-014/020/021/027/029 はいずれもエージェント（または retrospective スキル）が MCP ツールの公開 API を呼び出す形で実装される。REQ-FUNC-026 のトリガー条件評価はエージェント/スキル側の責務であり、判定データは以下の公開ツールレスポンスから取得する: (1) `memory_state_show` — `_state.md` フロントマターの最終評価日時（`last_knowledge_evaluated_at` / `last_values_evaluated_at`）、(2) `memory_stats` — 前回評価以降のノート蓄積数。`DistillationTrigger` は `DistillationService` の内部コンポーネントであり、REQ-FUNC-026 のトリガー条件（10 ノート以上 OR 168 時間以上経過）を正規定義するが、公開 API としては露出せず、`memory_distill_*` パイプライン内での条件評価も行わない（セクション 10.1 参照）。エージェント/スキル側が上記の公開ツールレスポンスに基づいて同じ条件を評価し、条件充足時に蒸留を推奨する（自動実行ではない）。REQ-FUNC-014/027 はエージェントワークフロー（AGENTS.md に定義）として、調査結果やユーザー教示を `memory_knowledge_add` で登録する経路であり、`source_type` / `accuracy` / `sources[].type` の設定はエージェント側の責務である。
 
+### 13.1 テスト戦略
+
+各 Phase で追加されるモジュールと MCP ツールについて、以下の観点でユニットテスト・統合テストを作成する。
+
+| Phase | テスト対象 | 正常系 | 異常系 |
+|---|---|---|---|
+| **Phase 1** | データモデル（`KnowledgeEntry`, `ValuesEntry`）、ストレージ（Repository）、`memory_init` 拡張、`score_generic_entry` | エントリ生成・永続化・読み込みの往復、`memory_init` の冪等性、BM25 スコア算出 | 不変条件違反（confidence 範囲外、ID 重複）、存在しないパスでの init |
+| **Phase 2** | `memory_knowledge_add` / `search` / `update` | CRUD 正常フロー、検索ヒット・ランキング順序、`related` 双方向リンク | 重複登録、存在しない ID の update、機密スキャン検出 |
+| **Phase 3** | `memory_values_add` / `search` / `update` / `list` | CRUD 正常フロー、confidence フィルタ・ソート順、昇格候補通知、一括参照 | 重複登録、類似エントリ警告、confidence 範囲外 |
+| **Phase 4** | `memory_health_check` 拡張 | orphan 検出（双方向）、promoted 同期チェック、`fix=true` 修復 | マーカー欠落、片方向リンク修復 |
+| **Phase 5** | 蒸留パイプライン（collect / extract / integrate） | 正常蒸留フロー、`dry_run=true` の非永続化、日付フィルタ、`_state.md` 入力 | extract エラー時のフォールバック、空ノート集合 |
+| **Phase 6** | 昇格フロー（`promote`）、AGENTS.md 連携 | 昇格条件充足→AGENTS.md 書き込み、`confirm` ガードレール | 条件未充足、再昇格拒否、マーカー欠落 |
+| **Phase 7** | 削除（promoted）、降格、トリガー判定、同期 | promoted エントリ削除→AGENTS.md 除去、降格→状態更新、トリガー条件評価 | `confirm` 未指定での削除拒否（プレビュー返却）、部分失敗検出 |
+
+テストは既存テストスイート（270+ テストケース）と同じ `pytest` フレームワークで作成し、各 Phase 完了時に CI でリグレッションを確認する。
+
 ---
 
 ## 14. リスクと軽減策
@@ -926,7 +1046,7 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 
 ## 15. 要件トレーサビリティマトリクス
 
-全 Must 要件および REQ-NF-007（Should）について、本設計文書内の対応セクションを示す。
+全 Must 要件、REQ-NF-007（Should）、および設計トレーサビリティが必要な Should/Could 要件について、本設計文書内の対応セクションを示す。
 
 | 要件 ID | 要件名 | 対応設計セクション |
 |---|---|---|
@@ -952,10 +1072,18 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | REQ-FUNC-020 | セッション開始手順更新 | §13 Phase 7（`memory_values_search` 呼び出し） |
 | REQ-FUNC-021 | セッション終了手順更新 | §13 Phase 7（`memory_state_show` + `memory_stats` → 蒸留推奨判断） |
 | **REQ-FUNC-022** | **昇格 Values セクション** | **§9.1 セクション構造、§9.2 テキスト形式、§9.3 AgentsMdAdapter（`appendEntry`/`removeEntry`）** |
+| REQ-FUNC-023 | Knowledge 削除 | §4.1（`KnowledgeService`）、§7.7 削除の部分失敗戦略、§11.1（`health.py`: orphan 検出・修復） |
+| REQ-FUNC-024 | Values 削除 | §4.1（`ValuesService`、`PromotionService.onDelete`）、§5.6 promoted Values 削除プレビュー、§9.8 promoted エントリ削除の操作順序 |
+| REQ-FUNC-025 | Values 一括参照 | §5.4 Values 一括参照フロー |
+| REQ-FUNC-026 | 蒸留トリガー判定 | §4.1（`DistillationTrigger`）、§13 Phase 7（AGENTS.md / retrospective 連携設計: トリガー条件評価の責務分担） |
+| REQ-FUNC-027 | ユーザー教示の Knowledge 化 | §13 Phase 7（AGENTS.md ワークフロー → `memory_knowledge_add`（`source_type: user_taught`）） |
+| REQ-FUNC-028 | 昇格 Values の同期 | §4.1（`health.py` 拡張）、§5.3 昇格フロー部分失敗（検出と復旧）、§9.6 書き込み整合性、§11.1（`health.py` promoted 同期チェック） |
+| REQ-FUNC-029 | retrospective スキル拡張 | §13 Phase 7（retrospective 連携設計: `memory_state_show` + `memory_stats` → 蒸留推奨判断） |
+| REQ-FUNC-034 | Values 降格・撤回 | §4.1（`PromotionService`、`ValuesEntry.demote()`）、§5.5 Values 降格フロー |
 | REQ-NF-001 | 検索応答時間 | §1 品質特性（優先度 4）、§8.4 dense/rerank 方針 |
 | REQ-NF-003 | 後方互換性 | §1 品質特性（優先度 1）、§4.1（既存ツール群）、§11.2 変更しないモジュール、ADR-005 |
 | REQ-NF-004 | Health Check 統合 | §4.1（`health.py` 拡張）、§5.2 LINK_RELATED 部分失敗（検出と復旧）、§5.3 昇格フロー部分失敗、§9.6 書き込み整合性、§11.1（`health.py` 変更内容） |
 | REQ-NF-005 | マイグレーション | §4.1（`config.py` 拡張）、§11.1（`config.py` 変更内容） |
 | **REQ-NF-006** | **AGENTS.md 書き込みガードレール** | **§4.1（`PromotionService`: `confirm` ガードレール消費）、§5.3 昇格フロー（ステップ 3: confirm 検証）、§9.8 promoted エントリ削除（ステップ 1: confirm 検証）、ADR-003** |
 | REQ-NF-007 | 機密情報の除外 | §7.6 機密スキャン |
-| **REQ-NF-008** | **テストカバレッジ** | **§13 実装フェーズ（各フェーズで対応ユニットテストを作成。Phase 1〜7 の各段階で CRUD 正常系・異常系、蒸留パイプライン、昇格メカニズムのテストを網羅）** |
+| **REQ-NF-008** | **テストカバレッジ** | **§13.1 テスト戦略（Phase 別テスト対象と正常系・異常系の網羅方針）** |

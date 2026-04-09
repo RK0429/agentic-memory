@@ -14,7 +14,7 @@
 | — | 2026-04-09 | レビュー指摘対応: F-01〜F-10（DistillationOutcome に SECRET_SKIPPED 追加、update 重複チェック BR-8/BR-9 追記、CONTRADICT_EXISTING 根拠追記、BR-16 事後修復モデルに統一、蒸留トリガー _state.md 除外 BR-12 追記） |
 | — | 2026-04-09 | レビュー指摘対応: Evidence.date 導出規則を注釈に追加（_state.md 由来のフォールバック明記）、ValuesIntegrationResult の targetId/confidenceDelta セマンティクスを Mermaid 注釈と用語集に追加 |
 | — | 2026-04-09 | レビュー指摘対応: 「実質同一」の同値条件を BR-8/BR-9 に明文化、evidence 10件保持の順序規則を明記、DistillationReport 用語集に secretSkippedCount/SECRET_SKIPPED を追記 |
-| — | 2026-04-09 | レビュー指摘対応（cross-doc review）: enum 表現の対応規約（UPPER_SNAKE_CASE ↔ lower_snake_case 変換表）追加、conflictDetail/contradictionDetail の用途・設定条件を注釈に追加、EvidenceList の newest-first 順序不変条件を明記、DistillationExtractorPort から実装ファイルパスを除去、BR-16 に promoted 同期 detect-only を明記 |
+| — | 2026-04-09 | レビュー指摘対応（cross-doc review）: enum 表現の対応規約（UPPER_SNAKE_CASE ↔ lower_snake_case 変換表）追加、conflictDetail/contradictionDetail の用途・設定条件を注釈に追加、EvidenceList の newest-first 順序不変条件を明記、DistillationExtractorPort から実装ファイルパスを除去、BR-16 に promoted 同期チェック（detect + `fix=true` 時自動修復）を明記 |
 | — | 2026-04-09 | レビュー指摘対応（再レビュー残件）: enum 規約に用語集・BR の説明レイヤ規則を追加、用語集 SourceType を API 表現に統一 |
 
 ---
@@ -333,6 +333,8 @@ classDiagram
 **アプリケーション層の運用制約:**
 - 昇格にはユーザー確認が必須。`confirm` パラメータはアプリケーション層（`PromotionService`）で消費する（BR-7）
 - `promoted: true` のエントリ削除時は AGENTS.md からも除去する。`ValuesService` が `confirm` パラメータとともに `PromotionService.onDelete(id, confirm)` に委譲し、`confirm` ガードレール検証と AGENTS.md からの除去を `PromotionService` 側で行う（BR-13）
+- `promoted: true` のエントリに対して `confirm=false` または未指定で削除が要求された場合、`PromotionService.onDelete()` は削除を実行せず、プレビューレスポンス（エントリ概要 + AGENTS.md 該当行テキスト）を含むエラーを返す。プレビュー生成の責務は `PromotionService` が担い、`AgentsMdAdapter.findEntryLine(id)` で AGENTS.md の該当行を取得する（設計詳細は [ARCHITECTURE §5.6](ARCHITECTURE-knowledge-values.md#56-promoted-values-削除プレビュー) 参照）
+- 降格（`demote`）の責務配置: `PromotionService` が `reason` 検証・AGENTS.md マーカー検証・AGENTS.md 除去・`ValuesEntry.demote()` 呼び出しを担う。レスポンスは `{ok: true, id, description, reason, demoted_at}` 形式（設計詳細は [ARCHITECTURE §5.5](ARCHITECTURE-knowledge-values.md#55-values-降格フロー) 参照）
 
 ### 3.3 蒸留コンテキスト
 
@@ -528,7 +530,7 @@ stateDiagram-v2
 | DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | KnowledgeCandidate, ValuesCandidate |
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
-| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `SECRET_SKIPPED`） | DistillationOutcome |
+| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `SECRET_SKIPPED`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
 | DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(168 時間)でタイムスタンプ精度の比較を行う（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
@@ -606,4 +608,4 @@ stateDiagram-v2
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
-| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は orphan の自動修復を実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針。ただし AGENTS.md の promoted 同期差分は detect-only であり、`fix=true` でも自動修復しない。REQ-NF-004 参照） | REQ-FUNC-023, REQ-FUNC-024 |
+| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は orphan の自動修復を実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針）。AGENTS.md の promoted 同期差分についても `fix=true` 時は自動修復する（REQ-FUNC-028 の「復旧経路」参照: 欠落エントリの再挿入、孤立エントリの除去、不一致テキストの上書き。REQ-NF-004 参照） | REQ-FUNC-023, REQ-FUNC-024 |
