@@ -286,7 +286,7 @@ memory/
 
 **制約:** `query` と `domain` の少なくとも一方が必須。両方省略した場合はバリデーションエラーを返す。`domain` のみ指定時はフィルタ結果を `updated_at` 降順で返す。
 
-**出力:** スコア順のエントリリスト（`id`, `title`, `domain`, `accuracy`, `user_understanding`, `content` の先頭部分）
+**出力:** エントリリスト（`id`, `title`, `domain`, `accuracy`, `user_understanding`, `content` の先頭部分）。`query` 指定時は関連度スコア降順、`domain` のみ指定時は `updated_at` 降順で返す。
 
 ---
 
@@ -421,7 +421,7 @@ memory/
 
 **制約:** `query` と `category` の少なくとも一方が必須。両方省略した場合はバリデーションエラーを返す。`category` のみ指定時はフィルタ結果を `confidence` 降順で返す。
 
-**出力:** スコア順のエントリリスト（`id`, `description`, `category`, `confidence`, `evidence_count`, `promoted`）
+**出力:** エントリリスト（`id`, `description`, `category`, `confidence`, `evidence_count`, `promoted`）。`query` 指定時は関連度スコア降順、`category` のみ指定時は `confidence` 降順（同値の場合は `updated_at` 降順）で返す。
 
 ---
 

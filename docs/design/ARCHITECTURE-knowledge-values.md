@@ -558,8 +558,10 @@ Rust の所有権ルール:
 
 REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesService` / `PromotionService` で共通の `SecretScanPolicy` を適用する。
 
-- `memory_knowledge_add` / `memory_knowledge_update` / `memory_values_add` / `memory_values_update`:
-  シークレット検出時は保存自体は継続可能としつつ、警告をレスポンスへ含める
+- `memory_knowledge_add` / `memory_knowledge_update` / `memory_values_add` / `memory_values_update`（直接呼び出し）:
+  シークレット検出時は保存自体は継続可能としつつ、警告をレスポンスへ含める。ユーザーが警告を確認し対処を判断できるインタラクティブな文脈を前提とする
+- 蒸留パイプライン（`DistillationService`）の integrate ステップ:
+  上記 add/update を内部的に呼び出すが、機密検出警告が返された場合は該当エントリの永続化をスキップし `secret_skipped_count` に計上する（§10.1 参照）。蒸留は自律的プロセスでありユーザー判断を介在させられないため、機密候補は永続化しない
 - `memory_values_promote`:
   AGENTS.md への書き込みは不可逆影響が大きいため、シークレット検出時は警告ではなく昇格を拒否する
 - 実装:
@@ -1077,13 +1079,13 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | REQ-FUNC-025 | Values 一括参照 | §5.4 Values 一括参照フロー |
 | REQ-FUNC-026 | 蒸留トリガー判定 | §4.1（`DistillationTrigger`）、§13 Phase 7（AGENTS.md / retrospective 連携設計: トリガー条件評価の責務分担） |
 | REQ-FUNC-027 | ユーザー教示の Knowledge 化 | §13 Phase 7（AGENTS.md ワークフロー → `memory_knowledge_add`（`source_type: user_taught`）） |
-| REQ-FUNC-028 | 昇格 Values の同期 | §4.1（`health.py` 拡張）、§5.3 昇格フロー部分失敗（検出と復旧）、§9.6 書き込み整合性、§11.1（`health.py` promoted 同期チェック） |
+| REQ-FUNC-028 | 昇格 Values の同期 | §5.3 昇格フロー部分失敗（検出と復旧）、§9.6 書き込み整合性、§11.1（`health.py` 拡張: promoted 同期チェック） |
 | REQ-FUNC-029 | retrospective スキル拡張 | §13 Phase 7（retrospective 連携設計: `memory_state_show` + `memory_stats` → 蒸留推奨判断） |
 | REQ-FUNC-034 | Values 降格・撤回 | §4.1（`PromotionService`、`ValuesEntry.demote()`）、§5.5 Values 降格フロー |
 | REQ-NF-001 | 検索応答時間 | §1 品質特性（優先度 4）、§8.4 dense/rerank 方針 |
 | REQ-NF-003 | 後方互換性 | §1 品質特性（優先度 1）、§4.1（既存ツール群）、§11.2 変更しないモジュール、ADR-005 |
-| REQ-NF-004 | Health Check 統合 | §4.1（`health.py` 拡張）、§5.2 LINK_RELATED 部分失敗（検出と復旧）、§5.3 昇格フロー部分失敗、§9.6 書き込み整合性、§11.1（`health.py` 変更内容） |
-| REQ-NF-005 | マイグレーション | §4.1（`config.py` 拡張）、§11.1（`config.py` 変更内容） |
+| REQ-NF-004 | Health Check 統合 | §5.2 LINK_RELATED 部分失敗（検出と復旧）、§5.3 昇格フロー部分失敗、§9.6 書き込み整合性、§11.1（`health.py` 拡張: 整合性チェック追加） |
+| REQ-NF-005 | マイグレーション | §11.1（`config.py` 拡張: マイグレーション処理） |
 | **REQ-NF-006** | **AGENTS.md 書き込みガードレール** | **§4.1（`PromotionService`: `confirm` ガードレール消費）、§5.3 昇格フロー（ステップ 3: confirm 検証）、§9.8 promoted エントリ削除（ステップ 1: confirm 検証）、ADR-003** |
 | REQ-NF-007 | 機密情報の除外 | §7.6 機密スキャン |
 | **REQ-NF-008** | **テストカバレッジ** | **§13.1 テスト戦略（Phase 別テスト対象と正常系・異常系の網羅方針）** |

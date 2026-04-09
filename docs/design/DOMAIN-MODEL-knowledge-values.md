@@ -502,7 +502,7 @@ stateDiagram-v2
 | KnowledgeEntry | 抽象的な宣言的知識のエンティティ。事実・概念・ルールを含む | Source, Accuracy |
 | KnowledgeId | `k-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | KnowledgeEntry |
 | Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
-| Source | Knowledge の引用元。型（`SourceType`）・参照先・要約で構成。MERGE_EXISTING 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | SourceType |
+| Source | Knowledge の引用元。型（`SourceType`）・参照先・要約で構成。`merge_existing` 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | SourceType |
 | SourceType | Knowledge の出自分類。`memory_distillation` / `autonomous_research` / `user_taught` の3値（クラス図での内部表現は `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT`）。`KnowledgeEntry.sourceType`（エントリレベル）と `Source.type`（個別引用元レベル）の両方で使用される。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry, Source |
 | Accuracy | Knowledge の品質指標。verified（複数ソース確認）/ likely（単一ソース）/ uncertain（未確認） | KnowledgeEntry |
 | UserUnderstanding | ユーザーのその知識に対する理解度。unknown / novice / familiar / proficient / expert の5段階 | KnowledgeEntry |
@@ -520,7 +520,7 @@ stateDiagram-v2
 | EvidenceList | Evidence の管理コレクション。最新10件を保持し、総数を `totalCount` で別途カウントする。永続化層（`_values.jsonl`）およびツール API では `evidence_count` として公開される | Evidence |
 | PromotionState | 昇格状態。promoted フラグ・昇格日時・昇格時 confidence を保持し、降格提案判定（`shouldSuggestDemotion`）も自身で行う（判断記録 3）。降格時には `demotionReason`（降格理由）と `demotedAt`（降格日時）を記録する（判断記録 4） | ValuesEntry |
 | PromotionManager | 昇格/降格のポリシー判定を行うドメインサービス。`checkCandidate()` で昇格条件を一元判定し（`Confidence.meetsPromotionThreshold()` AND `EvidenceList.meetsPromotionCount()` AND `PromotionState.promoted == false` に委譲）、`applyPromotion(ValuesEntry, datetime now)` / `applyDemotion(entry, reason, now)` でポリシー検証後に `ValuesEntry` の状態遷移メソッドを呼び出す。降格提案判定は `PromotionState` に委譲。降格時の理由と日時は `PromotionState.demotionReason` / `demotedAt` に記録される | PromotionState |
-| ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス。`ValuesIntegrationResult` の `targetId` は操作対象の既存エントリ ID（CREATE_NEW / SKIP_DUPLICATE では null）、`confidenceDelta` は確信度の符号付き変化量（REINFORCE_EXISTING で正、CONTRADICT_EXISTING で負、それ以外は null） | Confidence |
+| ValuesIntegrator | 蒸留候補と既存 Values の重複検出・確信度更新を行うドメインサービス。`ValuesIntegrationResult` の `targetId` は操作対象の既存エントリ ID（`create_new` / `skip_duplicate` では null）、`confidenceDelta` は確信度の符号付き変化量（`reinforce_existing` で正、`contradict_existing` で負、それ以外は null） | Confidence |
 
 ### 5.4 蒸留コンテキスト
 
@@ -530,7 +530,7 @@ stateDiagram-v2
 | DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | KnowledgeCandidate, ValuesCandidate |
 | KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
 | ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
-| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `SECRET_SKIPPED`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
+| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `secret_skipped`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
 | DistillationTrigger | 蒸留推奨の判定ロジック。最終評価日時（`lastEvaluatedAt`）を基準に、ノート数閾値(10)・期間閾値(168 時間)でタイムスタンプ精度の比較を行う（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
 | DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
 
@@ -600,12 +600,12 @@ stateDiagram-v2
 | BR-5 | Values の evidence リストは最新10件を保持。超過分は `totalCount`（永続化層では `evidence_count`）のみインクリメント。作成時に 10 件超の evidence が提供された場合は、提供リストの先頭10件を保持し末尾を切り捨てる | REQ-FUNC-002, REQ-FUNC-009 |
 | BR-6 | 昇格条件: `confidence >= 0.8` AND `totalCount >= 5`（永続化層では `evidence_count >= 5`） AND `promoted == false` | REQ-FUNC-015 |
 | BR-7 | 昇格にはユーザー確認が必須（`confirm` はアプリケーション層で消費） | REQ-FUNC-016 |
-| BR-8 | Knowledge 登録時、`title` + `domain` + `content` が既存エントリと実質同一であればエラー（完全重複拒否。内容ベースで判定）。update 時も同一条件で重複チェックを行う（自エントリを除外して判定）。**「実質同一」の同値条件**: 各フィールドに対して NFC 正規化 → 前後空白 trim → 連続空白の単一スペース圧縮を適用した後、case-sensitive の完全一致で判定する | REQ-FUNC-004 |
-| BR-9 | Values 登録時、`description` + `category` が既存エントリと実質同一であればエラー（厳密重複拒否。内容ベースで判定）。意味的に類似する既存エントリがあれば警告（登録は許可）。update 時も厳密重複チェックを行う（自エントリを除外して判定）。「実質同一」の同値条件は BR-8 と同一（NFC 正規化 → trim → 空白圧縮 → case-sensitive 完全一致） | REQ-FUNC-007 |
+| BR-8 | Knowledge 登録時、`title` + `domain` + `content` が既存エントリと実質同一であればエラー（完全重複拒否。内容ベースで判定）。update 時も同一条件で重複チェックを行う（自エントリを除外して判定）。**「実質同一」の同値条件**: 各フィールドに対して NFC 正規化 → 前後空白 trim → 連続空白の単一スペース圧縮を適用した後、case-sensitive の完全一致で判定する | REQ-FUNC-004, REQ-FUNC-006 |
+| BR-9 | Values 登録時、`description` + `category` が既存エントリと実質同一であればエラー（厳密重複拒否。内容ベースで判定）。意味的に類似する既存エントリがあれば警告（登録は許可）。update 時も厳密重複チェックを行う（自エントリを除外して判定）。「実質同一」の同値条件は BR-8 と同一（NFC 正規化 → trim → 空白圧縮 → case-sensitive 完全一致） | REQ-FUNC-007, REQ-FUNC-009 |
 | BR-10 | 蒸留で抽出された Values が既存と同傾向なら confidence 上昇、矛盾なら confidence 低下 | REQ-FUNC-013 |
 | BR-11 | Knowledge の sources 更新はマージ（置換ではなく追加） | REQ-FUNC-006 |
 | BR-12 | 蒸留トリガー条件（公開 API ベースの推奨判定のみに適用）: 前回評価（`lastEvaluatedAt`）から10ノート以上 OR 168 時間（7日相当）以上経過（タイムスタンプ精度で比較）。`lastEvaluatedAt` が null（初回蒸留前）の場合はノート 1 件以上で条件充足。ユーザーの `memory_distill_*` 直接呼び出しはトリガー判定をバイパスし即座に実行する。`_state.md` の変更はトリガー条件に含めない（設計意図: REQ-FUNC-026 参照） | REQ-FUNC-026 |
 | BR-13 | `promoted: true` の Values を削除する場合、AGENTS.md からも該当行を削除する | REQ-FUNC-024 |
 | BR-14 | Knowledge 削除時、他エントリの `related` からも参照を除去する | REQ-FUNC-023 |
 | BR-15 | 降格**提案**条件: confidence が昇格時から 0.2 以上低下（`PromotionState.shouldSuggestDemotion()` で判定）。降格**実行**は提案条件に限定されず、任意の理由（明示的撤回、方針変更等）で `memory_values_demote(id, reason)` を呼び出せる | REQ-FUNC-034 |
-| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は orphan の自動修復を実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の LINK_RELATED 部分失敗時の整合性保証と同じ方針）。AGENTS.md の promoted 同期差分についても `fix=true` 時は自動修復する（REQ-FUNC-028 の「復旧経路」参照: 欠落エントリの再挿入、孤立エントリの除去、不一致テキストの上書き。REQ-NF-004 参照） | REQ-FUNC-023, REQ-FUNC-024 |
+| BR-16 | Knowledge / Values の削除は Markdown ファイルと JSONL インデックスエントリの両方を削除する。ファイル → インデックスの順序で実行し、途中失敗時は `memory_health_check` が orphan（ファイルなしのインデックスエントリ、またはインデックスなしのファイル）として検出・報告する（事後検出・事後修復モデル。`fix=true` 時は orphan の自動修復を実行。ARCH §7.7 の削除部分失敗戦略、§5.2 の `link_related` 部分失敗時の整合性保証と同じ方針）。AGENTS.md の promoted 同期差分についても `fix=true` 時は自動修復する（REQ-FUNC-028 の「復旧経路」参照: 欠落エントリの再挿入、孤立エントリの除去、不一致テキストの上書き。REQ-NF-004 参照） | REQ-FUNC-023, REQ-FUNC-024, REQ-FUNC-028, REQ-NF-004 |
