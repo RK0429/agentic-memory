@@ -114,6 +114,36 @@ def test_load_state_valid(tmp_path: Path) -> None:
     assert loaded[state.STATE_SHORT_KEYS["skills"]][0].text == "SKILL: software-engineer"
 
 
+def test_load_state_frontmatter_defaults_to_nulls(tmp_memory_dir: Path) -> None:
+    payload = state.load_state_frontmatter(tmp_memory_dir / "_state.md")
+
+    assert payload == {
+        "last_knowledge_distilled_at": None,
+        "last_values_distilled_at": None,
+        "last_knowledge_evaluated_at": None,
+        "last_values_evaluated_at": None,
+    }
+
+
+def test_update_distillation_frontmatter_is_lazy_and_preserves_sections(
+    tmp_memory_dir: Path,
+) -> None:
+    state_path = tmp_memory_dir / "_state.md"
+    state.cmd_add(state_path, "focus", ["Track distillation metadata"])
+
+    payload = state.update_distillation_frontmatter(
+        state_path,
+        last_knowledge_evaluated_at="2026-04-10T10:00:00",
+    )
+
+    rendered = state_path.read_text(encoding="utf-8")
+    assert payload["last_knowledge_evaluated_at"] == "2026-04-10T10:00:00"
+    assert payload["last_knowledge_distilled_at"] is None
+    assert "last_knowledge_evaluated_at" in rendered
+    assert "last_knowledge_distilled_at" not in rendered
+    assert "Track distillation metadata" in rendered
+
+
 def test_save_state_roundtrip(tmp_path: Path) -> None:
     state_path = tmp_path / "_state.md"
     original = _empty_sections()

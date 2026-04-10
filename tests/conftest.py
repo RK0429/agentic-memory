@@ -96,6 +96,8 @@ def tmp_memory_dir(tmp_path: Path) -> Path:
     assert (memory_dir / "_state.md").exists()
     assert (memory_dir / "_index.jsonl").exists()
     assert (memory_dir / "_rag_config.json").exists()
+    assert (memory_dir / "knowledge").exists()
+    assert (memory_dir / "values").exists()
     return memory_dir
 
 

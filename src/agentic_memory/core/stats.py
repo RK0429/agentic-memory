@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,44 @@ def _get_storage_bytes(memory_dir: Path) -> int:
     return total
 
 
+def _parse_iso_datetime(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _note_created_at(note_path: Path) -> dt.datetime:
+    try:
+        note_date = dt.date.fromisoformat(note_path.parent.name)
+    except ValueError:
+        return dt.datetime.fromtimestamp(note_path.stat().st_mtime)
+
+    match = re.match(r"^(?P<hour>\d{2})(?P<minute>\d{2})(?:_|$)", note_path.name)
+    if match is None:
+        try:
+            return dt.datetime.fromtimestamp(note_path.stat().st_mtime)
+        except OSError:
+            return dt.datetime.combine(note_date, dt.time())
+    return dt.datetime.combine(
+        note_date,
+        dt.time(hour=int(match.group("hour")), minute=int(match.group("minute"))),
+    )
+
+
+def _count_notes_since(
+    note_paths: list[Path],
+    *,
+    last_evaluated_at: str | None,
+) -> int:
+    evaluated_at = _parse_iso_datetime(last_evaluated_at)
+    if evaluated_at is None:
+        return len(note_paths)
+    return sum(1 for note_path in note_paths if _note_created_at(note_path) > evaluated_at)
+
+
 def _build_sigfb_summary(entries: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     aggregated = signals.aggregate_signals(entries)
     skills = aggregated.get("skills", {})
@@ -99,11 +138,27 @@ def get_stats(memory_dir: Path) -> dict[str, Any]:
         section_name: len(items) for section_name, items in state.load_state(state_path).items()
     }
     index_entries = _load_index_entries(index_path)
+    knowledge_entries = _load_index_entries(memory_dir / "_knowledge.jsonl")
+    values_entries = _load_index_entries(memory_dir / "_values.jsonl")
+    frontmatter = state.load_state_frontmatter(state_path)
 
     return {
         "notes_count": len(note_paths),
         "notes_by_date": notes_by_date,
         "index_entries": _count_index_lines(index_path),
+        "knowledge_count": len(knowledge_entries),
+        "values_count": len(values_entries),
+        "promoted_values_count": sum(
+            1 for entry in values_entries if bool(entry.get("promoted", False))
+        ),
+        "notes_since_last_knowledge_evaluation": _count_notes_since(
+            note_paths,
+            last_evaluated_at=frontmatter["last_knowledge_evaluated_at"],
+        ),
+        "notes_since_last_values_evaluation": _count_notes_since(
+            note_paths,
+            last_evaluated_at=frontmatter["last_values_evaluated_at"],
+        ),
         "storage_bytes": _get_storage_bytes(memory_dir),
         "date_range": {
             "oldest": dates[0] if dates else "",

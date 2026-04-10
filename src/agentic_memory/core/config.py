@@ -70,6 +70,8 @@ FALLBACK_NOTE_TEMPLATES = {
     "ja": ("# <short title>\n- Date: <YYYY-MM-DD>\n- Time: <HH:MM> - <HH:MM>\n\n## 目標\n- \n"),
     "en": ("# <short title>\n- Date: <YYYY-MM-DD>\n- Time: <HH:MM> - <HH:MM>\n\n## Goals\n- \n"),
 }
+PROMOTED_VALUES_BEGIN = "<!-- BEGIN:PROMOTED_VALUES -->"
+PROMOTED_VALUES_END = "<!-- END:PROMOTED_VALUES -->"
 
 
 def _merge_config(defaults: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +99,19 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(serialized)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(tmp_path)
+        raise
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
         os.replace(tmp_path, str(path))
     except BaseException:
         with suppress(OSError):
@@ -145,6 +160,37 @@ def load_config(memory_dir: Path) -> dict[str, Any]:
     return _merge_config(DEFAULT_CONFIG, _read_json_dict(config_path))
 
 
+def _ensure_promoted_values_markers(agents_path: Path) -> None:
+    if not agents_path.exists():
+        return
+
+    content = agents_path.read_text(encoding="utf-8")
+    if PROMOTED_VALUES_BEGIN in content and PROMOTED_VALUES_END in content:
+        return
+
+    suffix = "" if content.endswith("\n") else "\n"
+    marker_block = f"{suffix}\n{PROMOTED_VALUES_BEGIN}\n{PROMOTED_VALUES_END}\n"
+    _write_text_atomic(agents_path, content + marker_block)
+
+
+def _resolve_agents_md_path(memory_dir: Path) -> Path | None:
+    env_path = os.environ.get("AGENTS_MD_PATH")
+    candidates: list[Path] = []
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.extend(
+        [
+            memory_dir.parent / "AGENTS.md",
+            memory_dir.parent / "CLAUDE.md",
+        ]
+    )
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        return candidate.resolve() if candidate.is_symlink() else candidate
+    return None
+
+
 def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, str]:
     """Initialize memory directory structure and return status metadata.
 
@@ -169,6 +215,8 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
     )
 
     memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "knowledge").mkdir(exist_ok=True)
+    (memory_dir / "values").mkdir(exist_ok=True)
 
     if state_path.exists():
         template_content = state_path.read_text(encoding="utf-8")
@@ -189,6 +237,10 @@ def init_memory_dir(memory_dir: Path, enable_dense: bool = False) -> dict[str, s
 
     if enable_dense or not config_path.exists():
         _write_json_atomic(config_path, config_payload)
+
+    agents_path = _resolve_agents_md_path(memory_dir)
+    if agents_path is not None:
+        _ensure_promoted_values_markers(agents_path)
 
     if not dir_existed:
         status = "created"

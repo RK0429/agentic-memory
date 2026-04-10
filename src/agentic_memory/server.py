@@ -28,6 +28,16 @@ from agentic_memory.core import (
     state,
     stats,
 )
+from agentic_memory.core.distillation import DistillationService
+from agentic_memory.core.distillation.extractor import (
+    DistillationExtractorPort,
+    UnconfiguredExtractorPort,
+)
+from agentic_memory.core.knowledge import (
+    DuplicateKnowledgeError,
+    KnowledgeService,
+    Source,
+)
 from agentic_memory.core.scorer import load_index
 from agentic_memory.core.task_ids import (
     invalid_task_id_message,
@@ -35,6 +45,7 @@ from agentic_memory.core.task_ids import (
 from agentic_memory.core.task_ids import (
     normalize_task_id as _normalize_task_id,
 )
+from agentic_memory.core.values import PromotionService, ValuesEntry, ValuesService
 
 try:
     mcp = FastMCP(
@@ -248,8 +259,18 @@ def _validation_error_payload(message: str, *, default_hint: str) -> str:
     )
 
 
-def _render_state_show_output(sections_payload: dict[str, Any]) -> str:
+def _render_state_show_output(
+    sections_payload: dict[str, Any],
+    frontmatter: dict[str, Any] | None = None,
+) -> str:
     lines: list[str] = []
+    frontmatter_payload = frontmatter or {}
+    if frontmatter_payload:
+        lines.append("## 蒸留メタデータ")
+        for key, value in frontmatter_payload.items():
+            rendered = "null" if value is None else str(value)
+            lines.append(f"- {key}: {rendered}")
+        lines.append("")
     for section_name, rows in sections_payload.items():
         cap = state.get_cap(section_name)
         row_list = rows if isinstance(rows, list) else []
@@ -363,6 +384,11 @@ def _strip_null_empty(d: dict) -> dict:
     meaning (e.g. ``tags: []`` means "no tags", not "unknown").
     """
     return {k: v for k, v in d.items() if v is not None and v != ""}
+
+
+def _knowledge_content_snippet(content: str, limit: int = 200) -> str:
+    normalized = " ".join(content.split())
+    return normalized[:limit]
 
 
 def _flatten_results(
@@ -503,6 +529,65 @@ def _filter_notes_by_since(notes: list[Path], since: str | None) -> list[Path]:
     return filtered
 
 
+def _values_entry_payload(entry: ValuesEntry, *, score: float | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": str(entry.id),
+        "description": entry.description,
+        "category": str(entry.category),
+        "confidence": entry.confidence,
+        "evidence_count": entry.total_evidence_count,
+        "promoted": entry.promoted,
+    }
+    if score is not None:
+        payload["score"] = score
+    return payload
+
+
+def _values_error_payload(message: str) -> str:
+    text = message.strip() or "Values operation failed"
+    if text.startswith("Values entry not found:"):
+        return _error_payload(
+            error_type="not_found",
+            message=text,
+            hint="Verify the values `id` exists before retrying.",
+        )
+    if text == "AGENTS.md not found":
+        return _error_payload(
+            error_type="not_found",
+            message=text,
+            hint=(
+                "Set `AGENTS_MD_PATH` or place `AGENTS.md` / `CLAUDE.md` "
+                "next to the memory directory."
+            ),
+        )
+    return _error_payload(
+        error_type="validation_error",
+        message=text,
+        hint="Check the values parameters and retry.",
+    )
+
+
+def _distillation_error_payload(message: str) -> str:
+    text = message.strip() or "Distillation failed"
+    if text == "Distillation extractor is not configured":
+        return _error_payload(
+            error_type="configuration_error",
+            message=text,
+            hint="Inject a configured DistillationExtractorPort before calling memory_distill_*.",
+        )
+    return _error_payload(
+        error_type="validation_error",
+        message=text,
+        hint="Check the distillation parameters and retry.",
+    )
+
+
+_values_service = ValuesService()
+_distillation_service = DistillationService()
+_distillation_extractor: DistillationExtractorPort = UnconfiguredExtractorPort()
+_promotion_service = PromotionService()
+
+
 def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
     normalized_task_id = _normalize_task_id(task_id)
     if normalized_task_id is None:
@@ -526,6 +611,272 @@ def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
             "or memory_index_upsert(...) to add/update the note index."
         )
     return resolved_paths
+
+
+@mcp.tool(annotations=_ADDITIVE)
+def memory_values_add(
+    description: str,
+    category: str,
+    confidence: float = 0.3,
+    evidence: list[dict[str, Any]] | None = None,
+    memory_dir: str | None = None,
+) -> str:
+    """Add one Values entry.
+
+    `description` and `category` are required.
+    `confidence` defaults to 0.3.
+    `evidence` accepts up to any number of evidence objects; the newest 10 are stored.
+    Returns the created ID/path and optional warnings/notifications.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        entry, warnings = _values_service.add(
+            resolved,
+            description=description,
+            category=category,
+            confidence=confidence,
+            evidence=evidence,
+        )
+    except ValueError as exc:
+        return _values_error_payload(str(exc))
+
+    payload: dict[str, Any] = {
+        "id": str(entry.id),
+        "path": f"values/{entry.id}.md",
+    }
+    if entry.promotion_state.eligible:
+        payload["promotion_candidate"] = True
+    if warnings:
+        payload["warnings"] = warnings
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_READONLY)
+def memory_values_search(
+    query: str | None = None,
+    category: str | None = None,
+    min_confidence: float = 0.0,
+    top: int = 5,
+    memory_dir: str | None = None,
+) -> str:
+    """Search Values entries by query and/or category.
+
+    At least one of `query` or `category` is required.
+    Results include score, confidence, evidence count, and promotion state.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        results = _values_service.search(
+            resolved,
+            query=query,
+            category=category,
+            min_confidence=min_confidence,
+            top=top,
+        )
+    except ValueError as exc:
+        return _values_error_payload(str(exc))
+
+    return _success_payload(
+        {"entries": [_values_entry_payload(entry, score=score) for score, entry in results]}
+    )
+
+
+@mcp.tool(annotations=_IDEMPOTENT)
+def memory_values_update(
+    id: str,
+    confidence: float | None = None,
+    add_evidence: dict[str, Any] | None = None,
+    description: str | None = None,
+    memory_dir: str | None = None,
+) -> str:
+    """Update one Values entry.
+
+    At least one of `confidence`, `add_evidence`, or `description` must be provided.
+    Returns the updated ID and optional promotion/demotion notifications.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        entry, notifications = _values_service.update(
+            resolved,
+            id=id,
+            confidence=confidence,
+            add_evidence=add_evidence,
+            description=description,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        return _values_error_payload(str(exc))
+
+    payload: dict[str, Any] = {"id": str(entry.id)}
+    payload.update(notifications)
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_READONLY)
+def memory_values_list(
+    min_confidence: float = 0.5,
+    category: str | None = None,
+    promoted_only: bool = False,
+    top: int = 20,
+    memory_dir: str | None = None,
+) -> str:
+    """List Values entries with optional filters.
+
+    Results are sorted by confidence descending, with `updated_at` as the tiebreaker.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        entries = _values_service.list_values(
+            resolved,
+            min_confidence=min_confidence,
+            category=category,
+            promoted_only=promoted_only,
+            top=top,
+        )
+    except ValueError as exc:
+        return _values_error_payload(str(exc))
+
+    return _success_payload({"entries": [_values_entry_payload(entry) for entry in entries]})
+
+
+@mcp.tool(annotations=_ADDITIVE)
+def memory_distill_knowledge(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    domain: str | None = None,
+    dry_run: bool = True,
+    memory_dir: str | None = None,
+) -> str:
+    """Distill reusable Knowledge from Memory notes.
+
+    `date_from` / `date_to` accept `YYYY-MM-DD` and are inclusive.
+    `domain` narrows extraction at the extract stage.
+    When `dry_run=true`, candidates are evaluated but not persisted.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        report = _distillation_service.distill_knowledge(
+            resolved,
+            date_from=date_from,
+            date_to=date_to,
+            domain=domain,
+            dry_run=dry_run,
+            extractor=_distillation_extractor,
+        )
+    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+        return _distillation_error_payload(str(exc))
+    except OSError as exc:
+        return _error_payload(
+            error_type="io_error",
+            message=str(exc),
+            hint="Check filesystem permissions and retry.",
+        )
+    return _success_payload(report)
+
+
+@mcp.tool(annotations=_ADDITIVE)
+def memory_distill_values(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    category: str | None = None,
+    dry_run: bool = True,
+    memory_dir: str | None = None,
+) -> str:
+    """Distill Values patterns from Memory notes and `_state.md` decisions.
+
+    `date_from` / `date_to` accept `YYYY-MM-DD` and are inclusive for note selection.
+    `_state.md` major decisions are always included regardless of the date filter.
+    When `dry_run=true`, candidates are evaluated but not persisted.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        report = _distillation_service.distill_values(
+            resolved,
+            date_from=date_from,
+            date_to=date_to,
+            category=category,
+            dry_run=dry_run,
+            extractor=_distillation_extractor,
+        )
+    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+        return _distillation_error_payload(str(exc))
+    except OSError as exc:
+        return _error_payload(
+            error_type="io_error",
+            message=str(exc),
+            hint="Check filesystem permissions and retry.",
+        )
+    return _success_payload(report)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def memory_values_promote(
+    id: str,
+    confirm: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Promote one Values entry into AGENTS.md.
+
+    `confirm=true` is required for the actual promotion.
+    `confirm=false` returns a preview without making changes.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        payload = _promotion_service.promote(
+            resolved,
+            id=id,
+            confirm=confirm,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        return _values_error_payload(str(exc))
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def memory_values_demote(
+    id: str,
+    reason: str,
+    confirm: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Demote one promoted Values entry from AGENTS.md.
+
+    `confirm=true` is required for the actual demotion.
+    `confirm=false` returns a preview without making changes.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        payload = _promotion_service.demote(
+            resolved,
+            id=id,
+            reason=reason,
+            confirm=confirm,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        return _values_error_payload(str(exc))
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def memory_values_delete(
+    id: str,
+    confirm: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Delete one Values entry.
+
+    Non-promoted entries are deleted immediately. Promoted entries return a preview
+    when `confirm=false` and require `confirm=true` for the actual deletion.
+    """
+    resolved = _resolve_dir(memory_dir)
+    try:
+        payload = _values_service.delete(
+            resolved,
+            id=id,
+            confirm=confirm,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        return _values_error_payload(str(exc))
+    return _success_payload(payload)
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -654,12 +1005,21 @@ def memory_state_show(
         "section": section,
         "stale_days": stale_days,
         "sections": parsed.get("sections", {}) if isinstance(parsed, dict) else parsed,
+        "frontmatter": (
+            parsed.get("frontmatter", state.load_state_frontmatter(_state_path(resolved)))
+            if isinstance(parsed, dict)
+            else state.load_state_frontmatter(_state_path(resolved))
+        ),
     }
     if isinstance(parsed, dict) and "warnings" in parsed:
         payload["warnings"] = parsed["warnings"]
     if not as_json:
         sections_payload = cast(dict[str, Any], payload.pop("sections", {}))
-        payload["output"] = _render_state_show_output(sections_payload)
+        frontmatter_payload = cast(dict[str, Any], payload.pop("frontmatter", {}))
+        payload["output"] = _render_state_show_output(
+            sections_payload,
+            frontmatter=frontmatter_payload,
+        )
     return _success_payload(payload)
 
 
@@ -1198,6 +1558,208 @@ def memory_update_weights(
     resolved = _resolve_dir(memory_dir)
     result = config.update_weights(resolved, updates=updates)
     return _success_payload(result)
+
+
+@mcp.tool(annotations=_ADDITIVE)
+def memory_knowledge_add(
+    title: str,
+    content: str,
+    domain: str,
+    tags: list[str] | None = None,
+    accuracy: Literal["verified", "likely", "uncertain"] | None = None,
+    sources: list[dict[str, Any]] | None = None,
+    source_type: Literal["memory_distillation", "autonomous_research", "user_taught"] | None = None,
+    user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
+    | None = None,
+    related: list[str] | None = None,
+    memory_dir: str | None = None,
+) -> str:
+    """Create one Knowledge entry.
+
+    Registers a knowledge record under `knowledge/{id}.md` and updates `_knowledge.jsonl`.
+    `title`, `content`, and `domain` are required. Optional metadata includes `tags`,
+    `accuracy`, `sources`, `source_type`, `user_understanding`, and `related`.
+    Returns `{ok: true, id, path}` and includes `warnings` when the content may contain
+    secrets. Duplicate content (`title` + `domain` + `content`) returns an error.
+    """
+    resolved = _resolve_dir(memory_dir)
+    service = KnowledgeService()
+    typed_sources: list[Source | dict[str, Any]] | None = cast(Any, sources)
+    try:
+        entry = service.add(
+            memory_dir=resolved,
+            title=title,
+            content=content,
+            domain=domain,
+            tags=tags,
+            accuracy=accuracy or "uncertain",
+            sources=typed_sources,
+            source_type=source_type or "memory_distillation",
+            user_understanding=user_understanding or "unknown",
+            related=related,
+        )
+    except DuplicateKnowledgeError as exc:
+        return _error_payload(
+            error_type="validation_error",
+            message=str(exc),
+            hint="Search existing knowledge or update the existing entry instead.",
+        )
+    except FileNotFoundError as exc:
+        return _error_payload(
+            error_type="not_found",
+            message=str(exc),
+            hint="Verify all `related` knowledge ids exist before retrying.",
+        )
+    except ValueError as exc:
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Adjust the knowledge fields and retry.",
+        )
+
+    payload: dict[str, Any] = {
+        "id": str(entry.id),
+        "path": f"knowledge/{entry.id}.md",
+    }
+    if service.last_warnings:
+        payload["warnings"] = service.last_warnings
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_READONLY)
+def memory_knowledge_search(
+    query: str | None = None,
+    domain: str | None = None,
+    accuracy: Literal["verified", "likely", "uncertain"] | None = None,
+    user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
+    | None = None,
+    top: int = 10,
+    memory_dir: str | None = None,
+) -> str:
+    """Search Knowledge entries by text query and/or domain.
+
+    At least one of `query` or `domain` is required. Query searches use BM25+ scoring
+    over title/content/domain/tags. Domain-only searches return the filtered entries in
+    `updated_at` descending order. Optional `accuracy` and `user_understanding` filters
+    are applied to the result set. Returns `{ok: true, results: [...]}` with each result
+    containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
+    `content_snippet`, and `score`.
+    """
+    resolved = _resolve_dir(memory_dir)
+    service = KnowledgeService()
+    try:
+        results = service.search(
+            memory_dir=resolved,
+            query=query,
+            domain=domain,
+            accuracy=accuracy,
+            user_understanding=user_understanding,
+            top=top,
+        )
+    except ValueError as exc:
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Pass `query`, `domain`, or both, and verify filter values.",
+        )
+
+    payload = {
+        "results": [
+            {
+                "id": str(entry.id),
+                "title": entry.title,
+                "domain": str(entry.domain),
+                "accuracy": str(entry.accuracy),
+                "user_understanding": str(entry.user_understanding),
+                "content_snippet": _knowledge_content_snippet(entry.content),
+                "score": round(score, 6),
+            }
+            for score, entry in results
+        ]
+    }
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_IDEMPOTENT)
+def memory_knowledge_update(
+    id: str,
+    content: str | None = None,
+    accuracy: Literal["verified", "likely", "uncertain"] | None = None,
+    sources: list[dict[str, Any]] | None = None,
+    user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
+    | None = None,
+    related: list[str] | None = None,
+    tags: list[str] | None = None,
+    memory_dir: str | None = None,
+) -> str:
+    """Update selected fields on an existing Knowledge entry.
+
+    `id` identifies the knowledge entry. At least one of `content`, `accuracy`,
+    `sources`, `user_understanding`, `related`, or `tags` must be provided.
+    `sources` and `related` are appended/merged instead of replaced, and `related`
+    links are maintained bidirectionally. Returns `{ok: true, id}` on success and
+    includes `warnings` when updated content may contain secrets.
+    """
+    resolved = _resolve_dir(memory_dir)
+    service = KnowledgeService()
+    typed_sources: list[Source | dict[str, Any]] | None = cast(Any, sources)
+    try:
+        entry = service.update(
+            memory_dir=resolved,
+            id=id,
+            content=content,
+            accuracy=accuracy,
+            sources=typed_sources,
+            user_understanding=user_understanding,
+            related=related,
+            tags=tags,
+        )
+    except DuplicateKnowledgeError as exc:
+        return _error_payload(
+            error_type="validation_error",
+            message=str(exc),
+            hint="Change the updated content or target a different knowledge entry.",
+        )
+    except FileNotFoundError as exc:
+        return _error_payload(
+            error_type="not_found",
+            message=str(exc),
+            hint="Verify the knowledge id and any `related` ids exist before retrying.",
+        )
+    except ValueError as exc:
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Provide at least one update field and valid metadata values.",
+        )
+    payload: dict[str, Any] = {"id": str(entry.id)}
+    if service.last_warnings:
+        payload["warnings"] = service.last_warnings
+    return _success_payload(payload)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def memory_knowledge_delete(
+    id: str,
+    memory_dir: str | None = None,
+) -> str:
+    """Delete one Knowledge entry and clean related back-links."""
+    resolved = _resolve_dir(memory_dir)
+    service = KnowledgeService()
+    try:
+        entry = service.delete(
+            memory_dir=resolved,
+            id=id,
+        )
+    except FileNotFoundError as exc:
+        return _error_payload(
+            error_type="not_found",
+            message=str(exc),
+            hint="Verify the knowledge `id` exists before retrying.",
+        )
+    except ValueError as exc:
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Provide a valid knowledge `id` and retry.",
+        )
+    return _success_payload({"id": str(entry.id), "deleted": True})
 
 
 def run_server(

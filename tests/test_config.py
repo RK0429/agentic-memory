@@ -38,10 +38,25 @@ def test_init_memory_dir_creates(tmp_path: Path) -> None:
     assert (memory_dir / "_state.md").exists()
     assert (memory_dir / "_index.jsonl").exists()
     assert (memory_dir / "_rag_config.json").exists()
+    assert (memory_dir / "knowledge").is_dir()
+    assert (memory_dir / "values").is_dir()
     assert "# 作業状態（ローリング）" in (memory_dir / "_state.md").read_text(encoding="utf-8")
 
     loaded = json.loads((memory_dir / "_rag_config.json").read_text(encoding="utf-8"))
     assert "weights" in loaded
+
+
+def test_init_memory_dir_adds_promoted_values_markers_to_existing_agents_md(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text("# Agent Rules\n", encoding="utf-8")
+
+    config.init_memory_dir(memory_dir)
+    config.init_memory_dir(memory_dir)
+
+    content = agents_path.read_text(encoding="utf-8")
+    assert content.count(config.PROMOTED_VALUES_BEGIN) == 1
+    assert content.count(config.PROMOTED_VALUES_END) == 1
 
 
 def test_init_dense_config(tmp_path: Path) -> None:

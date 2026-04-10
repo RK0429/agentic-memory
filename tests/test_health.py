@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from agentic_memory.core import health, index
+from agentic_memory.core.config import PROMOTED_VALUES_BEGIN, PROMOTED_VALUES_END
+from agentic_memory.core.knowledge import KnowledgeEntry, KnowledgeRepository, SourceType
+from agentic_memory.core.values import AgentsMdAdapter, ValuesEntry, ValuesRepository
 
 
 def test_health_check_reports_healthy_memory(sample_note_path: Path, tmp_memory_dir: Path) -> None:
@@ -65,6 +69,352 @@ def test_health_check_detects_index_and_file_issues(
     assert result["summary"].startswith("要確認")
     assert stale_note.exists()
     assert unindexed_note.exists()
+
+
+def test_health_check_treats_missing_kv_indexes_as_healthy_when_unused(
+    tmp_memory_dir: Path,
+) -> None:
+    result = health.health_check(tmp_memory_dir)
+
+    assert result["knowledge_index"]["index_exists"] is False
+    assert result["knowledge_index"]["orphan_entries"] == []
+    assert result["knowledge_index"]["orphan_files"] == []
+    assert result["values_index"]["index_exists"] is False
+    assert result["values_index"]["orphan_entries"] == []
+    assert result["values_index"]["orphan_files"] == []
+
+
+def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
+    tmp_memory_dir: Path,
+) -> None:
+    knowledge_repository = KnowledgeRepository(tmp_memory_dir)
+    values_repository = ValuesRepository(tmp_memory_dir)
+    adapter = AgentsMdAdapter()
+
+    target = KnowledgeEntry(
+        title="Target knowledge",
+        content="shared target",
+        domain="python",
+        source_type=SourceType.USER_TAUGHT,
+    )
+    knowledge_repository.save(target)
+    broken = KnowledgeEntry(
+        title="Broken knowledge",
+        content="has broken links",
+        domain="python",
+        source_type=SourceType.USER_TAUGHT,
+        related=[
+            str(target.id),
+            "k-00000000-0000-0000-0000-000000000001",
+        ],
+    )
+    knowledge_repository.save(broken)
+    orphan_knowledge = KnowledgeEntry(
+        title="Orphan knowledge file",
+        content="index row removed",
+        domain="python",
+        source_type=SourceType.USER_TAUGHT,
+    )
+    knowledge_repository.save(orphan_knowledge)
+
+    knowledge_index_path = tmp_memory_dir / "_knowledge.jsonl"
+    knowledge_rows = [
+        row
+        for row in (
+            json.loads(line)
+            for line in knowledge_index_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if row["id"] != str(orphan_knowledge.id)
+    ]
+    knowledge_rows.append(
+        {
+            "id": "k-00000000-0000-0000-0000-000000000099",
+            "path": "knowledge/k-00000000-0000-0000-0000-000000000099.md",
+            "title": "missing knowledge",
+        }
+    )
+    knowledge_index_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in knowledge_rows) + "\n",
+        encoding="utf-8",
+    )
+
+    promoted = ValuesEntry(
+        description="Prefer reversible schema changes",
+        category="workflow",
+        confidence=0.9,
+        evidence=[],
+        total_evidence_count=6,
+        source_type=SourceType.USER_TAUGHT,
+        promoted=True,
+        promoted_confidence=0.9,
+    )
+    values_repository.save(promoted)
+    mismatched = ValuesEntry(
+        description="Prefer safer promotion sync\n<!-- comment --> " + ("x" * 220),
+        category="workflow",
+        confidence=0.85,
+        evidence=[],
+        total_evidence_count=6,
+        source_type=SourceType.USER_TAUGHT,
+        promoted=True,
+        promoted_confidence=0.85,
+    )
+    values_repository.save(mismatched)
+    orphan_values = ValuesEntry(
+        description="Orphan values file",
+        category="workflow",
+        confidence=0.4,
+        evidence=[],
+        total_evidence_count=1,
+        source_type=SourceType.USER_TAUGHT,
+    )
+    values_repository.save(orphan_values)
+
+    values_index_path = tmp_memory_dir / "_values.jsonl"
+    values_rows = [
+        row
+        for row in (
+            json.loads(line)
+            for line in values_index_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if row["id"] != str(orphan_values.id)
+    ]
+    values_rows.append(
+        {
+            "id": "v-00000000-0000-0000-0000-000000000099",
+            "path": "values/v-00000000-0000-0000-0000-000000000099.md",
+            "description": "missing values",
+            "category": "workflow",
+            "confidence": 0.1,
+            "evidence_count": 0,
+            "source_type": "user_taught",
+            "promoted": False,
+            "promoted_at": None,
+            "promoted_confidence": None,
+            "demotion_reason": None,
+            "demoted_at": None,
+            "created_at": "2026-04-10T09:00:00",
+            "updated_at": "2026-04-10T09:00:00",
+        }
+    )
+    values_index_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in values_rows) + "\n",
+        encoding="utf-8",
+    )
+
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    agents_path.write_text(
+        "# Agent Rules\n\n"
+        f"{PROMOTED_VALUES_BEGIN}\n"
+        "- [v-00000000-0000-0000-0000-000000000001] orphan promoted entry\n"
+        f"- [{mismatched.id}] stale promoted description\n"
+        f"{PROMOTED_VALUES_END}\n",
+        encoding="utf-8",
+    )
+
+    result = health.health_check(tmp_memory_dir)
+
+    assert result["knowledge_index"]["orphan_entries"] == [
+        {
+            "id": "k-00000000-0000-0000-0000-000000000099",
+            "path": "knowledge/k-00000000-0000-0000-0000-000000000099.md",
+        }
+    ]
+    assert result["knowledge_index"]["orphan_files"] == [f"knowledge/{orphan_knowledge.id}.md"]
+    assert result["knowledge_related"]["orphan_links"] == [
+        {
+            "source_id": str(broken.id),
+            "target_id": "k-00000000-0000-0000-0000-000000000001",
+        }
+    ]
+    assert result["knowledge_related"]["unidirectional_links"] == [
+        {
+            "source_id": str(broken.id),
+            "target_id": str(target.id),
+        }
+    ]
+    assert result["values_index"]["orphan_entries"] == [
+        {
+            "id": "v-00000000-0000-0000-0000-000000000099",
+            "path": "values/v-00000000-0000-0000-0000-000000000099.md",
+        }
+    ]
+    assert result["values_index"]["orphan_files"] == [f"values/{orphan_values.id}.md"]
+    assert result["promoted_values_sync"]["orphan_in_agents_md"] == [
+        "v-00000000-0000-0000-0000-000000000001"
+    ]
+    assert result["promoted_values_sync"]["missing_in_agents_md"] == [str(promoted.id)]
+    assert result["promoted_values_sync"]["description_mismatches"] == [
+        {
+            "id": str(mismatched.id),
+            "agents_md_description": "stale promoted description",
+            "projected_description": adapter.project_description(mismatched.description),
+        }
+    ]
+
+
+def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
+    tmp_memory_dir: Path,
+) -> None:
+    knowledge_repository = KnowledgeRepository(tmp_memory_dir)
+    values_repository = ValuesRepository(tmp_memory_dir)
+    adapter = AgentsMdAdapter()
+
+    target = KnowledgeEntry(
+        title="Target knowledge",
+        content="shared target",
+        domain="python",
+        source_type=SourceType.USER_TAUGHT,
+    )
+    knowledge_repository.save(target)
+    broken = KnowledgeEntry(
+        title="Broken knowledge",
+        content="has broken links",
+        domain="python",
+        source_type=SourceType.USER_TAUGHT,
+        related=[
+            str(target.id),
+            "k-00000000-0000-0000-0000-000000000001",
+        ],
+    )
+    knowledge_repository.save(broken)
+    orphan_knowledge = KnowledgeEntry(
+        title="Orphan knowledge file",
+        content="index row removed",
+        domain="python",
+        source_type=SourceType.USER_TAUGHT,
+    )
+    knowledge_repository.save(orphan_knowledge)
+
+    knowledge_index_path = tmp_memory_dir / "_knowledge.jsonl"
+    knowledge_rows = [
+        row
+        for row in (
+            json.loads(line)
+            for line in knowledge_index_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if row["id"] != str(orphan_knowledge.id)
+    ]
+    knowledge_rows.append(
+        {
+            "id": "k-00000000-0000-0000-0000-000000000099",
+            "path": "knowledge/k-00000000-0000-0000-0000-000000000099.md",
+            "title": "missing knowledge",
+        }
+    )
+    knowledge_index_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in knowledge_rows) + "\n",
+        encoding="utf-8",
+    )
+
+    promoted = ValuesEntry(
+        description="Prefer reversible schema changes",
+        category="workflow",
+        confidence=0.9,
+        evidence=[],
+        total_evidence_count=6,
+        source_type=SourceType.USER_TAUGHT,
+        promoted=True,
+        promoted_confidence=0.9,
+    )
+    values_repository.save(promoted)
+    mismatched = ValuesEntry(
+        description="Prefer safer promotion sync\n<!-- comment --> " + ("x" * 220),
+        category="workflow",
+        confidence=0.85,
+        evidence=[],
+        total_evidence_count=6,
+        source_type=SourceType.USER_TAUGHT,
+        promoted=True,
+        promoted_confidence=0.85,
+    )
+    values_repository.save(mismatched)
+    orphan_values = ValuesEntry(
+        description="Orphan values file",
+        category="workflow",
+        confidence=0.4,
+        evidence=[],
+        total_evidence_count=1,
+        source_type=SourceType.USER_TAUGHT,
+    )
+    values_repository.save(orphan_values)
+
+    values_index_path = tmp_memory_dir / "_values.jsonl"
+    values_rows = [
+        row
+        for row in (
+            json.loads(line)
+            for line in values_index_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if row["id"] != str(orphan_values.id)
+    ]
+    values_rows.append(
+        {
+            "id": "v-00000000-0000-0000-0000-000000000099",
+            "path": "values/v-00000000-0000-0000-0000-000000000099.md",
+            "description": "missing values",
+            "category": "workflow",
+            "confidence": 0.1,
+            "evidence_count": 0,
+            "source_type": "user_taught",
+            "promoted": False,
+            "promoted_at": None,
+            "promoted_confidence": None,
+            "demotion_reason": None,
+            "demoted_at": None,
+            "created_at": "2026-04-10T09:00:00",
+            "updated_at": "2026-04-10T09:00:00",
+        }
+    )
+    values_index_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in values_rows) + "\n",
+        encoding="utf-8",
+    )
+
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    agents_path.write_text(
+        "# Agent Rules\n\n"
+        f"{PROMOTED_VALUES_BEGIN}\n"
+        "- [v-00000000-0000-0000-0000-000000000001] orphan promoted entry\n"
+        f"- [{mismatched.id}] stale promoted description\n"
+        f"{PROMOTED_VALUES_END}\n",
+        encoding="utf-8",
+    )
+
+    result = health.fix_issues(tmp_memory_dir)
+    post_check = health.health_check(tmp_memory_dir)
+
+    assert result["knowledge_orphans_removed"] == 1
+    assert result["values_orphans_removed"] == 1
+    assert result["knowledge_reindexed"] == [f"knowledge/{orphan_knowledge.id}.md"]
+    assert result["values_reindexed"] == [f"values/{orphan_values.id}.md"]
+    assert result["orphan_links_removed"] == 1
+    assert result["bidirectional_links_restored"] == 1
+    assert result["orphans_removed_from_agents_md"] == 1
+    assert result["missing_added_to_agents_md"] == 1
+    assert result["descriptions_updated_in_agents_md"] == 1
+    assert post_check["knowledge_index"]["orphan_entries"] == []
+    assert post_check["knowledge_index"]["orphan_files"] == []
+    assert post_check["values_index"]["orphan_entries"] == []
+    assert post_check["values_index"]["orphan_files"] == []
+    assert post_check["knowledge_related"]["orphan_links"] == []
+    assert post_check["knowledge_related"]["unidirectional_links"] == []
+    assert post_check["promoted_values_sync"]["orphan_in_agents_md"] == []
+    assert post_check["promoted_values_sync"]["missing_in_agents_md"] == []
+    assert post_check["promoted_values_sync"]["description_mismatches"] == []
+    agents_text = agents_path.read_text(encoding="utf-8")
+    projected_mismatch = adapter.project_description(mismatched.description)
+    assert str(promoted.id) in agents_text
+    assert f"- [{mismatched.id}] {projected_mismatch}" in agents_text
+
+    repaired_target = knowledge_repository.load(target.id)
+    repaired_broken = knowledge_repository.load(broken.id)
+    assert [str(item) for item in repaired_broken.related] == [str(target.id)]
+    assert [str(item) for item in repaired_target.related] == [str(broken.id)]
 
 
 def test_health_check_handles_invalid_index(sample_note_path: Path, tmp_memory_dir: Path) -> None:

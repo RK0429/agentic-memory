@@ -349,11 +349,143 @@ def score_entry(
     return total, details
 
 
+def score_generic_entry(
+    field_texts: dict[str, str],
+    qterms: list[QueryTerm],
+    weights: dict[str, float],
+    idf_cache: dict[str, float],
+    prefer_recent: bool,
+    half_life_days: float,
+    recency_boost_max: float,
+    explain: bool = False,
+    avg_field_lengths: dict[str, float] | None = None,
+    delta: float = DELTA,
+    date_field: str = "date",
+) -> tuple[float, dict]:
+    fields = {key: str(value or "") for key, value in field_texts.items()}
+    fields_l = {key: _safe_lower(value) for key, value in fields.items()}
+
+    for qt in qterms:
+        if qt.date_range is not None:
+            d = _parse_date(fields.get(date_field, ""))
+            if d is None:
+                return 0.0, {"filtered_by": "date_range (no date)"}
+            lo, hi = qt.date_range
+            if (lo and d < lo) or (hi and d > hi):
+                return 0.0, {"filtered_by": f"date_range {qt.raw}"}
+
+    for qt in qterms:
+        if qt.exclude:
+            target_fields = [qt.field] if qt.field else list(fields_l.keys())
+            for field_name in target_fields:
+                if _strict_term_match(
+                    fields_l.get(field_name, ""),
+                    qt.term,
+                    is_phrase=qt.is_phrase,
+                ):
+                    return 0.0, {"excluded_by": qt.raw}
+
+    for qt in qterms:
+        if qt.must:
+            target_fields = [qt.field] if qt.field else list(fields_l.keys())
+            ok = False
+            for field_name in target_fields:
+                if _strict_term_match(
+                    fields_l.get(field_name, ""),
+                    qt.term,
+                    is_phrase=qt.is_phrase,
+                ):
+                    ok = True
+                    break
+            if not ok:
+                return 0.0, {"missing_must": qt.raw}
+
+    total = 0.0
+    field_scores: dict[str, float] = {}
+    details: dict = {"terms": [], "field_scores": {}} if explain else {}
+
+    for qt in qterms:
+        if qt.exclude or not qt.term:
+            continue
+
+        term_l = qt.term.lower()
+        idf = idf_cache.get(term_l, 1.0)
+        term_factor = 1.4 if qt.is_phrase else 1.0
+
+        contribs = []
+        target_fields = [qt.field] if qt.field else list(weights.keys())
+        for field_name in target_fields:
+            weight = weights.get(field_name, 0.0)
+            if weight <= 0:
+                continue
+
+            haystack = fields_l.get(field_name, "")
+            quality = _match_quality(haystack, term_l, is_phrase=qt.is_phrase)
+            if quality <= 0:
+                continue
+
+            tf_raw = _count_matches(haystack, term_l, is_phrase=qt.is_phrase)
+            if tf_raw <= 0:
+                continue
+
+            norm = 1.0
+            if avg_field_lengths is not None:
+                field_len = len(haystack.split()) if haystack else 0
+                avg_field_length = avg_field_lengths.get(field_name, 1.0)
+                norm = 1.0 - B + B * (field_len / max(avg_field_length, 1.0))
+            tf_bm25 = (tf_raw * (K1 + 1.0)) / (tf_raw + K1 * norm) + delta
+
+            contribution = weight * idf * tf_bm25 * term_factor * quality * qt.weight
+            total += contribution
+            if explain:
+                field_scores[field_name] = field_scores.get(field_name, 0.0) + contribution
+                contribs.append(
+                    {
+                        "field": field_name,
+                        "add": round(contribution, 3),
+                        "idf": round(idf, 3),
+                        "tf": tf_raw,
+                        "quality": quality,
+                        "weight": qt.weight,
+                    }
+                )
+
+        if explain:
+            details["terms"].append(
+                {"term": qt.raw, "contribs": contribs, "term_factor": term_factor}
+            )
+
+    if prefer_recent:
+        d = _parse_date(fields.get(date_field, ""))
+        if d:
+            age_days = max(0.0, (_now_local().date() - d).days)
+            weight = math.exp(-math.log(2) * age_days / max(1.0, half_life_days))
+            boost = total * recency_boost_max * weight
+            total += boost
+            if explain:
+                details["recency"] = {
+                    "age_days": age_days,
+                    "w": round(weight, 3),
+                    "boost_max": recency_boost_max,
+                    "add": round(boost, 3),
+                    "multiplier": round(1.0 + recency_boost_max * weight, 3),
+                }
+
+    if explain:
+        details["field_scores"] = {
+            field_name: round(score, 3) for field_name, score in field_scores.items() if score > 0
+        }
+        details["total"] = round(total, 3)
+
+    return total, details
+
+
 __all__ = [
     "IndexEntry",
     "load_index",
     "build_idf_cache",
     "score_entry",
+    "score_generic_entry",
     "_match_quality",
     "_compute_avg_field_lengths",
     "DELTA",

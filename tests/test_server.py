@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import agentic_memory.server as server_module
+from agentic_memory.core import state
 from agentic_memory.core.search import COMPACT_EXCLUDE_FIELDS, GLOBAL_COMPACT_EXCLUDE_FIELDS
 from agentic_memory.server import (
     _capture_state_cmd,
@@ -129,8 +130,23 @@ def test_memory_state_show(tmp_memory_dir: Path, monkeypatch) -> None:
     payload = _state_show_payload(memory_dir=str(memory_dir))
     assert payload["ok"] is True
     assert "sections" in payload
+    assert "frontmatter" in payload
     assert "現在のフォーカス" in payload["sections"]
     assert "output" not in payload
+
+
+def test_memory_state_show_renders_frontmatter_section(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    state.update_distillation_frontmatter(
+        tmp_memory_dir / "_state.md",
+        last_values_evaluated_at="2026-04-10T11:00:00",
+    )
+
+    payload = _state_show_payload(memory_dir=str(tmp_memory_dir), as_json=False)
+
+    assert payload["ok"] is True
+    assert "## 蒸留メタデータ" in str(payload["output"])
+    assert "last_values_evaluated_at: 2026-04-10T11:00:00" in str(payload["output"])
 
 
 def test_memory_state_show_as_json_false_includes_rendered_output(
@@ -880,7 +896,10 @@ def test_memory_note_new_rolls_back_created_note_when_index_write_fails(
     assert payload["error_type"] == "io_error"
     assert payload["message"] == "disk full"
     assert list(tmp_memory_dir.glob("*/*.md")) == []
-    assert [path for path in tmp_memory_dir.iterdir() if path.is_dir()] == []
+    assert sorted(path.name for path in tmp_memory_dir.iterdir() if path.is_dir()) == [
+        "knowledge",
+        "values",
+    ]
 
 
 def test_memory_note_new_rolls_back_created_note_when_index_validation_fails(
@@ -904,7 +923,10 @@ def test_memory_note_new_rolls_back_created_note_when_index_validation_fails(
     assert payload["error_type"] == "validation_error"
     assert payload["message"] == "bad metadata"
     assert list(tmp_memory_dir.glob("*/*.md")) == []
-    assert [path for path in tmp_memory_dir.iterdir() if path.is_dir()] == []
+    assert sorted(path.name for path in tmp_memory_dir.iterdir() if path.is_dir()) == [
+        "knowledge",
+        "values",
+    ]
 
 
 def test_memory_note_new_reports_cleanup_failure_after_index_write_error(

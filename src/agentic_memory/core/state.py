@@ -54,6 +54,13 @@ _LEGACY_IMPROVEMENT_RESOLVED_BASENAME = "_improvement_backlog_resolved.json"
 _SIGFB_RESOLVED_BASENAME = "_sigfb_resolved.json"
 _BACKLOG_CONTRIBUTORS_BASENAME = "_backlog_contributors.json"
 _TRIGGER_COOLDOWN_BASENAME = "_trigger_cooldown.json"
+_STATE_FRONTMATTER_BOUNDARY = "---"
+_DISTILLATION_FRONTMATTER_KEYS = (
+    "last_knowledge_distilled_at",
+    "last_values_distilled_at",
+    "last_knowledge_evaluated_at",
+    "last_values_evaluated_at",
+)
 AutoImproveMode = Literal["detect", "add", "skip"]
 NOTE_NOT_FOUND_PREFIX = "Note not found"
 FAILED_TO_READ_NOTE_PREFIX = "Failed to read note"
@@ -621,7 +628,7 @@ def load_state(path: Path) -> dict[str, list[StateItem]]:
     if not path.exists():
         return out
 
-    md = path.read_text(encoding="utf-8", errors="ignore")
+    _frontmatter, md = _parse_state_document(path.read_text(encoding="utf-8", errors="ignore"))
     secs = parse_sections(md)
     for sec in SECTION_ORDER:
         parsed: list[StateItem] = []
@@ -635,6 +642,93 @@ def load_state(path: Path) -> dict[str, list[StateItem]]:
 
 def _empty_sections() -> dict[str, list[StateItem]]:
     return {sec: [] for sec in SECTION_ORDER}
+
+
+def _default_distillation_frontmatter() -> dict[str, str | None]:
+    return {key: None for key in _DISTILLATION_FRONTMATTER_KEYS}
+
+
+def _parse_frontmatter_value(raw: str) -> Any:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        lowered = raw.lower()
+        if lowered in {"null", "~"}:
+            return None
+        return raw.strip().strip('"').strip("'")
+
+
+def _parse_state_document(text: str) -> tuple[dict[str, Any], str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != _STATE_FRONTMATTER_BOUNDARY:
+        return {}, text
+
+    end_index = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == _STATE_FRONTMATTER_BOUNDARY:
+            end_index = index
+            break
+    if end_index is None:
+        return {}, text
+
+    frontmatter: dict[str, Any] = {}
+    for line in lines[1:end_index]:
+        if not line.strip():
+            continue
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        frontmatter[key.strip()] = _parse_frontmatter_value(value.strip())
+    body = "\n".join(lines[end_index + 1 :]).lstrip("\n")
+    if text.endswith("\n") and body and not body.endswith("\n"):
+        body += "\n"
+    return frontmatter, body
+
+
+def _serialize_frontmatter(frontmatter: dict[str, Any] | None) -> list[str]:
+    if not frontmatter:
+        return []
+
+    items = [(key, value) for key, value in frontmatter.items() if value is not None]
+    if not items:
+        return []
+
+    lines = [_STATE_FRONTMATTER_BOUNDARY]
+    for key, value in items:
+        lines.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+    lines.append(_STATE_FRONTMATTER_BOUNDARY)
+    return lines
+
+
+def load_state_frontmatter(path: Path) -> dict[str, str | None]:
+    payload = _default_distillation_frontmatter()
+    if not path.exists():
+        return payload
+
+    frontmatter, _body = _parse_state_document(path.read_text(encoding="utf-8", errors="ignore"))
+    for key in _DISTILLATION_FRONTMATTER_KEYS:
+        value = frontmatter.get(key)
+        payload[key] = None if value is None else str(value)
+    return payload
+
+
+def update_distillation_frontmatter(
+    path: Path,
+    **updates: str,
+) -> dict[str, str | None]:
+    unknown = sorted(set(updates) - set(_DISTILLATION_FRONTMATTER_KEYS))
+    if unknown:
+        raise ValueError(f"Unknown distillation frontmatter field(s): {', '.join(unknown)}")
+
+    ensure_state_file(path)
+    existing_frontmatter, _body = _parse_state_document(path.read_text(encoding="utf-8"))
+    merged_frontmatter = dict(existing_frontmatter)
+    for key, value in updates.items():
+        merged_frontmatter[key] = str(value)
+    save_state(path, load_state(path), frontmatter=merged_frontmatter)
+    return load_state_frontmatter(path)
 
 
 def ensure_state_file(path: Path) -> Path:
@@ -834,7 +928,12 @@ def _resolve_note_path_for_evidence(raw_path: str, memory_dir: Path) -> Path:
     return memory_prefixed
 
 
-def save_state(path: Path, sections: dict[str, list[StateItem]]) -> None:
+def save_state(
+    path: Path,
+    sections: dict[str, list[StateItem]],
+    *,
+    frontmatter: dict[str, Any] | None = None,
+) -> None:
     """セクション辞書をステートファイルに書き込む。
     ヘッダー: '# 作業状態（ローリング）\n\nLast updated: {now_stamp()}'
     各セクション: '## {見出し名}\n\n' + アイテムのrender()結果（空なら見出しのみ）
@@ -855,7 +954,15 @@ def save_state(path: Path, sections: dict[str, list[StateItem]]) -> None:
             else:
                 raise TimeoutError("Could not acquire state lock within 5s")
         try:
+            existing_frontmatter: dict[str, Any] = {}
+            if frontmatter is None and path.exists():
+                existing_frontmatter, _body = _parse_state_document(
+                    path.read_text(encoding="utf-8", errors="ignore")
+                )
             lines: list[str] = []
+            lines.extend(_serialize_frontmatter(frontmatter or existing_frontmatter))
+            if lines:
+                lines.append("")
             lines.append("# 作業状態（ローリング）")
             lines.append("")
             lines.append(f"Last updated: {now_stamp()}")
@@ -996,17 +1103,24 @@ def cmd_show(
         return 2
 
     sections_data = load_state(state_path)
+    frontmatter = load_state_frontmatter(state_path)
 
     if as_json:
-        payload: dict[str, dict[str, list[dict[str, object]]]] = {
+        payload: dict[str, Any] = {
             "sections": state_sections_to_payload(
                 sections_data,
                 section=section,
                 stale_days=stale_days,
-            )
+            ),
+            "frontmatter": frontmatter,
         }
         print(json.dumps(payload, ensure_ascii=False))
         return 0
+
+    print("## 蒸留メタデータ")
+    for key, value in frontmatter.items():
+        print(f"- {key}: {'null' if value is None else value}")
+    print("")
 
     for sec in targets:
         cap = get_cap(sec)
