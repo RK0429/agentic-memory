@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-10
+
+### Added
+
+- Introduced the Knowledge & Values extension: CRUD modules for Values and Knowledge entries, a distillation pipeline (`core/distillation/`), and new MCP tools for managing Values entries and triggering distillation.
+- Added secret detection to Values and Knowledge services so that entries containing potential secrets cannot be promoted.
+- Added benchmark tests for Knowledge / Values search with response-time thresholds, and registered a dedicated `benchmark` pytest marker.
+- New health checks covering the Knowledge & Values storage surface.
+
+### Changed
+
+- `delete` operations on Values and Knowledge entries now accept an optional `reason` parameter and return relevant metadata. Existing callers that omit `reason` continue to work unchanged.
+
 ## [0.13.0] - 2026-04-08
 
 ### Added
