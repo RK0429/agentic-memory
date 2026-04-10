@@ -692,7 +692,7 @@ def memory_values_update(
     """Update one Values entry.
 
     At least one of `confidence`, `add_evidence`, or `description` must be provided.
-    Returns the updated ID and optional promotion/demotion notifications.
+    Returns the updated ID and optional promotion/demotion/secret notifications.
     """
     resolved = _resolve_dir(memory_dir)
     try:
@@ -707,6 +707,9 @@ def memory_values_update(
         return _values_error_payload(str(exc))
 
     payload: dict[str, Any] = {"id": str(entry.id)}
+    secret_warnings = notifications.pop("secret_warnings", [])
+    if secret_warnings:
+        payload["warnings"] = secret_warnings
     payload.update(notifications)
     return _success_payload(payload)
 
@@ -860,6 +863,7 @@ def memory_values_demote(
 def memory_values_delete(
     id: str,
     confirm: bool = False,
+    reason: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Delete one Values entry.
@@ -873,9 +877,22 @@ def memory_values_delete(
             resolved,
             id=id,
             confirm=confirm,
+            reason=reason,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except FileNotFoundError as exc:
         return _values_error_payload(str(exc))
+    except ValueError as exc:
+        message = str(exc)
+        if (
+            message == "AGENTS.md is missing promoted values markers. "
+            "Run memory_init to recreate them."
+        ):
+            return _error_payload(
+                error_type="validation_error",
+                message=message,
+                hint="Run `memory_init` to recreate AGENTS.md markers, then retry deletion.",
+            )
+        return _values_error_payload(message)
     return _success_payload(payload)
 
 
@@ -1738,15 +1755,17 @@ def memory_knowledge_update(
 @mcp.tool(annotations=_DESTRUCTIVE)
 def memory_knowledge_delete(
     id: str,
+    reason: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Delete one Knowledge entry and clean related back-links."""
     resolved = _resolve_dir(memory_dir)
     service = KnowledgeService()
     try:
-        entry = service.delete(
+        payload = service.delete(
             memory_dir=resolved,
             id=id,
+            reason=reason,
         )
     except FileNotFoundError as exc:
         return _error_payload(
@@ -1759,7 +1778,7 @@ def memory_knowledge_delete(
             str(exc),
             default_hint="Provide a valid knowledge `id` and retry.",
         )
-    return _success_payload({"id": str(entry.id), "deleted": True})
+    return _success_payload(payload)
 
 
 def run_server(

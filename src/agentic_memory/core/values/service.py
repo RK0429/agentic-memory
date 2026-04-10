@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from agentic_memory.core.query import parse_query
 from agentic_memory.core.scorer import build_idf_cache, score_generic_entry
+from agentic_memory.core.security import SecretScanPolicy
 from agentic_memory.core.values.agents_md import AgentsMdAdapter
 from agentic_memory.core.values.model import (
     Category,
@@ -68,6 +69,7 @@ class ValuesService:
             category=normalized_category,
         )
         repository.save(entry)
+        warnings.extend(self._secret_warnings(entry.description))
         return entry, warnings
 
     def search(
@@ -130,7 +132,7 @@ class ValuesService:
         confidence: float | None = None,
         add_evidence: Evidence | dict[str, Any] | None = None,
         description: str | None = None,
-    ) -> tuple[ValuesEntry, dict[str, bool]]:
+    ) -> tuple[ValuesEntry, dict[str, bool | list[str]]]:
         if confidence is None and add_evidence is None and description is None:
             raise ValueError("At least one update field is required")
 
@@ -161,11 +163,13 @@ class ValuesService:
         entry.updated_at = _now()
         repository.save(entry)
 
-        notifications: dict[str, bool] = {}
+        notifications: dict[str, bool | list[str]] = {}
         if PromotionManager.check_candidate(entry):
             notifications["promotion_candidate"] = True
         if PromotionManager.check_demotion(entry):
             notifications["demotion_candidate"] = True
+        if description is not None:
+            notifications["secret_warnings"] = self._secret_warnings(entry.description)
         return entry, notifications
 
     def delete(
@@ -173,37 +177,56 @@ class ValuesService:
         memory_dir: str | Path,
         id: str,
         confirm: bool = False,
+        reason: str | None = None,
     ) -> dict[str, Any]:
         repository = self._repository(memory_dir)
         entry = repository.find_by_id(id)
         if entry is None:
             raise FileNotFoundError(f"Values entry not found: {id}")
 
+        description = self._delete_description(entry)
         if entry.promoted:
             agents_md_path = self._agents_md_adapter.resolve_agents_md_path(Path(memory_dir))
             if agents_md_path is None:
                 raise FileNotFoundError("AGENTS.md not found")
 
-            preview = {
-                "id": str(entry.id),
+            try:
+                entry_line = self._existing_agents_entry(
+                    agents_md_path,
+                    entry,
+                ) or self._entry_line(entry)
+            except ValueError as exc:
+                raise self._delete_agents_md_error(exc) from exc
+
+            preview: dict[str, Any] = {
+                "deleted_id": str(entry.id),
+                "description": description,
                 "preview": True,
                 "would_delete": True,
                 "was_promoted": True,
                 "agents_md_path": str(agents_md_path),
-                "entry_line": self._existing_agents_entry(agents_md_path, entry)
-                or self._entry_line(entry),
+                "entry_line": entry_line,
             }
+            if reason is not None:
+                preview["reason"] = reason
             if not confirm:
                 return preview
 
-            self._agents_md_adapter.remove_entry(agents_md_path, str(entry.id))
+            try:
+                self._agents_md_adapter.remove_entry(agents_md_path, str(entry.id))
+            except ValueError as exc:
+                raise self._delete_agents_md_error(exc) from exc
 
         repository.delete(entry.id)
-        return {
-            "id": str(entry.id),
+        payload: dict[str, Any] = {
+            "deleted_id": str(entry.id),
+            "description": description,
             "deleted": True,
             "was_promoted": entry.promoted,
         }
+        if reason is not None:
+            payload["reason"] = reason
+        return payload
 
     def list_values(
         self,
@@ -358,6 +381,14 @@ class ValuesService:
     def _updated_at(entry: ValuesEntry) -> dt.datetime:
         return cast(dt.datetime, entry.updated_at)
 
+    @staticmethod
+    def _secret_warnings(description: str) -> list[str]:
+        matches = SecretScanPolicy.scan(description)
+        if not matches:
+            return []
+        pattern_names = ", ".join(sorted({match.pattern_name for match in matches}))
+        return [f"Content may contain secrets (detected: {pattern_names}). Review before sharing."]
+
     def _existing_agents_entry(self, agents_md_path: Path, entry: ValuesEntry) -> str | None:
         prefix = f"- [{entry.id}] "
         for line in self._agents_md_adapter.list_entries(agents_md_path):
@@ -368,6 +399,20 @@ class ValuesService:
     @staticmethod
     def _entry_line(entry: ValuesEntry) -> str:
         return f"- [{entry.id}] {entry.description}"
+
+    @staticmethod
+    def _delete_description(entry: ValuesEntry) -> str:
+        desc = entry.description
+        if len(desc) <= 80:
+            return desc
+        return desc[:80] + "\u2026"
+
+    @staticmethod
+    def _delete_agents_md_error(exc: ValueError) -> ValueError:
+        message = str(exc)
+        if message == "AGENTS.md is missing promoted values markers":
+            message = f"{message}. Run memory_init to recreate them."
+        return ValueError(message)
 
 
 __all__ = ["ValuesService"]

@@ -93,6 +93,26 @@ def test_memory_values_add_reports_duplicate_as_validation_error(
     assert "Duplicate value exists" in payload["message"]
 
 
+def test_memory_values_add_returns_secret_warning(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_values_add(
+            description='Prefer storing api_key="AbCdEf1234567890" only in vaults',
+            category="security",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["warnings"] == [
+        "Content may contain secrets (detected: generic_api_token). Review before sharing."
+    ]
+
+
 def test_memory_values_search_requires_query_or_category(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -194,6 +214,33 @@ def test_memory_values_update_returns_promotion_and_demotion_notifications(
     assert promotion_payload["promotion_candidate"] is True
     assert demotion_payload["ok"] is True
     assert demotion_payload["demotion_candidate"] is True
+
+
+def test_memory_values_update_returns_secret_warning_for_description_update(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_values_add(
+            description="Prefer documented secret handling",
+            category="security",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_values_update(
+            id=added["id"],
+            description='Prefer documenting auth_token="AbCdEf1234567890" handling',
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["warnings"] == [
+        "Content may contain secrets (detected: generic_api_token). Review before sharing."
+    ]
 
 
 def test_memory_values_list_filters_promoted_only(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -358,6 +405,34 @@ def test_memory_values_promote_and_demote_report_errors(tmp_memory_dir: Path, mo
     assert not_promoted["error_type"] == "not_found"
 
 
+def test_memory_values_promote_rejects_secret_containing_entry(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_values_add(
+            description='Prefer sharing api_key="AbCdEf1234567890" in chat',
+            category="security",
+            confidence=0.85,
+            evidence=[_evidence(index) for index in range(1, 6)],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_values_promote(
+            id=added["id"],
+            confirm=False,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"] == "Cannot promote value containing potential secrets"
+
+
 def test_memory_values_delete_removes_non_promoted_entry(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -380,7 +455,8 @@ def test_memory_values_delete_removes_non_promoted_entry(
 
     assert payload == {
         "ok": True,
-        "id": added["id"],
+        "deleted_id": added["id"],
+        "description": "Prefer focused diffs",
         "deleted": True,
         "was_promoted": False,
     }
@@ -419,14 +495,70 @@ def test_memory_values_delete_promoted_entry_requires_confirm_preview_then_delet
     )
 
     assert preview["ok"] is True
+    assert preview["deleted_id"] == str(promoted_entry.id)
+    assert preview["description"] == promoted_entry.description[:80]
     assert preview["preview"] is True
     assert preview["was_promoted"] is True
     assert preview["entry_line"] == f"- [{promoted_entry.id}] {promoted_entry.description}"
     assert payload == {
         "ok": True,
-        "id": str(promoted_entry.id),
+        "deleted_id": str(promoted_entry.id),
+        "description": "Prefer reversible schema migrations",
         "deleted": True,
         "was_promoted": True,
     }
     assert ValuesRepository(tmp_memory_dir).find_by_id(promoted_entry.id) is None
     assert str(promoted_entry.id) not in agents_path.read_text(encoding="utf-8")
+
+
+def test_memory_values_delete_with_reason_echoes_back(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_values_add(
+            description="Prefer focused diffs",
+            category="workflow",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_values_delete(
+            id=added["id"],
+            reason="cleanup duplicate value",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload == {
+        "ok": True,
+        "deleted_id": added["id"],
+        "description": "Prefer focused diffs",
+        "deleted": True,
+        "was_promoted": False,
+        "reason": "cleanup duplicate value",
+    }
+
+
+def test_memory_values_delete_promoted_missing_markers_suggests_memory_init(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    promoted_entry = _seed_promoted_entry(tmp_memory_dir)
+    agents_path.write_text("# Agent Rules\n", encoding="utf-8")
+
+    payload = json.loads(
+        memory_values_delete(
+            id=str(promoted_entry.id),
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "Run memory_init to recreate them." in payload["message"]
+    assert "Run `memory_init`" in payload["hint"]

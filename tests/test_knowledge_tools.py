@@ -211,7 +211,43 @@ def test_memory_knowledge_delete_removes_entry_and_related_links(
         )
     )
 
-    assert payload == {"ok": True, "id": base["id"], "deleted": True}
+    assert payload == {
+        "ok": True,
+        "deleted_id": base["id"],
+        "title": "Rust ownership",
+        "deleted": True,
+    }
     assert repository.find_by_id(base["id"]) is None
     assert not (tmp_memory_dir / f"knowledge/{base['id']}.md").exists()
     assert repository.load(related["id"]).related == []
+
+
+def test_memory_knowledge_delete_with_reason_echoes_back(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_knowledge_add(
+            title="Rust ownership",
+            content="Ownership summary",
+            domain="rust",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_knowledge_delete(
+            id=added["id"],
+            reason="cleanup duplicate knowledge",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload == {
+        "ok": True,
+        "deleted_id": added["id"],
+        "title": "Rust ownership",
+        "deleted": True,
+        "reason": "cleanup duplicate knowledge",
+    }

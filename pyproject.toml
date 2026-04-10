@@ -78,6 +78,9 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "benchmark: performance benchmark tests",
+]
 
 [dependency-groups]
 dev = [

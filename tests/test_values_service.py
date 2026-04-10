@@ -74,6 +74,19 @@ def test_add_defaults_to_user_taught_source_type(tmp_memory_dir: Path) -> None:
     assert entry.source_type is SourceType.USER_TAUGHT
 
 
+def test_add_includes_secret_warning_on_suspicious_description(tmp_memory_dir: Path) -> None:
+    entry, warnings = ValuesService().add(
+        tmp_memory_dir,
+        description='Prefer storing api_key="AbCdEf1234567890" only in secrets manager.',
+        category="security",
+    )
+
+    assert entry.description == 'Prefer storing api_key="AbCdEf1234567890" only in secrets manager.'
+    assert warnings == [
+        "Content may contain secrets (detected: generic_api_token). Review before sharing."
+    ]
+
+
 def test_add_reports_similarity_and_preserves_initial_evidence_order(
     tmp_memory_dir: Path,
 ) -> None:
@@ -220,6 +233,45 @@ def test_update_rejects_duplicate_description_and_requires_fields(
         )
 
 
+def test_update_includes_secret_warning_when_description_changed(
+    tmp_memory_dir: Path,
+) -> None:
+    service = ValuesService()
+    entry, _ = service.add(
+        tmp_memory_dir,
+        description="Prefer documented secret handling",
+        category="security",
+    )
+
+    updated, notifications = service.update(
+        tmp_memory_dir,
+        id=str(entry.id),
+        description='Prefer documenting auth_token="AbCdEf1234567890" handling',
+    )
+
+    assert updated.description == 'Prefer documenting auth_token="AbCdEf1234567890" handling'
+    assert notifications["secret_warnings"] == [
+        "Content may contain secrets (detected: generic_api_token). Review before sharing."
+    ]
+
+
+def test_update_no_secret_warning_when_description_unchanged(tmp_memory_dir: Path) -> None:
+    service = ValuesService()
+    entry, _ = service.add(
+        tmp_memory_dir,
+        description="Prefer explicit rollback plans",
+        category="workflow",
+    )
+
+    _updated, notifications = service.update(
+        tmp_memory_dir,
+        id=str(entry.id),
+        confidence=0.6,
+    )
+
+    assert "secret_warnings" not in notifications
+
+
 def test_update_returns_demotion_candidate_for_promoted_entry(tmp_memory_dir: Path) -> None:
     service = ValuesService()
     entry = _seed_entry(
@@ -302,3 +354,69 @@ def test_list_values_defaults_to_min_confidence_half(tmp_memory_dir: Path) -> No
     results = service.list_values(tmp_memory_dir)
 
     assert [entry.id for entry in results] == [included.id]
+
+
+def test_delete_returns_metadata_and_reason_for_non_promoted_entry(
+    tmp_memory_dir: Path,
+) -> None:
+    service = ValuesService()
+    entry = _seed_entry(
+        tmp_memory_dir,
+        description="Prefer focused diffs",
+        category="workflow",
+    )
+
+    payload = service.delete(
+        tmp_memory_dir,
+        id=str(entry.id),
+        reason="cleanup duplicate value",
+    )
+
+    assert payload == {
+        "deleted_id": str(entry.id),
+        "description": "Prefer focused diffs",
+        "deleted": True,
+        "was_promoted": False,
+        "reason": "cleanup duplicate value",
+    }
+    assert ValuesRepository(tmp_memory_dir).find_by_id(entry.id) is None
+
+
+def test_delete_truncates_long_description_with_ellipsis(tmp_memory_dir: Path) -> None:
+    service = ValuesService()
+    description = (
+        "Prefer focused diffs with explicit rollback steps and reviewer context in every change."
+    )
+    entry = _seed_entry(
+        tmp_memory_dir,
+        description=description,
+        category="workflow",
+    )
+
+    payload = service.delete(tmp_memory_dir, id=str(entry.id))
+
+    assert payload["description"] == description[:80] + "…"
+    assert ValuesRepository(tmp_memory_dir).find_by_id(entry.id) is None
+
+
+def test_delete_promoted_missing_markers_suggests_memory_init(
+    tmp_memory_dir: Path,
+) -> None:
+    service = ValuesService()
+    entry = _seed_entry(
+        tmp_memory_dir,
+        description="Prefer reversible schema migrations",
+        category="design",
+        confidence=0.9,
+        evidence_count=6,
+        promoted=True,
+        promoted_confidence=0.9,
+    )
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    agents_path.write_text("# Agent Rules\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="AGENTS.md is missing promoted values markers. Run memory_init to recreate them.",
+    ):
+        service.delete(tmp_memory_dir, id=str(entry.id))

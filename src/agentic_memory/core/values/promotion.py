@@ -4,6 +4,7 @@ import datetime as dt
 from pathlib import Path
 from typing import Any
 
+from agentic_memory.core.security import SecretScanPolicy
 from agentic_memory.core.values.agents_md import AgentsMdAdapter
 from agentic_memory.core.values.model import ValuesEntry
 from agentic_memory.core.values.repository import ValuesRepository
@@ -47,6 +48,8 @@ class PromotionService:
             raise FileNotFoundError(f"Values entry not found: {id}")
         if entry.promoted:
             raise ValueError(f"Values entry already promoted: {id}")
+        if SecretScanPolicy.contains_secret(entry.description):
+            raise ValueError("Cannot promote value containing potential secrets")
         if not self._promotion_manager.check_candidate(entry):
             raise ValueError(f"Values entry does not meet promotion criteria: {id}")
 

@@ -95,6 +95,20 @@ def test_promote_updates_agents_md_and_entry(tmp_memory_dir: Path) -> None:
     assert stored.promoted_at is not None
 
 
+def test_promote_rejects_entry_with_secret_in_description(tmp_memory_dir: Path) -> None:
+    entry = _seed_entry(
+        tmp_memory_dir,
+        description='Prefer sharing api_key="AbCdEf1234567890" in chat',
+    )
+    service = PromotionService()
+
+    with pytest.raises(ValueError, match="Cannot promote value containing potential secrets"):
+        service.promote(tmp_memory_dir, str(entry.id), confirm=False)
+
+    with pytest.raises(ValueError, match="Cannot promote value containing potential secrets"):
+        service.promote(tmp_memory_dir, str(entry.id), confirm=True)
+
+
 def test_demote_preview_and_confirm_workflow(tmp_memory_dir: Path) -> None:
     agents_path = tmp_memory_dir.parent / "AGENTS.md"
     entry = _seed_entry(

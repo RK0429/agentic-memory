@@ -201,7 +201,8 @@ class KnowledgeService:
         self,
         memory_dir: str | Path,
         id: str,
-    ) -> KnowledgeEntry:
+        reason: str | None = None,
+    ) -> dict[str, Any]:
         repository = self._repository(memory_dir)
         entry = repository.find_by_id(id)
         if entry is None:
@@ -219,7 +220,14 @@ class KnowledgeService:
             ]
             payload["updated_at"] = self._now().isoformat(timespec="seconds")
             repository.save(KnowledgeEntry.from_dict(payload))
-        return entry
+        response: dict[str, Any] = {
+            "deleted_id": deleted_id,
+            "title": entry.title,
+            "deleted": True,
+        }
+        if reason is not None:
+            response["reason"] = reason
+        return response
 
     def _repository(self, memory_dir: str | Path) -> KnowledgeRepository:
         return KnowledgeRepository(Path(memory_dir))

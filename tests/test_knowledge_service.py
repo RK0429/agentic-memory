@@ -221,3 +221,38 @@ def test_knowledge_service_update_rejects_duplicate_content_and_missing_fields(
             id=str(second.id),
             content="Ownership summary",
         )
+
+
+def test_knowledge_service_delete_returns_metadata_and_removes_backlinks(
+    tmp_memory_dir: Path,
+) -> None:
+    service = KnowledgeService()
+    repository = KnowledgeRepository(tmp_memory_dir)
+    first = service.add(
+        memory_dir=tmp_memory_dir,
+        title="Rust ownership",
+        content="Ownership summary",
+        domain="rust",
+    )
+    second = service.add(
+        memory_dir=tmp_memory_dir,
+        title="Rust lifetimes",
+        content="Lifetime summary",
+        domain="rust",
+        related=[str(first.id)],
+    )
+
+    payload = service.delete(
+        memory_dir=tmp_memory_dir,
+        id=str(first.id),
+        reason="cleanup duplicate knowledge",
+    )
+
+    assert payload == {
+        "deleted_id": str(first.id),
+        "title": "Rust ownership",
+        "deleted": True,
+        "reason": "cleanup duplicate knowledge",
+    }
+    assert repository.find_by_id(first.id) is None
+    assert repository.load(second.id).related == []
