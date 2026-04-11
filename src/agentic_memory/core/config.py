@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import tempfile
 from contextlib import suppress
 from pathlib import Path
@@ -72,6 +73,13 @@ FALLBACK_NOTE_TEMPLATES = {
 }
 PROMOTED_VALUES_BEGIN = "<!-- BEGIN:PROMOTED_VALUES -->"
 PROMOTED_VALUES_END = "<!-- END:PROMOTED_VALUES -->"
+# Loose detection patterns: tolerate optional annotation text inside the
+# comment, e.g. "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->".
+# Used by both ``_ensure_promoted_values_markers`` and the AgentsMdAdapter so
+# that hand-annotated marker lines are recognized as the existing block instead
+# of being treated as missing.
+PROMOTED_VALUES_BEGIN_RE = re.compile(r"^<!--\s*BEGIN:PROMOTED_VALUES\b.*-->$")
+PROMOTED_VALUES_END_RE = re.compile(r"^<!--\s*END:PROMOTED_VALUES\b.*-->$")
 
 
 def _merge_config(defaults: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
@@ -165,7 +173,9 @@ def _ensure_promoted_values_markers(agents_path: Path) -> None:
         return
 
     content = agents_path.read_text(encoding="utf-8")
-    if PROMOTED_VALUES_BEGIN in content and PROMOTED_VALUES_END in content:
+    has_begin = any(PROMOTED_VALUES_BEGIN_RE.match(line.strip()) for line in content.splitlines())
+    has_end = any(PROMOTED_VALUES_END_RE.match(line.strip()) for line in content.splitlines())
+    if has_begin and has_end:
         return
 
     suffix = "" if content.endswith("\n") else "\n"

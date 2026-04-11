@@ -5,7 +5,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from agentic_memory.core.config import PROMOTED_VALUES_BEGIN, PROMOTED_VALUES_END
+from agentic_memory.core.config import (
+    PROMOTED_VALUES_BEGIN_RE,
+    PROMOTED_VALUES_END_RE,
+)
 from agentic_memory.core.index import _acquire_index_lock, _atomic_write_text
 from agentic_memory.core.values.model import ValuesEntry
 
@@ -165,11 +168,19 @@ class AgentsMdAdapter:
     def _load_marked_lines(path: Path) -> tuple[list[str], int, int]:
         lines = path.read_text(encoding="utf-8").splitlines()
         begin_index = next(
-            (index for index, line in enumerate(lines) if line.strip() == PROMOTED_VALUES_BEGIN),
+            (
+                index
+                for index, line in enumerate(lines)
+                if PROMOTED_VALUES_BEGIN_RE.match(line.strip())
+            ),
             None,
         )
         end_index = next(
-            (index for index, line in enumerate(lines) if line.strip() == PROMOTED_VALUES_END),
+            (
+                index
+                for index, line in enumerate(lines)
+                if PROMOTED_VALUES_END_RE.match(line.strip())
+            ),
             None,
         )
         if begin_index is None or end_index is None:

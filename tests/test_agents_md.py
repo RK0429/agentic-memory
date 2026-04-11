@@ -70,6 +70,43 @@ def test_list_append_and_remove_entries(tmp_path: Path) -> None:
     assert adapter.list_entries(agents_path) == ["- [v-2] new value"]
 
 
+def test_list_append_and_remove_entries_with_annotated_markers(tmp_path: Path) -> None:
+    """CRUD operations must work with hand-annotated marker lines.
+
+    Some workspaces hand-annotate the BEGIN marker with a hint such as
+    ``(agentic-memory managed — do not edit manually)`` to discourage manual
+    edits. The adapter must recognize these as the existing block instead of
+    raising "missing promoted values markers".
+    """
+
+    adapter = AgentsMdAdapter()
+    agents_path = tmp_path / "AGENTS.md"
+    annotated_begin = (
+        "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->"
+    )
+    annotated_end = "<!-- END:PROMOTED_VALUES -->"
+    agents_path.write_text(
+        f"# Agent Rules\n\n{annotated_begin}\n- [v-1] existing\n{annotated_end}\n",
+        encoding="utf-8",
+    )
+
+    assert adapter.list_entries(agents_path) == ["- [v-1] existing"]
+
+    adapter.append_entry(agents_path, "new value", "v-2")
+    assert adapter.list_entries(agents_path) == [
+        "- [v-1] existing",
+        "- [v-2] new value",
+    ]
+
+    # The annotated marker line itself must remain untouched.
+    content = agents_path.read_text(encoding="utf-8")
+    assert annotated_begin in content
+    assert content.count("BEGIN:PROMOTED_VALUES") == 1
+
+    assert adapter.remove_entry(agents_path, "v-1") is True
+    assert adapter.list_entries(agents_path) == ["- [v-2] new value"]
+
+
 def test_adapter_requires_valid_markers(tmp_path: Path) -> None:
     adapter = AgentsMdAdapter()
     agents_path = tmp_path / "AGENTS.md"

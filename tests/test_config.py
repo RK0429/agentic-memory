@@ -59,6 +59,44 @@ def test_init_memory_dir_adds_promoted_values_markers_to_existing_agents_md(tmp_
     assert content.count(config.PROMOTED_VALUES_END) == 1
 
 
+def test_init_memory_dir_recognizes_annotated_promoted_values_markers(tmp_path: Path) -> None:
+    """Annotated marker lines must be recognized as the existing block.
+
+    Regression: ``_ensure_promoted_values_markers`` previously used a substring
+    check against the bare ``<!-- BEGIN:PROMOTED_VALUES -->`` constant, which
+    failed to match a hand-annotated form such as
+    ``<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->``.
+    The detector then appended a fresh bare-marker block at the end of the
+    file, leaving the AGENTS.md with two PROMOTED_VALUES blocks (one annotated,
+    one bare). The annotated block must be treated as the existing block so
+    that ``init_memory_dir`` is idempotent regardless of marker decoration.
+    """
+
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    annotated_begin = (
+        "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->"
+    )
+    annotated_end = "<!-- END:PROMOTED_VALUES -->"
+    original = (
+        "# Agent Rules\n\n"
+        "## 内面化された価値観\n\n"
+        f"{annotated_begin}\n\n{annotated_end}\n\n"
+        "## 継続的改善\n"
+    )
+    agents_path.write_text(original, encoding="utf-8")
+
+    config.init_memory_dir(memory_dir)
+    config.init_memory_dir(memory_dir)
+
+    content = agents_path.read_text(encoding="utf-8")
+    # The original annotated block must be preserved unchanged.
+    assert annotated_begin in content
+    # No bare-form duplicate should be appended.
+    assert content.count("BEGIN:PROMOTED_VALUES") == 1
+    assert content.count("END:PROMOTED_VALUES") == 1
+
+
 def test_init_dense_config(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
 
