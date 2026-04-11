@@ -156,7 +156,9 @@ class ValuesService:
         description: str | None = None,
     ) -> tuple[ValuesEntry, dict[str, bool | list[str]]]:
         if confidence is None and add_evidence is None and description is None:
-            raise ValueError("At least one update field is required")
+            raise ValueError(
+                "At least one update field is required (confidence, add_evidence, description)"
+            )
 
         repository = self._repository(memory_dir)
         entry = repository.find_by_id(id)

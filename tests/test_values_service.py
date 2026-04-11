@@ -298,7 +298,13 @@ def test_update_rejects_duplicate_description_and_requires_fields(
         category="workflow",
     )
 
-    with pytest.raises(ValueError, match="At least one update field is required"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            "At least one update field is required "
+            r"\(confidence, add_evidence, description\)"
+        ),
+    ):
         service.update(tmp_memory_dir, id=str(first.id))
 
     with pytest.raises(ValueError, match="Duplicate value exists"):

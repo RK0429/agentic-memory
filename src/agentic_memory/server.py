@@ -43,7 +43,12 @@ from agentic_memory.core.task_ids import (
 from agentic_memory.core.task_ids import (
     normalize_task_id as _normalize_task_id,
 )
-from agentic_memory.core.values import PromotionService, ValuesEntry, ValuesService
+from agentic_memory.core.values import (
+    PromotionManager,
+    PromotionService,
+    ValuesEntry,
+    ValuesService,
+)
 
 try:
     mcp = FastMCP(
@@ -575,6 +580,17 @@ def _values_error_payload(message: str) -> str:
             hint=(
                 "Set `AGENTS_MD_PATH` or place `AGENTS.md` / `CLAUDE.md` "
                 "next to the memory directory."
+            ),
+        )
+    if "does not meet promotion criteria" in text:
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint=(
+                "Increase confidence to >= "
+                f"{PromotionManager.CONFIDENCE_THRESHOLD} and accumulate >= "
+                f"{PromotionManager.EVIDENCE_THRESHOLD} evidence items via "
+                "memory_values_update, then retry promotion."
             ),
         )
     return _error_payload(
