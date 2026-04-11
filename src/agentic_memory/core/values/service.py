@@ -108,7 +108,7 @@ class ValuesService:
         query_text = (query or "").strip()
         category_filter = Category.normalize(category) if category is not None else None
         if not query_text and category_filter is None:
-            raise ValueError("At least one of query or category is required")
+            raise ValueError("At least one of 'query' or 'category' must be provided.")
 
         filtered_entries = [
             entry
@@ -152,7 +152,7 @@ class ValuesService:
         memory_dir: str | Path,
         id: str,
         confidence: float | None = None,
-        add_evidence: Evidence | dict[str, Any] | Sequence[Evidence | dict[str, Any]] | None = None,
+        add_evidence: Sequence[Evidence | dict[str, Any]] | None = None,
         description: str | None = None,
     ) -> tuple[ValuesEntry, dict[str, bool | list[str]]]:
         if confidence is None and add_evidence is None and description is None:
@@ -180,11 +180,9 @@ class ValuesService:
             entry.confidence = confidence_value
 
         if add_evidence is not None:
-            evidence_items = (
-                list(add_evidence)
-                if isinstance(add_evidence, Sequence) and not isinstance(add_evidence, dict)
-                else [add_evidence]
-            )
+            if isinstance(add_evidence, dict):
+                raise TypeError("`add_evidence` must be a list of evidence objects.")
+            evidence_items = list(add_evidence)
             for item in evidence_items:
                 entry.add_evidence(item)
 
@@ -213,33 +211,31 @@ class ValuesService:
             raise FileNotFoundError(f"Values entry not found: {id}")
 
         description = self._delete_description(entry)
+        preview: dict[str, Any] = {
+            "deleted_id": str(entry.id),
+            "description": description,
+            "preview": True,
+            "would_delete": True,
+            "was_promoted": entry.promoted,
+        }
+        if reason is not None:
+            preview["reason"] = reason
+
         if entry.promoted:
             agents_md_path = self._agents_md_adapter.resolve_agents_md_path(Path(memory_dir))
             if agents_md_path is None:
                 raise FileNotFoundError("AGENTS.md not found")
 
-            try:
-                entry_line = self._existing_agents_entry(
-                    agents_md_path,
-                    entry,
-                ) or self._entry_line(entry)
-            except ValueError as exc:
-                raise self._delete_agents_md_error(exc) from exc
+            preview["agents_md_path"] = str(agents_md_path)
+            preview["entry_line"] = (
+                f"- [{entry.id}] {self._agents_md_adapter.project_description(entry.description)}"
+            )
 
-            preview: dict[str, Any] = {
-                "deleted_id": str(entry.id),
-                "description": description,
-                "preview": True,
-                "would_delete": True,
-                "was_promoted": True,
-                "agents_md_path": str(agents_md_path),
-                "entry_line": entry_line,
-            }
-            if reason is not None:
-                preview["reason"] = reason
-            if not confirm:
-                return preview
+        if not confirm:
+            return preview
 
+        if entry.promoted:
+            assert agents_md_path is not None
             try:
                 self._agents_md_adapter.remove_entry(agents_md_path, str(entry.id))
             except ValueError as exc:

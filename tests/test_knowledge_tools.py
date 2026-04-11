@@ -47,6 +47,7 @@ def test_memory_knowledge_tools_add_search_update_flow(
 
     assert base["ok"] is True
     assert base["path"] == f"knowledge/{base['id']}.md"
+    assert base["domain"] == "rust"
 
     search_payload = json.loads(
         memory_knowledge_search(
@@ -55,9 +56,9 @@ def test_memory_knowledge_tools_add_search_update_flow(
         )
     )
     assert search_payload["ok"] is True
-    assert search_payload["results"][0]["id"] == base["id"]
-    assert "Ownership explains moves" in search_payload["results"][0]["content_snippet"]
-    assert search_payload["results"][0]["score"] > 0
+    assert search_payload["entries"][0]["id"] == base["id"]
+    assert "Ownership explains moves" in search_payload["entries"][0]["content_snippet"]
+    assert search_payload["entries"][0]["score"] > 0
 
     update_payload = json.loads(
         memory_knowledge_update(
@@ -205,6 +206,25 @@ def test_memory_knowledge_update_returns_secret_warning_for_content_update(
     assert payload["warnings"] == [
         "Content may contain secrets (detected: generic_api_token). Review before sharing."
     ]
+
+
+def test_memory_knowledge_update_returns_not_found_for_missing_id(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_knowledge_update(
+            id="k-11111111-1111-1111-1111-111111111111",
+            content="Updated content",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "not_found"
+    assert payload["message"] == "Knowledge entry not found: k-11111111-1111-1111-1111-111111111111"
 
 
 def test_memory_knowledge_update_malformed_sources_returns_validation_error(

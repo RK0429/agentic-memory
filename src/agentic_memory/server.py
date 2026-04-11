@@ -580,7 +580,7 @@ def _values_error_payload(message: str) -> str:
     return _error_payload(
         error_type="validation_error",
         message=text,
-        hint="Check the values parameters and retry.",
+        hint="Verify the values parameters and retry.",
     )
 
 
@@ -659,6 +659,7 @@ def memory_values_add(
 
     `description` and `category` are required.
     `confidence` defaults to 0.3.
+    Promotion eligibility requires `confidence >= 0.8` and `evidence_count >= 5`.
     `evidence` accepts a list of evidence objects with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
     The newest 10 evidence objects are stored.
@@ -716,7 +717,10 @@ def memory_values_search(
             top=top,
         )
     except ValueError as exc:
-        return _values_error_payload(str(exc))
+        return _validation_error_payload(
+            str(exc),
+            default_hint="Pass 'query', 'category', or both, and verify filter values.",
+        )
 
     return _success_payload(
         {"entries": [_values_entry_payload(entry, score=score) for score, entry in results]}
@@ -727,14 +731,15 @@ def memory_values_search(
 def memory_values_update(
     id: str,
     confidence: float | None = None,
-    add_evidence: dict[str, Any] | list[dict[str, Any]] | None = None,
+    add_evidence: list[dict[str, Any]] | None = None,
     description: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Update one Values entry.
 
     At least one of `confidence`, `add_evidence`, or `description` must be provided.
-    `add_evidence` accepts one evidence object or a list, each with shape
+    Promotion eligibility requires `confidence >= 0.8` and `evidence_count >= 5`.
+    `add_evidence` accepts a list of evidence objects, each with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
     Returns the updated ID. Includes `promotion_candidate: true` when the entry
     becomes eligible for promotion, or `demotion_candidate: true` when a promoted
@@ -749,7 +754,7 @@ def memory_values_update(
             add_evidence=add_evidence,
             description=description,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, TypeError, ValueError) as exc:
         return _values_error_payload(str(exc))
 
     payload: dict[str, Any] = {"id": str(entry.id)}
@@ -1129,6 +1134,7 @@ def memory_values_promote(
 ) -> str:
     """Promote one Values entry into AGENTS.md.
 
+    Promotion eligibility requires `confidence >= 0.8` and `evidence_count >= 5`.
     `confirm=true` is required for the actual promotion.
     `confirm=false` returns a preview without making changes.
     """
@@ -1178,8 +1184,8 @@ def memory_values_delete(
 ) -> str:
     """Delete one Values entry.
 
-    Non-promoted entries are deleted immediately. Promoted entries return a preview
-    when `confirm=false` and require `confirm=true` for the actual deletion.
+    `confirm=false` always returns a preview. `confirm=true` performs the actual
+    deletion, including AGENTS.md cleanup for promoted entries.
     """
     resolved = _resolve_dir(memory_dir)
     try:
@@ -1956,6 +1962,7 @@ def memory_knowledge_add(
     payload: dict[str, Any] = {
         "id": str(entry.id),
         "path": f"knowledge/{entry.id}.md",
+        "domain": str(entry.domain),
     }
     if service.last_warnings:
         payload["warnings"] = service.last_warnings
@@ -1977,7 +1984,7 @@ def memory_knowledge_search(
     At least one of `query` or `domain` is required. Query searches use BM25+ scoring
     over title/content/domain/tags. Domain-only searches return the filtered entries in
     `updated_at` descending order. Optional `accuracy` and `user_understanding` filters
-    are applied to the result set. Returns `{ok: true, results: [...]}` with each result
+    are applied to the result set. Returns `{ok: true, entries: [...]}` with each result
     containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
     `content_snippet`, and `score`.
     """
@@ -1999,7 +2006,7 @@ def memory_knowledge_search(
         )
 
     payload = {
-        "results": [
+        "entries": [
             {
                 "id": str(entry.id),
                 "title": entry.title,

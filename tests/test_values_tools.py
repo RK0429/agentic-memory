@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 from agentic_memory.core.values import Evidence, SourceType, ValuesEntry, ValuesRepository
 from agentic_memory.server import (
@@ -144,6 +145,8 @@ def test_memory_values_search_requires_query_or_category(
 
     assert payload["ok"] is False
     assert payload["error_type"] == "validation_error"
+    assert payload["message"] == "At least one of 'query' or 'category' must be provided."
+    assert payload["hint"] == "Pass 'query', 'category', or both, and verify filter values."
 
 
 def test_memory_values_search_returns_ranked_entries(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -219,7 +222,7 @@ def test_memory_values_update_returns_promotion_and_demotion_notifications(
     promotion_payload = json.loads(
         memory_values_update(
             id=added["id"],
-            add_evidence=_evidence(5),
+            add_evidence=[_evidence(5)],
             memory_dir=str(tmp_memory_dir),
         )
     )
@@ -266,6 +269,34 @@ def test_memory_values_update_add_evidence_accepts_list(
         _evidence(2)["ref"],
         _evidence(1)["ref"],
     ]
+
+
+def test_memory_values_update_rejects_single_add_evidence_dict(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_values_add(
+            description="Prefer explicit evidence batches",
+            category="workflow",
+            confidence=0.7,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_values_update(
+            id=added["id"],
+            add_evidence=cast(Any, _evidence(1)),
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"] == "`add_evidence` must be a list of evidence objects."
+    assert payload["hint"] == "Verify the values parameters and retry."
 
 
 def test_memory_values_update_returns_secret_warning_for_description_update(
@@ -530,13 +561,28 @@ def test_memory_values_delete_removes_non_promoted_entry(
         )
     )
 
-    payload = json.loads(
+    preview = json.loads(
         memory_values_delete(
             id=added["id"],
             memory_dir=str(tmp_memory_dir),
         )
     )
+    payload = json.loads(
+        memory_values_delete(
+            id=added["id"],
+            confirm=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
 
+    assert preview == {
+        "ok": True,
+        "deleted_id": added["id"],
+        "description": "Prefer focused diffs",
+        "preview": True,
+        "would_delete": True,
+        "was_promoted": False,
+    }
     assert payload == {
         "ok": True,
         "deleted_id": added["id"],
@@ -612,6 +658,7 @@ def test_memory_values_delete_with_reason_echoes_back(
         memory_values_delete(
             id=added["id"],
             reason="cleanup duplicate value",
+            confirm=True,
             memory_dir=str(tmp_memory_dir),
         )
     )
@@ -638,6 +685,7 @@ def test_memory_values_delete_promoted_missing_markers_suggests_memory_init(
     payload = json.loads(
         memory_values_delete(
             id=str(promoted_entry.id),
+            confirm=True,
             memory_dir=str(tmp_memory_dir),
         )
     )

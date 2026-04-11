@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-11
+
+### Breaking
+
+> **Migration**: `memory_knowledge_search` response key changed from `results` to `entries`. `memory_values_delete` now requires `confirm=true` for all deletions, including non-promoted entries. `memory_values_update.add_evidence` now accepts only `list[dict]`.
+
+- `memory_knowledge_search` response key changed from `results` to `entries`, unifying with `memory_values_search` and `memory_values_list`
+- `memory_values_delete` now returns a preview when `confirm=false` for both promoted and non-promoted entries. Pass `confirm=true` to execute deletion
+- `memory_values_update` now accepts only `list[dict]` for `add_evidence`; single-dict input is no longer supported
+
+### Added
+
+- `memory_knowledge_add` responses now include the normalized `domain` field
+
+### Fixed
+
+- `memory_knowledge_update` now returns `error_type: "not_found"` for non-existent IDs
+- `memory_values_search` now returns the same validation payload style as Knowledge search, with improved quoting, punctuation, and recovery hints
+- Generic Values validation hints now use the clearer default wording `Verify the values parameters and retry.`
+
+### Changed
+
+- Promotion eligibility thresholds are documented consistently in `memory_values_add`, `memory_values_update`, and `memory_values_promote` docstrings as `confidence >= 0.8` and `evidence_count >= 5`
+
 ## [0.15.0] - 2026-04-11
 
 ### Breaking

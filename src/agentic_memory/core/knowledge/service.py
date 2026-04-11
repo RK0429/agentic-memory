@@ -157,7 +157,9 @@ class KnowledgeService:
             raise ValueError("At least one update field must be provided.")
 
         repository = self._repository(memory_dir)
-        existing = repository.load(id)
+        existing = repository.find_by_id(id)
+        if existing is None:
+            raise FileNotFoundError(f"Knowledge entry not found: {id}")
         related_ids = self._normalize_related(related)
         related_entries = self._load_related_entries(
             repository,

@@ -238,7 +238,7 @@ def test_update_adds_evidence_and_returns_promotion_candidate(tmp_memory_dir: Pa
     updated, notifications = service.update(
         tmp_memory_dir,
         id=str(entry.id),
-        add_evidence=_evidence(5),
+        add_evidence=[_evidence(5)],
     )
 
     assert updated.total_evidence_count == 5
@@ -405,12 +405,26 @@ def test_delete_returns_metadata_and_reason_for_non_promoted_entry(
         category="workflow",
     )
 
-    payload = service.delete(
+    preview = service.delete(
         tmp_memory_dir,
         id=str(entry.id),
         reason="cleanup duplicate value",
     )
+    payload = service.delete(
+        tmp_memory_dir,
+        id=str(entry.id),
+        reason="cleanup duplicate value",
+        confirm=True,
+    )
 
+    assert preview == {
+        "deleted_id": str(entry.id),
+        "description": "Prefer focused diffs",
+        "preview": True,
+        "would_delete": True,
+        "was_promoted": False,
+        "reason": "cleanup duplicate value",
+    }
     assert payload == {
         "deleted_id": str(entry.id),
         "description": "Prefer focused diffs",
@@ -432,8 +446,11 @@ def test_delete_truncates_long_description_with_ellipsis(tmp_memory_dir: Path) -
         category="workflow",
     )
 
-    payload = service.delete(tmp_memory_dir, id=str(entry.id))
+    preview = service.delete(tmp_memory_dir, id=str(entry.id))
+    payload = service.delete(tmp_memory_dir, id=str(entry.id), confirm=True)
 
+    assert preview["description"] == description[:80] + "…"
+    assert preview["preview"] is True
     assert payload["description"] == description[:80] + "…"
     assert ValuesRepository(tmp_memory_dir).find_by_id(entry.id) is None
 
@@ -458,4 +475,4 @@ def test_delete_promoted_missing_markers_suggests_memory_init(
         ValueError,
         match="AGENTS.md is missing promoted values markers. Run memory_init to recreate them.",
     ):
-        service.delete(tmp_memory_dir, id=str(entry.id))
+        service.delete(tmp_memory_dir, id=str(entry.id), confirm=True)
