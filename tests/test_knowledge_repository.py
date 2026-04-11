@@ -7,6 +7,7 @@ from agentic_memory.core.knowledge import (
     Accuracy,
     KnowledgeEntry,
     KnowledgeRepository,
+    ReferenceType,
     Source,
     SourceType,
 )
@@ -21,7 +22,7 @@ def test_knowledge_repository_save_load_delete_roundtrip(tmp_memory_dir: Path) -
         accuracy=Accuracy.VERIFIED,
         sources=[
             Source(
-                type=SourceType.MEMORY_DISTILLATION,
+                type=ReferenceType.MEMORY_NOTE,
                 ref="memory/2026-04-10/rust.md",
                 summary="Rust note",
             )

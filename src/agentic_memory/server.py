@@ -250,6 +250,18 @@ def _validation_error_payload(message: str, *, default_hint: str) -> str:
             message=text,
             hint="Pass one or more memory directories via `memory_dirs` or `memory_dir`.",
         )
+    if "is not a valid SourceType" in text or "is not a valid ReferenceType" in text:
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint=(
+                'Valid source reference type values: "memory_note", "web", '
+                '"user_direct", "document", "code", "other".'
+                if "is not a valid ReferenceType" in text
+                else 'Valid `source_type` values: "memory_distillation", '
+                '"autonomous_research", "user_taught".'
+            ),
+        )
     return _error_payload(
         error_type="validation_error",
         message=text,
@@ -1850,6 +1862,8 @@ def memory_knowledge_add(
     Registers a knowledge record under `knowledge/{id}.md` and updates `_knowledge.jsonl`.
     `title`, `content`, and `domain` are required. Optional metadata includes `tags`,
     `accuracy`, `sources`, `source_type`, `user_understanding`, and `related`.
+    `sources` accepts a list of source objects with shape
+    `{type: "memory_note"|"web"|"user_direct"|"document"|"code"|"other", ref: str, summary: str}`.
     Returns `{ok: true, id, path}` and includes `warnings` when the content may contain
     secrets. Duplicate content (`title` + `domain` + `content`) returns an error.
     """

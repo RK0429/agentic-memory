@@ -70,6 +70,22 @@ class SourceType(StrEnum):
     USER_TAUGHT = "user_taught"
 
 
+class ReferenceType(StrEnum):
+    MEMORY_NOTE = "memory_note"
+    WEB = "web"
+    USER_DIRECT = "user_direct"
+    DOCUMENT = "document"
+    CODE = "code"
+    OTHER = "other"
+
+
+_LEGACY_REFERENCE_TYPE_MAP: dict[str, ReferenceType] = {
+    "memory_distillation": ReferenceType.MEMORY_NOTE,
+    "autonomous_research": ReferenceType.WEB,
+    "user_taught": ReferenceType.USER_DIRECT,
+}
+
+
 class UserUnderstanding(StrEnum):
     UNKNOWN = "unknown"
     NOVICE = "novice"
@@ -112,12 +128,16 @@ class Domain(str):
 
 @dataclass(frozen=True, slots=True)
 class Source:
-    type: SourceType
+    type: ReferenceType
     ref: str
     summary: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "type", SourceType(self.type))
+        raw = str(self.type)
+        if raw in _LEGACY_REFERENCE_TYPE_MAP:
+            object.__setattr__(self, "type", _LEGACY_REFERENCE_TYPE_MAP[raw])
+        else:
+            object.__setattr__(self, "type", ReferenceType(raw))
         object.__setattr__(self, "ref", str(self.ref).strip())
         object.__setattr__(self, "summary", str(self.summary).strip())
         if not self.ref:
@@ -134,8 +154,10 @@ class Source:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> Source:
+        raw_type = str(payload["type"])
+        ref_type = _LEGACY_REFERENCE_TYPE_MAP.get(raw_type) or ReferenceType(raw_type)
         return cls(
-            type=SourceType(str(payload["type"])),
+            type=ref_type,
             ref=str(payload["ref"]),
             summary=str(payload["summary"]),
         )
@@ -239,6 +261,7 @@ __all__ = [
     "Domain",
     "KnowledgeEntry",
     "KnowledgeId",
+    "ReferenceType",
     "Source",
     "SourceType",
     "UserUnderstanding",
