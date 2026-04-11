@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-from agentic_memory.core.distillation import ValuesCandidate
+from dataclasses import dataclass
+
 from agentic_memory.core.values import SourceType, ValuesEntry
 from agentic_memory.core.values.integrator import (
     ValuesIntegrationAction,
     ValuesIntegrator,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ValuesCandidate:
+    """Test-only concrete type satisfying ValuesCandidate protocol."""
+
+    description: str
+    category: str
+    confidence_delta: float | None = None
 
 
 def _entry(description: str, category: str) -> ValuesEntry:
@@ -17,12 +27,10 @@ def _entry(description: str, category: str) -> ValuesEntry:
     )
 
 
-def _candidate(description: str, category: str) -> ValuesCandidate:
-    return ValuesCandidate(
+def _candidate(description: str, category: str) -> _ValuesCandidate:
+    return _ValuesCandidate(
         description=description,
         category=category,
-        source_ref="memory/2026-04-10/value-note.md",
-        source_summary="value summary",
     )
 
 

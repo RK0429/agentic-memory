@@ -28,17 +28,15 @@ from agentic_memory.core import (
     state,
     stats,
 )
-from agentic_memory.core.distillation import DistillationService
-from agentic_memory.core.distillation.extractor import (
-    DistillationExtractorPort,
-    UnconfiguredExtractorPort,
-)
+from agentic_memory.core.distillation.prepare import DistillationPreparer
 from agentic_memory.core.knowledge import (
     DuplicateKnowledgeError,
     KnowledgeService,
     Source,
 )
+from agentic_memory.core.knowledge.model import Accuracy, SourceType
 from agentic_memory.core.scorer import load_index
+from agentic_memory.core.security import SecretScanPolicy
 from agentic_memory.core.task_ids import (
     invalid_task_id_message,
 )
@@ -569,12 +567,6 @@ def _values_error_payload(message: str) -> str:
 
 def _distillation_error_payload(message: str) -> str:
     text = message.strip() or "Distillation failed"
-    if text == "Distillation extractor is not configured":
-        return _error_payload(
-            error_type="configuration_error",
-            message=text,
-            hint="Inject a configured DistillationExtractorPort before calling memory_distill_*.",
-        )
     return _error_payload(
         error_type="validation_error",
         message=text,
@@ -583,8 +575,7 @@ def _distillation_error_payload(message: str) -> str:
 
 
 _values_service = ValuesService()
-_distillation_service = DistillationService()
-_distillation_extractor: DistillationExtractorPort = UnconfiguredExtractorPort()
+_distillation_preparer = DistillationPreparer()
 _promotion_service = PromotionService()
 
 
@@ -741,31 +732,36 @@ def memory_values_list(
     return _success_payload({"entries": [_values_entry_payload(entry) for entry in entries]})
 
 
-@mcp.tool(annotations=_ADDITIVE)
-def memory_distill_knowledge(
+@mcp.tool(annotations=_READONLY)
+def memory_distill_prepare(
+    type: Literal["knowledge", "values"],
     date_from: str | None = None,
     date_to: str | None = None,
     domain: str | None = None,
-    dry_run: bool = True,
+    category: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
-    """Distill reusable Knowledge from Memory notes.
+    """Prepare distillation materials for the calling agent.
 
-    `date_from` / `date_to` accept `YYYY-MM-DD` and are inclusive.
-    `domain` narrows extraction at the extract stage.
-    When `dry_run=true`, candidates are evaluated but not persisted.
+    Returns notes, existing items, extraction instructions, and the candidate
+    schema.  The calling agent (LLM) performs the actual extraction, then
+    submits candidates via `memory_distill_commit`.
+
+    `type` selects knowledge or values distillation.
+    `date_from` / `date_to` accept `YYYY-MM-DD` (inclusive).
+    `domain` (knowledge) or `category` (values) narrows the scope.
     """
     resolved = _resolve_dir(memory_dir)
     try:
-        report = _distillation_service.distill_knowledge(
-            resolved,
-            date_from=date_from,
-            date_to=date_to,
-            domain=domain,
-            dry_run=dry_run,
-            extractor=_distillation_extractor,
-        )
-    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+        if type == "knowledge":
+            result = _distillation_preparer.prepare_knowledge(
+                resolved, date_from=date_from, date_to=date_to, domain=domain
+            )
+        else:
+            result = _distillation_preparer.prepare_values(
+                resolved, date_from=date_from, date_to=date_to, category=category
+            )
+    except (FileNotFoundError, ValueError) as exc:
         return _distillation_error_payload(str(exc))
     except OSError as exc:
         return _error_payload(
@@ -773,34 +769,40 @@ def memory_distill_knowledge(
             message=str(exc),
             hint="Check filesystem permissions and retry.",
         )
-    return _success_payload(report)
+
+    payload: dict[str, Any] = {
+        "notes": result.notes,
+        "existing_items": result.existing_items,
+        "instructions": result.instructions,
+        "candidate_schema": result.candidate_schema,
+    }
+    if result.decisions is not None:
+        payload["decisions"] = result.decisions
+    return _success_payload(payload)
 
 
 @mcp.tool(annotations=_ADDITIVE)
-def memory_distill_values(
-    date_from: str | None = None,
-    date_to: str | None = None,
-    category: str | None = None,
-    dry_run: bool = True,
+def memory_distill_commit(
+    type: Literal["knowledge", "values"],
+    candidates: list[dict[str, Any]],
+    dry_run: bool = False,
     memory_dir: str | None = None,
 ) -> str:
-    """Distill Values patterns from Memory notes and `_state.md` decisions.
+    """Commit distillation candidates extracted by the calling agent.
 
-    `date_from` / `date_to` accept `YYYY-MM-DD` and are inclusive for note selection.
-    `_state.md` major decisions are always included regardless of the date filter.
-    When `dry_run=true`, candidates are evaluated but not persisted.
+    Validates, deduplicates, and persists knowledge or values entries.
+    `source_type` is automatically set to `memory_distillation`.
+
+    `type` selects knowledge or values.
+    `candidates` is an array matching the schema from `memory_distill_prepare`.
+    `dry_run=true` validates without persisting.
     """
     resolved = _resolve_dir(memory_dir)
     try:
-        report = _distillation_service.distill_values(
-            resolved,
-            date_from=date_from,
-            date_to=date_to,
-            category=category,
-            dry_run=dry_run,
-            extractor=_distillation_extractor,
-        )
-    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+        if type == "knowledge":
+            return _commit_knowledge(resolved, candidates, dry_run=dry_run)
+        return _commit_values(resolved, candidates, dry_run=dry_run)
+    except (FileNotFoundError, ValueError) as exc:
         return _distillation_error_payload(str(exc))
     except OSError as exc:
         return _error_payload(
@@ -808,7 +810,259 @@ def memory_distill_values(
             message=str(exc),
             hint="Check filesystem permissions and retry.",
         )
-    return _success_payload(report)
+
+
+def _commit_knowledge(
+    memory_dir: Path,
+    candidates: list[dict[str, Any]],
+    *,
+    dry_run: bool,
+) -> str:
+    from agentic_memory.core.knowledge.model import (
+        KnowledgeEntry,
+        UserUnderstanding,
+    )
+    from agentic_memory.core.knowledge.repository import KnowledgeRepository
+
+    knowledge_service = KnowledgeService()
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    for i, candidate in enumerate(candidates):
+        title = str(candidate.get("title", "")).strip()
+        content = str(candidate.get("content", "")).strip()
+        domain = str(candidate.get("domain", "")).strip()
+        if not title or not content or not domain:
+            skipped.append(
+                {
+                    "index": i,
+                    "reason": "Missing required field(s): title, content, domain",
+                }
+            )
+            continue
+
+        # Coerce optional fields up-front so dry_run and live share validation
+        try:
+            accuracy = Accuracy(candidate.get("accuracy", "uncertain"))
+        except ValueError as exc:
+            skipped.append({"index": i, "title": title, "reason": str(exc)})
+            continue
+        try:
+            user_understanding = UserUnderstanding(candidate.get("user_understanding", "unknown"))
+        except ValueError as exc:
+            skipped.append({"index": i, "title": title, "reason": str(exc)})
+            continue
+
+        sources_raw: list[Source | dict[str, Any]] = candidate.get("sources") or []
+        related_raw: list[str] | None = candidate.get("related")
+
+        if SecretScanPolicy.contains_secret(content):
+            warnings.append(
+                f"Candidate {i} ({title}): content may contain secrets. Review before sharing."
+            )
+
+        if dry_run:
+            # Validate without persisting or mutating existing data.
+            # Replicate the same checks KnowledgeService.add performs:
+            # 1. Build entry object (field validation)
+            # 2. Normalize/validate related IDs
+            # 3. Check duplicates against existing entries
+            try:
+                coerced_sources = KnowledgeService._coerce_sources(sources_raw or None)
+                related_ids = KnowledgeService._normalize_related(related_raw)
+                # Verify referenced entries exist
+                repository = KnowledgeRepository(memory_dir)
+                for rid in related_ids:
+                    if repository.find_by_id(rid) is None:
+                        raise FileNotFoundError(f"Knowledge entry not found: {rid}")
+                entry_obj = KnowledgeEntry(
+                    title=title,
+                    content=content,
+                    domain=domain,
+                    tags=candidate.get("tags") or [],
+                    accuracy=accuracy,
+                    sources=coerced_sources,
+                    source_type=SourceType.MEMORY_DISTILLATION,
+                    user_understanding=user_understanding,
+                    related=[str(r) for r in related_ids],
+                )
+                knowledge_service._ensure_no_duplicate(repository.list_all(), candidate=entry_obj)
+            except DuplicateKnowledgeError:
+                skipped.append({"index": i, "title": title, "reason": "duplicate"})
+                continue
+            except (ValueError, FileNotFoundError) as exc:
+                skipped.append({"index": i, "title": title, "reason": str(exc)})
+                continue
+            warnings.extend(knowledge_service._secret_warnings(content))
+            created.append({"index": i, "title": title, "dry_run": True})
+            continue
+
+        try:
+            entry = knowledge_service.add(
+                memory_dir,
+                title=title,
+                content=content,
+                domain=domain,
+                tags=candidate.get("tags") or [],
+                accuracy=accuracy,
+                sources=sources_raw or None,
+                source_type=SourceType.MEMORY_DISTILLATION,
+                user_understanding=user_understanding,
+                related=related_raw,
+            )
+        except DuplicateKnowledgeError:
+            skipped.append({"index": i, "title": title, "reason": "duplicate"})
+            continue
+        except (ValueError, FileNotFoundError) as exc:
+            skipped.append({"index": i, "title": title, "reason": str(exc)})
+            continue
+
+        warnings.extend(knowledge_service.last_warnings)
+        created.append({"index": i, "id": str(entry.id), "title": title})
+
+    if not dry_run:
+        now_str = _dt.datetime.now().replace(microsecond=0).isoformat(timespec="seconds")
+        updates: dict[str, str] = {"last_knowledge_evaluated_at": now_str}
+        if created:
+            updates["last_knowledge_distilled_at"] = now_str
+        state.update_distillation_frontmatter(memory_dir / "_state.md", **updates)
+
+    payload: dict[str, Any] = {
+        "created": created,
+        "skipped": skipped,
+    }
+    if warnings:
+        payload["warnings"] = warnings
+    return _success_payload(payload)
+
+
+def _commit_values(
+    memory_dir: Path,
+    candidates: list[dict[str, Any]],
+    *,
+    dry_run: bool,
+) -> str:
+    from agentic_memory.core.values.model import Evidence as EvidenceModel
+
+    values_service = ValuesService()
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    for i, candidate in enumerate(candidates):
+        description = str(candidate.get("description", "")).strip()
+        category_raw = str(candidate.get("category", "")).strip()
+        if not description or not category_raw:
+            skipped.append(
+                {
+                    "index": i,
+                    "reason": "Missing required field(s): description, category",
+                }
+            )
+            continue
+
+        if SecretScanPolicy.contains_secret(description):
+            warnings.append(
+                f"Candidate {i} ({description[:60]}): description may contain secrets. "
+                "Review before sharing."
+            )
+
+        confidence = float(candidate.get("confidence", 0.3))
+        evidence_raw = candidate.get("evidence") or []
+        evidence_items: list[EvidenceModel] = []
+        for j, ev in enumerate(evidence_raw):
+            try:
+                evidence_items.append(EvidenceModel.from_dict(ev))
+            except (KeyError, TypeError, ValueError) as exc:
+                skipped.append(
+                    {
+                        "index": i,
+                        "description": description[:80],
+                        "reason": f"Malformed evidence[{j}]: {exc}",
+                    }
+                )
+                break
+        else:
+            # Evidence parsing succeeded — proceed to add
+            pass
+        if any(s.get("index") == i for s in skipped):
+            continue
+
+        if dry_run:
+            # Validate without persisting: replicate ValuesService.add checks
+            # without calling save.
+            try:
+                normalized_description = ValuesService._normalize_description(description)
+                from agentic_memory.core.values.model import Category
+
+                normalized_category = Category.normalize(category_raw)
+                from agentic_memory.core.values.repository import ValuesRepository
+
+                existing = ValuesRepository(memory_dir).list_all()
+                values_service._ensure_not_duplicate(
+                    existing,
+                    description=normalized_description,
+                    category=normalized_category,
+                )
+                # Construct entry to validate confidence/evidence fields
+                from agentic_memory.core.values.model import ValuesEntry, ValuesId
+
+                ValuesEntry(
+                    id=ValuesId.generate(),
+                    description=normalized_description,
+                    category=normalized_category,
+                    confidence=confidence,
+                    evidence=evidence_items[:10],
+                    total_evidence_count=len(evidence_items),
+                    source_type=SourceType.MEMORY_DISTILLATION,
+                )
+            except ValueError as exc:
+                exc_msg = str(exc)
+                reason = "duplicate" if "Duplicate value exists" in exc_msg else exc_msg
+                skipped.append({"index": i, "description": description[:80], "reason": reason})
+                continue
+            created.append({"index": i, "description": description[:80], "dry_run": True})
+            continue
+
+        try:
+            entry, entry_warnings = values_service.add(
+                memory_dir,
+                description=description,
+                category=category_raw,
+                confidence=confidence,
+                evidence=evidence_items or None,
+                source_type=SourceType.MEMORY_DISTILLATION,
+            )
+        except ValueError as exc:
+            exc_msg = str(exc)
+            reason = "duplicate" if "Duplicate value exists" in exc_msg else exc_msg
+            skipped.append({"index": i, "description": description[:80], "reason": reason})
+            continue
+
+        warnings.extend(entry_warnings)
+        created.append(
+            {
+                "index": i,
+                "id": str(entry.id),
+                "description": description[:80],
+            }
+        )
+
+    if not dry_run:
+        now_str = _dt.datetime.now().replace(microsecond=0).isoformat(timespec="seconds")
+        updates: dict[str, str] = {"last_values_evaluated_at": now_str}
+        if created:
+            updates["last_values_distilled_at"] = now_str
+        state.update_distillation_frontmatter(memory_dir / "_state.md", **updates)
+
+    payload: dict[str, Any] = {
+        "created": created,
+        "skipped": skipped,
+    }
+    if warnings:
+        payload["warnings"] = warnings
+    return _success_payload(payload)
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)

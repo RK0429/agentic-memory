@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # REQ-NF-001 / REQ-NF-002 benchmark coverage for knowledge/values search and distillation.
+import json
 import math
 import time
 from collections.abc import Callable
@@ -9,12 +10,7 @@ from typing import Final
 
 import pytest
 
-from agentic_memory.core.distillation import (
-    DistillationService,
-    KnowledgeCandidate,
-    MockExtractorPort,
-    ValuesCandidate,
-)
+from agentic_memory.core.distillation.prepare import DistillationPreparer
 from agentic_memory.core.knowledge import KnowledgeEntry, KnowledgeRepository, KnowledgeService
 from agentic_memory.core.values import (
     SourceType,
@@ -22,6 +18,7 @@ from agentic_memory.core.values import (
     ValuesRepository,
     ValuesService,
 )
+from agentic_memory.server import memory_distill_commit
 
 ENTRY_COUNT: Final[int] = 1000
 MEASUREMENT_COUNT: Final[int] = 100
@@ -109,32 +106,6 @@ def _write_note(memory_dir: Path, *, index: int) -> Path:
     return note_path
 
 
-def _build_candidates(memory_dir: Path, note_paths: list[Path]) -> list[KnowledgeCandidate]:
-    return [
-        KnowledgeCandidate(
-            title=f"Distilled topic {index}",
-            content=f"Collected benchmark knowledge from note {index}.",
-            domain=f"domain-{index % 10}",
-            tags=[f"tag-{index % 5}"],
-            source_ref=str(note_path.relative_to(memory_dir.parent)),
-            source_summary=f"Benchmark note {index} ({note_path.parent.name})",
-        )
-        for index, note_path in enumerate(note_paths[:5])
-    ]
-
-
-def _build_values_candidates(memory_dir: Path, note_paths: list[Path]) -> list[ValuesCandidate]:
-    return [
-        ValuesCandidate(
-            description=f"Prefer benchmark workflow {index} when processing notes.",
-            category=f"category-{index % 8}",
-            source_ref=str(note_path.relative_to(memory_dir.parent)),
-            source_summary=f"Benchmark note {index} ({note_path.parent.name})",
-        )
-        for index, note_path in enumerate(note_paths[:5])
-    ]
-
-
 @pytest.mark.benchmark
 def test_knowledge_search_p95_under_500ms(tmp_memory_dir: Path) -> None:
     _seed_knowledge_entries(tmp_memory_dir)
@@ -160,52 +131,80 @@ def test_values_search_p95_under_500ms(tmp_memory_dir: Path) -> None:
 
 
 @pytest.mark.benchmark
-def test_distillation_collect_integrate_under_5s_per_100_notes(
-    tmp_memory_dir: Path,
-) -> None:
-    note_paths = [_write_note(tmp_memory_dir, index=index) for index in range(100)]
-    extractor = MockExtractorPort(
-        knowledge_candidates=_build_candidates(tmp_memory_dir, note_paths)
-    )
-    service = DistillationService()
+def test_distillation_prepare_under_5s_per_100_notes(tmp_memory_dir: Path) -> None:
+    for index in range(100):
+        _write_note(tmp_memory_dir, index=index)
+    preparer = DistillationPreparer()
 
     started_at = time.perf_counter()
-    report = service.distill_knowledge(
+    result = preparer.prepare_knowledge(
         tmp_memory_dir,
         date_from="2026-01-01",
         date_to="2026-01-31",
-        domain=None,
-        dry_run=False,
-        extractor=extractor,
     )
     elapsed_s = time.perf_counter() - started_at
 
-    assert report.new_count == 5
-    assert len(KnowledgeRepository(tmp_memory_dir).list_all()) == 5
-    assert elapsed_s <= DISTILLATION_THRESHOLD_S, f"distillation time={elapsed_s:.2f}s"
+    assert len(result.notes) == 100
+    assert elapsed_s <= DISTILLATION_THRESHOLD_S, f"prepare time={elapsed_s:.2f}s"
 
 
 @pytest.mark.benchmark
-def test_values_distillation_collect_integrate_under_5s_per_100_notes(
+def test_distillation_commit_under_5s_for_5_candidates(
     tmp_memory_dir: Path,
+    monkeypatch,
 ) -> None:
-    note_paths = [_write_note(tmp_memory_dir, index=index) for index in range(100)]
-    extractor = MockExtractorPort(
-        values_candidates=_build_values_candidates(tmp_memory_dir, note_paths)
-    )
-    service = DistillationService()
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    candidates = [
+        {
+            "title": f"Distilled topic {i}",
+            "content": f"Collected benchmark knowledge from topic {i}.",
+            "domain": f"domain-{i % 10}",
+            "tags": [f"tag-{i % 5}"],
+        }
+        for i in range(5)
+    ]
 
     started_at = time.perf_counter()
-    report = service.distill_values(
-        tmp_memory_dir,
-        date_from="2026-01-01",
-        date_to="2026-01-31",
-        category=None,
-        dry_run=False,
-        extractor=extractor,
+    payload = json.loads(
+        memory_distill_commit(
+            type="knowledge",
+            candidates=candidates,
+            memory_dir=str(tmp_memory_dir),
+        )
     )
     elapsed_s = time.perf_counter() - started_at
 
-    assert report.new_count == 5
+    assert payload["ok"] is True
+    assert len(payload["created"]) == 5
+    assert len(KnowledgeRepository(tmp_memory_dir).list_all()) == 5
+    assert elapsed_s <= DISTILLATION_THRESHOLD_S, f"commit time={elapsed_s:.2f}s"
+
+
+@pytest.mark.benchmark
+def test_values_distillation_commit_under_5s_for_5_candidates(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    candidates = [
+        {
+            "description": f"Prefer benchmark workflow {i} when processing notes.",
+            "category": f"category-{i % 8}",
+        }
+        for i in range(5)
+    ]
+
+    started_at = time.perf_counter()
+    payload = json.loads(
+        memory_distill_commit(
+            type="values",
+            candidates=candidates,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    elapsed_s = time.perf_counter() - started_at
+
+    assert payload["ok"] is True
+    assert len(payload["created"]) == 5
     assert len(ValuesRepository(tmp_memory_dir).list_all()) == 5
-    assert elapsed_s <= DISTILLATION_THRESHOLD_S, f"distillation time={elapsed_s:.2f}s"
+    assert elapsed_s <= DISTILLATION_THRESHOLD_S, f"commit time={elapsed_s:.2f}s"

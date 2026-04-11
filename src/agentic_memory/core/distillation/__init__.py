@@ -1,25 +1,13 @@
-from agentic_memory.core.distillation.extractor import (
-    DistillationExtractorPort,
-    KnowledgeCandidate,
-    MockExtractorPort,
-    UnconfiguredExtractorPort,
-    ValuesCandidate,
+from agentic_memory.core.distillation.prepare import (
+    KNOWLEDGE_CANDIDATE_SCHEMA,
+    VALUES_CANDIDATE_SCHEMA,
+    DistillationPreparer,
+    PrepareResult,
 )
-from agentic_memory.core.distillation.service import (
-    DistillationReport,
-    DistillationService,
-    ReportEntry,
-)
-from agentic_memory.core.distillation.trigger import DistillationTrigger
 
 __all__ = [
-    "DistillationExtractorPort",
-    "DistillationReport",
-    "DistillationService",
-    "DistillationTrigger",
-    "KnowledgeCandidate",
-    "MockExtractorPort",
-    "ReportEntry",
-    "UnconfiguredExtractorPort",
-    "ValuesCandidate",
+    "DistillationPreparer",
+    "KNOWLEDGE_CANDIDATE_SCHEMA",
+    "PrepareResult",
+    "VALUES_CANDIDATE_SCHEMA",
 ]

@@ -1,11 +1,22 @@
 from __future__ import annotations
 
-from agentic_memory.core.distillation import KnowledgeCandidate
+from dataclasses import dataclass, field
+
 from agentic_memory.core.knowledge import KnowledgeEntry, SourceType
 from agentic_memory.core.knowledge.integrator import (
     KnowledgeIntegrationAction,
     KnowledgeIntegrator,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _KnowledgeCandidate:
+    """Test-only concrete type satisfying KnowledgeCandidate protocol."""
+
+    title: str
+    content: str
+    domain: str
+    tags: list[str] = field(default_factory=list)
 
 
 def _entry(title: str, content: str, domain: str) -> KnowledgeEntry:
@@ -17,13 +28,11 @@ def _entry(title: str, content: str, domain: str) -> KnowledgeEntry:
     )
 
 
-def _candidate(title: str, content: str, domain: str) -> KnowledgeCandidate:
-    return KnowledgeCandidate(
+def _candidate(title: str, content: str, domain: str) -> _KnowledgeCandidate:
+    return _KnowledgeCandidate(
         title=title,
         content=content,
         domain=domain,
-        source_ref=f"memory/2026-04-10/{title}.md",
-        source_summary=f"{title} summary",
     )
 
 
