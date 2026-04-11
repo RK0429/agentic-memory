@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from agentic_memory.core.knowledge import KnowledgeRepository
 from agentic_memory.server import (
@@ -12,6 +13,37 @@ from agentic_memory.server import (
 )
 
 
+def _knowledge_add_payload(memory_dir: Path, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    return json.loads(memory_knowledge_add(entries=entries, memory_dir=str(memory_dir)))
+
+
+def _knowledge_update_payload(memory_dir: Path, updates: list[dict[str, Any]]) -> dict[str, Any]:
+    return json.loads(memory_knowledge_update(updates=updates, memory_dir=str(memory_dir)))
+
+
+def _knowledge_delete_payload(
+    memory_dir: Path,
+    ids: list[str],
+    *,
+    confirm: bool = False,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    return json.loads(
+        memory_knowledge_delete(
+            ids=ids,
+            confirm=confirm,
+            reason=reason,
+            memory_dir=str(memory_dir),
+        )
+    )
+
+
+def _single_result(payload: dict[str, Any]) -> dict[str, Any]:
+    assert payload["ok"] is True
+    assert len(payload["results"]) == 1
+    return payload["results"][0]
+
+
 def test_memory_knowledge_tools_add_search_update_flow(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -19,66 +51,77 @@ def test_memory_knowledge_tools_add_search_update_flow(
     monkeypatch.chdir(tmp_memory_dir.parent)
     repository = KnowledgeRepository(tmp_memory_dir)
 
-    base = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership explains moves and borrows.",
-            domain="rust",
-            tags=["rust"],
-            accuracy="likely",
-            sources=[
-                {
-                    "type": "memory_distillation",
-                    "ref": "memory/2026-04-10/rust.md",
-                    "summary": "Ownership note",
-                }
-            ],
-            memory_dir=str(tmp_memory_dir),
-        )
+    base_payload = _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "title": "Rust ownership",
+                "content": "Ownership explains moves and borrows.",
+                "domain": "rust",
+                "tags": ["rust"],
+                "accuracy": "likely",
+                "sources": [
+                    {
+                        "type": "memory_note",
+                        "ref": "memory/2026-04-10/rust.md",
+                        "summary": "Ownership note",
+                    }
+                ],
+            }
+        ],
     )
-    related = json.loads(
-        memory_knowledge_add(
-            title="Rust lifetimes",
-            content="Lifetimes connect borrows to scopes.",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
-        )
+    related_payload = _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "title": "Rust lifetimes",
+                "content": "Lifetimes connect borrows to scopes.",
+                "domain": "rust",
+            }
+        ],
     )
 
-    assert base["ok"] is True
+    base = _single_result(base_payload)
+    related = _single_result(related_payload)
+    assert base_payload["success_count"] == 1
+    assert base_payload["error_count"] == 0
     assert base["path"] == f"knowledge/{base['id']}.md"
     assert base["domain"] == "rust"
 
     search_payload = json.loads(
-        memory_knowledge_search(
-            query="ownership",
-            memory_dir=str(tmp_memory_dir),
-        )
+        memory_knowledge_search(query="ownership", memory_dir=str(tmp_memory_dir))
     )
     assert search_payload["ok"] is True
     assert search_payload["entries"][0]["id"] == base["id"]
     assert "Ownership explains moves" in search_payload["entries"][0]["content_snippet"]
     assert search_payload["entries"][0]["score"] > 0
 
-    update_payload = json.loads(
-        memory_knowledge_update(
-            id=base["id"],
-            accuracy="verified",
-            user_understanding="familiar",
-            related=[related["id"]],
-            sources=[
-                {
-                    "type": "autonomous_research",
-                    "ref": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
-                    "summary": "Rust Book ownership",
-                }
-            ],
-            tags=["rust", "systems"],
-            memory_dir=str(tmp_memory_dir),
-        )
+    update_payload = _knowledge_update_payload(
+        tmp_memory_dir,
+        [
+            {
+                "id": base["id"],
+                "accuracy": "verified",
+                "user_understanding": "familiar",
+                "related": [related["id"]],
+                "sources": [
+                    {
+                        "type": "web",
+                        "ref": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+                        "summary": "Rust Book ownership",
+                    }
+                ],
+                "tags": ["rust", "systems"],
+            }
+        ],
     )
 
-    assert update_payload == {"ok": True, "id": base["id"]}
+    assert update_payload == {
+        "ok": True,
+        "success_count": 1,
+        "error_count": 0,
+        "results": [{"index": 0, "ok": True, "id": base["id"]}],
+    }
 
     updated_entry = repository.load(base["id"])
     related_entry = repository.load(related["id"])
@@ -90,23 +133,41 @@ def test_memory_knowledge_tools_add_search_update_flow(
     assert [str(related_id) for related_id in related_entry.related] == [base["id"]]
 
 
-def test_memory_knowledge_add_rejects_secret_content(
+def test_memory_knowledge_add_isolates_secret_and_duplicate_errors(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
-    payload = json.loads(
-        memory_knowledge_add(
-            title="Secret example",
-            content='api_key="AbCdEf1234567890"',
-            domain="security",
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "title": "Rust ownership",
+                "content": "Ownership summary",
+                "domain": "rust",
+            },
+            {
+                "title": "Secret example",
+                "content": 'api_key="AbCdEf1234567890"',
+                "domain": "security",
+            },
+            {
+                "title": "Rust ownership",
+                "content": "Ownership   summary",
+                "domain": "Rust",
+            },
+        ],
     )
 
-    assert payload == {
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 2
+    assert payload["results"][0]["ok"] is True
+    assert payload["results"][1] == {
+        "index": 1,
         "ok": False,
+        "id": None,
         "error_type": "validation_error",
         "message": (
             "Content appears to contain secrets (detected: generic_api_token). "
@@ -116,316 +177,364 @@ def test_memory_knowledge_add_rejects_secret_content(
             "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
             "from the content and retry."
         ),
-        "exit_code": 2,
     }
-    assert list((tmp_memory_dir / "knowledge").glob("*.md")) == []
+    assert payload["results"][2]["ok"] is False
+    assert payload["results"][2]["message"].startswith("Duplicate knowledge entry")
+    assert len(list((tmp_memory_dir / "knowledge").glob("*.md"))) == 1
 
 
-def test_memory_knowledge_add_malformed_sources_returns_validation_error(
+def test_memory_knowledge_add_rejects_malformed_content_per_item_and_continues(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
-    payload = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            sources=[{"type": "user_taught", "ref": "memory/2026-04-10/rust.md"}],
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "title": "Bad content none",
+                "content": None,
+                "domain": "rust",
+            },
+            {
+                "title": "Rust ownership",
+                "content": "Ownership summary",
+                "domain": "rust",
+            },
+            {
+                "title": "Bad content list",
+                "content": [],
+                "domain": "rust",
+            },
+        ],
     )
 
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "{type, ref, summary}" in payload["hint"]
-    assert "summary" in payload["hint"]
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 2
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].content` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].content` as a non-empty string.",
+    }
+    assert payload["results"][1]["ok"] is True
+    assert payload["results"][2] == {
+        "index": 2,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].content` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].content` as a non-empty string.",
+    }
+    assert len(list((tmp_memory_dir / "knowledge").glob("*.md"))) == 1
 
 
-def test_memory_knowledge_add_invalid_source_type_returns_valid_values(
+def test_memory_knowledge_add_rejects_malformed_title_and_domain_per_item_and_continues(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
-    payload = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            source_type="invalid_source_type",
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "title": None,
+                "content": "Ownership summary",
+                "domain": "rust",
+            },
+            {
+                "title": "Bad domain list",
+                "content": "Ownership summary",
+                "domain": [],
+            },
+            {
+                "title": "Rust ownership",
+                "content": "Ownership summary",
+                "domain": "rust",
+            },
+            {
+                "title": "",
+                "content": "Ownership summary",
+                "domain": "rust",
+            },
+            {
+                "title": "Bad domain blank",
+                "content": "Ownership summary",
+                "domain": "   ",
+            },
+        ],
     )
 
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "is not a valid SourceType" in payload["message"]
-    assert '"memory_distillation"' in payload["hint"]
-    assert '"autonomous_research"' in payload["hint"]
-    assert '"user_taught"' in payload["hint"]
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 4
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].title` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].title` as a non-empty string.",
+    }
+    assert payload["results"][1] == {
+        "index": 1,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].domain` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].domain` as a non-empty string.",
+    }
+    assert payload["results"][2]["ok"] is True
+    assert payload["results"][3] == {
+        "index": 3,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].title` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].title` as a non-empty string.",
+    }
+    assert payload["results"][4] == {
+        "index": 4,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].domain` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].domain` as a non-empty string.",
+    }
+    assert len(list((tmp_memory_dir / "knowledge").glob("*.md"))) == 1
 
 
-def test_memory_knowledge_add_defaults_source_type_to_user_taught(
+def test_memory_knowledge_add_validates_schema_enum_defaults_and_batch_limits(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     repository = KnowledgeRepository(tmp_memory_dir)
 
-    payload = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
+    malformed = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Rust ownership",
+                    "content": "Ownership summary",
+                    "domain": "rust",
+                    "sources": [{"type": "user_taught", "ref": "memory/2026-04-10/rust.md"}],
+                }
+            ],
         )
     )
+    assert malformed["ok"] is False
+    assert malformed["error_type"] == "validation_error"
+    assert "{type, ref, summary}" in malformed["hint"]
 
-    assert payload["ok"] is True
-    entry = repository.load(payload["id"])
-    assert str(entry.source_type) == "user_taught"
+    invalid_source_type = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Rust ownership 2",
+                    "content": "Ownership summary 2",
+                    "domain": "rust",
+                    "source_type": "invalid_source_type",
+                }
+            ],
+        )
+    )
+    assert invalid_source_type["ok"] is False
+    assert invalid_source_type["error_type"] == "validation_error"
+    assert "is not a valid SourceType" in invalid_source_type["message"]
+
+    created = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Rust defaults",
+                    "content": "Ownership defaults",
+                    "domain": "rust",
+                }
+            ],
+        )
+    )
+    assert str(repository.load(created["id"]).source_type) == "user_taught"
+
+    fifty_entries = [
+        {"title": f"Topic {index}", "content": f"Content {index}", "domain": "batch"}
+        for index in range(50)
+    ]
+    full_batch = _knowledge_add_payload(tmp_memory_dir, fifty_entries)
+    assert full_batch["ok"] is True
+    assert full_batch["success_count"] == 50
+    assert full_batch["error_count"] == 0
+
+    oversize = _knowledge_add_payload(
+        tmp_memory_dir,
+        fifty_entries + [{"title": "Overflow", "content": "Overflow", "domain": "batch"}],
+    )
+    assert oversize["ok"] is False
+    assert oversize["error_type"] == "validation_error"
+    assert oversize["message"] == (
+        "Batch size 51 exceeds maximum 50 (configurable via AGENTIC_MEMORY_MAX_BATCH_SIZE)"
+    )
+
+    empty = _knowledge_add_payload(tmp_memory_dir, [])
+    assert empty["ok"] is False
+    assert empty["error_type"] == "validation_error"
+    assert empty["message"] == "Batch cannot be empty"
 
 
-def test_memory_knowledge_update_returns_secret_warning_for_content_update(
+def test_memory_knowledge_update_reports_warnings_and_isolates_missing_id(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
+    repository = KnowledgeRepository(tmp_memory_dir)
 
-    added = json.loads(
-        memory_knowledge_add(
-            title="Secret example",
-            content="Safe content",
-            domain="security",
-            memory_dir=str(tmp_memory_dir),
+    base = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [{"title": "Rust ownership", "content": "Ownership summary", "domain": "rust"}],
+        )
+    )
+    related = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [{"title": "Rust borrowing", "content": "Borrowing summary", "domain": "rust"}],
         )
     )
 
-    payload = json.loads(
-        memory_knowledge_update(
-            id=added["id"],
-            content='auth_token="AbCdEf1234567890"',
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _knowledge_update_payload(
+        tmp_memory_dir,
+        [
+            {
+                "id": base["id"],
+                "content": 'auth_token="AbCdEf1234567890"',
+                "related": [related["id"]],
+            },
+            {
+                "id": "k-11111111-1111-1111-1111-111111111111",
+                "content": "Updated content",
+            },
+        ],
     )
 
     assert payload["ok"] is True
-    assert payload["id"] == added["id"]
-    assert payload["warnings"] == [
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 1
+    assert payload["results"][0]["warnings"] == [
         "Content may contain secrets (detected: generic_api_token). Review before sharing."
     ]
-
-
-def test_memory_knowledge_update_returns_not_found_for_missing_id(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-
-    payload = json.loads(
-        memory_knowledge_update(
-            id="k-11111111-1111-1111-1111-111111111111",
-            content="Updated content",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is False
-    assert payload["error_type"] == "not_found"
-    assert payload["message"] == "Knowledge entry not found: k-11111111-1111-1111-1111-111111111111"
-
-
-def test_memory_knowledge_update_malformed_sources_returns_validation_error(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-
-    added = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_knowledge_update(
-            id=added["id"],
-            sources=[{"type": "user_taught", "ref": "memory/2026-04-10/rust.md"}],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "{type, ref, summary}" in payload["hint"]
-    assert "summary" in payload["hint"]
-
-
-def test_memory_knowledge_tools_validate_inputs_and_duplicates(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-
-    search_payload = json.loads(memory_knowledge_search(memory_dir=str(tmp_memory_dir)))
-    assert search_payload["ok"] is False
-    assert search_payload["error_type"] == "validation_error"
-
-    added = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    assert added["ok"] is True
-
-    duplicate_payload = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership   summary",
-            domain="Rust",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    assert duplicate_payload["ok"] is False
-    assert duplicate_payload["error_type"] == "validation_error"
-    assert "Duplicate knowledge entry" in duplicate_payload["message"]
-
-    update_payload = json.loads(
-        memory_knowledge_update(id=added["id"], memory_dir=str(tmp_memory_dir))
-    )
-    assert update_payload["ok"] is False
-    assert update_payload["error_type"] == "validation_error"
-    assert update_payload["message"] == (
-        "At least one update field is required "
-        "(content, accuracy, sources, user_understanding, related, tags)"
-    )
-
-
-def test_memory_knowledge_delete_preview_does_not_remove_entry_or_related_links(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    repository = KnowledgeRepository(tmp_memory_dir)
-
-    base = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    related = json.loads(
-        memory_knowledge_add(
-            title="Rust borrowing",
-            content="Borrowing summary",
-            domain="rust",
-            related=[base["id"]],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_knowledge_delete(
-            id=base["id"],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload == {
-        "ok": True,
-        "deleted_id": base["id"],
-        "title": "Rust ownership",
-        "preview": True,
-        "would_delete": True,
+    assert payload["results"][1] == {
+        "index": 1,
+        "ok": False,
+        "id": "k-11111111-1111-1111-1111-111111111111",
+        "error_type": "not_found",
+        "message": "Knowledge entry not found: k-11111111-1111-1111-1111-111111111111",
+        "hint": "Verify the knowledge id and any `related` ids exist before retrying.",
     }
-    assert repository.find_by_id(base["id"]) is not None
-    assert (tmp_memory_dir / f"knowledge/{base['id']}.md").exists()
     assert [str(related_id) for related_id in repository.load(related["id"]).related] == [
         base["id"]
     ]
 
 
-def test_memory_knowledge_delete_removes_entry_and_related_links(
+def test_memory_knowledge_update_validates_missing_fields(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    added = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [{"title": "Rust ownership", "content": "Ownership summary", "domain": "rust"}],
+        )
+    )
+
+    payload = _single_result(_knowledge_update_payload(tmp_memory_dir, [{"id": added["id"]}]))
+
+    assert payload["ok"] is False
+    assert payload["id"] == added["id"]
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"] == (
+        "At least one update field is required "
+        "(content, accuracy, sources, user_understanding, related, tags)"
+    )
+
+
+def test_memory_knowledge_delete_preview_and_bulk_delete_preserve_backlink_regression(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     repository = KnowledgeRepository(tmp_memory_dir)
 
-    base = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
+    base = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [{"title": "Rust ownership", "content": "Ownership summary", "domain": "rust"}],
         )
     )
-    related = json.loads(
-        memory_knowledge_add(
-            title="Rust borrowing",
-            content="Borrowing summary",
-            domain="rust",
-            related=[base["id"]],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_knowledge_delete(
-            id=base["id"],
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
+    related = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Rust borrowing",
+                    "content": "Borrowing summary",
+                    "domain": "rust",
+                    "related": [base["id"]],
+                }
+            ],
         )
     )
 
-    assert payload == {
+    preview = _knowledge_delete_payload(tmp_memory_dir, [base["id"]])
+    assert preview == {
         "ok": True,
-        "deleted_id": base["id"],
-        "title": "Rust ownership",
-        "deleted": True,
+        "success_count": 1,
+        "error_count": 0,
+        "results": [
+            {
+                "index": 0,
+                "ok": True,
+                "id": base["id"],
+                "deleted_id": base["id"],
+                "title": "Rust ownership",
+                "preview": True,
+                "would_delete": True,
+            }
+        ],
     }
-    assert repository.find_by_id(base["id"]) is None
-    assert not (tmp_memory_dir / f"knowledge/{base['id']}.md").exists()
-    assert repository.load(related["id"]).related == []
+    assert repository.find_by_id(base["id"]) is not None
+    assert [str(related_id) for related_id in repository.load(related["id"]).related] == [
+        base["id"]
+    ]
 
-
-def test_memory_knowledge_delete_with_reason_echoes_back(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_knowledge_add(
-            title="Rust ownership",
-            content="Ownership summary",
-            domain="rust",
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _knowledge_delete_payload(
+        tmp_memory_dir,
+        [base["id"], "k-22222222-2222-2222-2222-222222222222"],
+        confirm=True,
+        reason="cleanup duplicate knowledge",
     )
-
-    payload = json.loads(
-        memory_knowledge_delete(
-            id=added["id"],
-            confirm=True,
-            reason="cleanup duplicate knowledge",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload == {
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 1
+    assert payload["results"][0] == {
+        "index": 0,
         "ok": True,
-        "deleted_id": added["id"],
+        "id": base["id"],
+        "deleted_id": base["id"],
         "title": "Rust ownership",
         "deleted": True,
         "reason": "cleanup duplicate knowledge",
     }
+    assert payload["results"][1]["ok"] is False
+    assert payload["results"][1]["error_type"] == "not_found"
+    assert repository.find_by_id(base["id"]) is None
+    assert repository.load(related["id"]).related == []

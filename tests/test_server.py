@@ -380,24 +380,38 @@ def test_memory_search_tools_mark_open_world_and_document_rerank_download() -> N
         assert "model download" in description
 
 
-def test_memory_knowledge_add_tool_documents_default_accuracy_and_understanding() -> None:
-    tool = server_module.mcp._tool_manager.get_tool("memory_knowledge_add")
-    description = " ".join(tool.description.split())
+def test_plural_knowledge_tool_descriptions_document_batch_shape() -> None:
+    expectations = {
+        "memory_knowledge_add": [
+            '`accuracy` defaults to `"uncertain"`',
+            '`user_understanding` defaults to `"unknown"`',
+            "Top-level `ok` indicates the batch was processed",
+        ],
+        "memory_knowledge_update": ["`updates`", "AGENTIC_MEMORY_MAX_BATCH_SIZE", "results"],
+        "memory_knowledge_delete": ["`ids`", "confirm=false", "would_delete"],
+    }
 
-    assert '`accuracy` defaults to `"uncertain"`' in description
-    assert '`user_understanding` defaults to `"unknown"`' in description
-    assert 'Secret detection blocks the call with `error_type="validation_error"`' in description
+    for tool_name, needles in expectations.items():
+        tool = server_module.mcp._tool_manager.get_tool(tool_name)
+        description = " ".join(tool.description.split())
+        for needle in needles:
+            assert needle in description
 
 
-def test_memory_values_add_tool_documents_secret_blocking_and_normalized_category() -> None:
-    tool = server_module.mcp._tool_manager.get_tool("memory_values_add")
-    description = " ".join(tool.description.split())
+def test_plural_values_tool_descriptions_document_batch_shape() -> None:
+    expectations = {
+        "memory_values_add": ["`entries`", "AGENTIC_MEMORY_MAX_BATCH_SIZE", "success_count"],
+        "memory_values_update": ["`updates`", "AGENTIC_MEMORY_MAX_BATCH_SIZE", "results"],
+        "memory_values_delete": ["`ids`", "confirm=false", "would_delete"],
+        "memory_values_promote": ["`ids`", "confirm=false", "would_promote"],
+        "memory_values_demote": ["`ids`", "confirm=false", "would_demote"],
+    }
 
-    assert 'Secret detection blocks the call with `error_type="validation_error"`' in description
-    assert (
-        "Returns `{ok: true, id, path, category}` where `category` is the normalized value"
-        in description
-    )
+    for tool_name, needles in expectations.items():
+        tool = server_module.mcp._tool_manager.get_tool(tool_name)
+        description = " ".join(tool.description.split())
+        for needle in needles:
+            assert needle in description
 
 
 def test_memory_state_from_note_returns_json_error_for_missing_note(

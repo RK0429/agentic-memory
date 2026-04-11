@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-11
+
+### BREAKING CHANGES
+
+- `memory_knowledge_add`, `memory_knowledge_update`, `memory_knowledge_delete`, `memory_values_add`, `memory_values_update`, `memory_values_delete`, `memory_values_promote`, and `memory_values_demote` now accept plural inputs (`entries`, `updates`, `ids`) and return J5-style batch payloads: `{ok, success_count, error_count, results}`
+- `KnowledgeService`, `ValuesService`, and `PromotionService` public APIs remain singular; only the MCP wrapper layer changed
+- Every batch call now validates its input size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default `50`, read on each call). Empty batches and oversize batches are rejected as top-level `validation_error`
+
+### Migration Guide
+
+```python
+# Before (v0.17.x)
+memory_knowledge_add(title="A", content="...", domain="d")
+
+# After (v0.18.0)
+memory_knowledge_add(entries=[{"title": "A", "content": "...", "domain": "d"}])
+```
+
+```python
+# Before (v0.17.x)
+memory_knowledge_update(id="k-1", content="...", tags=["rust"])
+
+# After (v0.18.0)
+memory_knowledge_update(updates=[{"id": "k-1", "content": "...", "tags": ["rust"]}])
+```
+
+```python
+# Before (v0.17.x)
+memory_knowledge_delete(id="k-1", confirm=True, reason="cleanup")
+
+# After (v0.18.0)
+memory_knowledge_delete(ids=["k-1"], confirm=True, reason="cleanup")
+```
+
+```python
+# Before (v0.17.x)
+memory_values_add(description="Prefer tests", category="review")
+
+# After (v0.18.0)
+memory_values_add(entries=[{"description": "Prefer tests", "category": "review"}])
+```
+
+```python
+# Before (v0.17.x)
+memory_values_update(id="v-1", confidence=0.9)
+
+# After (v0.18.0)
+memory_values_update(updates=[{"id": "v-1", "confidence": 0.9}])
+```
+
+```python
+# Before (v0.17.x)
+memory_values_delete(id="v-1", confirm=True, reason="cleanup")
+
+# After (v0.18.0)
+memory_values_delete(ids=["v-1"], confirm=True, reason="cleanup")
+```
+
+```python
+# Before (v0.17.x)
+memory_values_promote(id="v-1", confirm=True)
+
+# After (v0.18.0)
+memory_values_promote(ids=["v-1"], confirm=True)
+```
+
+```python
+# Before (v0.17.x)
+memory_values_demote(id="v-1", reason="confidence dropped", confirm=True)
+
+# After (v0.18.0)
+memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
+```
+
+```json
+// Before (v0.17.x)
+{"ok": true, "id": "k-1", "path": "knowledge/k-1.md", "domain": "rust"}
+
+// After (v0.18.0)
+{
+  "ok": true,
+  "success_count": 1,
+  "error_count": 0,
+  "results": [
+    {
+      "index": 0,
+      "ok": true,
+      "id": "k-1",
+      "path": "knowledge/k-1.md",
+      "domain": "rust"
+    }
+  ]
+}
+```
+
+### Changed
+
+- MCP wrapper batches now isolate per-item failures, so duplicate/not-found/eligibility/secret errors no longer abort the rest of the batch
+- Add wrappers still reject secrets, but now only the offending item is rejected; successful siblings continue to run
+- Delete/promote/demote wrappers now share `confirm` / `reason` semantics across the batch and return preview flags (`would_delete`, `would_promote`, `would_demote`) without side effects when `confirm=false`
+- Bulk knowledge update/delete preserves related back-links, and bulk values promote/demote/delete preserves the managed `AGENTS.md` promoted block
+
 ## [0.17.0] - 2026-04-11
 
 ### Breaking
@@ -604,7 +706,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/RK0429/agentic-memory/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/RK0429/agentic-memory/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/RK0429/agentic-memory/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/RK0429/agentic-memory/compare/v0.16.1...v0.16.2

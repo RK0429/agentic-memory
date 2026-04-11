@@ -30,9 +30,9 @@ def _evidence(index: int) -> dict[str, str]:
     }
 
 
-def _seed_promoted_entry(memory_dir: Path) -> ValuesEntry:
+def _seed_promoted_entry(memory_dir: Path, *, description: str) -> ValuesEntry:
     entry = ValuesEntry(
-        description="Prefer reversible schema migrations",
+        description=description,
         category="design",
         confidence=0.9,
         evidence=[Evidence.from_dict(_evidence(index)) for index in range(1, 7)],
@@ -47,131 +47,166 @@ def _seed_promoted_entry(memory_dir: Path) -> ValuesEntry:
     return entry
 
 
+def _values_add_payload(memory_dir: Path, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    return json.loads(memory_values_add(entries=entries, memory_dir=str(memory_dir)))
+
+
+def _values_update_payload(memory_dir: Path, updates: list[dict[str, Any]]) -> dict[str, Any]:
+    return json.loads(memory_values_update(updates=updates, memory_dir=str(memory_dir)))
+
+
+def _values_promote_payload(
+    memory_dir: Path,
+    ids: list[str],
+    *,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    return json.loads(memory_values_promote(ids=ids, confirm=confirm, memory_dir=str(memory_dir)))
+
+
+def _values_demote_payload(
+    memory_dir: Path,
+    ids: list[str],
+    *,
+    reason: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    return json.loads(
+        memory_values_demote(ids=ids, reason=reason, confirm=confirm, memory_dir=str(memory_dir))
+    )
+
+
+def _values_delete_payload(
+    memory_dir: Path,
+    ids: list[str],
+    *,
+    confirm: bool = False,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    return json.loads(
+        memory_values_delete(
+            ids=ids,
+            confirm=confirm,
+            reason=reason,
+            memory_dir=str(memory_dir),
+        )
+    )
+
+
+def _single_result(payload: dict[str, Any]) -> dict[str, Any]:
+    assert payload["ok"] is True
+    assert len(payload["results"]) == 1
+    return payload["results"][0]
+
+
 def test_memory_values_add_returns_path_warning_and_promotion_candidate(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
-    first = json.loads(
-        memory_values_add(
-            description="Prefer focused reversible changes",
-            category="workflow",
-            memory_dir=str(tmp_memory_dir),
+    first = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer focused reversible changes", "category": "workflow"}],
         )
     )
 
-    payload = json.loads(
-        memory_values_add(
-            description="Prefer focused reversible changes in commits",
-            category="workflow",
-            confidence=0.85,
-            evidence=[_evidence(index) for index in range(1, 6)],
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _values_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "description": "Prefer focused reversible changes in commits",
+                "category": "workflow",
+                "confidence": 0.85,
+                "evidence": [_evidence(index) for index in range(1, 6)],
+            }
+        ],
     )
+    result = _single_result(payload)
 
-    assert payload["ok"] is True
-    assert payload["path"] == f"values/{payload['id']}.md"
-    assert payload["category"] == "workflow"
-    assert payload["promotion_candidate"] is True
-    assert str(first["id"]) in payload["warnings"][0]
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 0
+    assert result["path"] == f"values/{result['id']}.md"
+    assert result["category"] == "workflow"
+    assert result["promotion_candidate"] is True
+    assert str(first["id"]) in result["warnings"][0]
 
 
-def test_memory_values_add_reports_duplicate_as_validation_error(
+def test_memory_values_add_reports_duplicate_and_normalized_category(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_values_add(
-        description="Prefer compact PR summaries",
-        category="communication",
-        memory_dir=str(tmp_memory_dir),
+    _values_add_payload(
+        tmp_memory_dir,
+        [{"description": "Prefer compact PR summaries", "category": "communication"}],
     )
 
-    payload = json.loads(
-        memory_values_add(
-            description=" Prefer compact  PR summaries ",
-            category=" communication ",
-            memory_dir=str(tmp_memory_dir),
+    duplicate = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": " Prefer compact  PR summaries ", "category": " communication "}],
         )
     )
+    assert duplicate["ok"] is False
+    assert duplicate["error_type"] == "validation_error"
+    assert "Duplicate value exists" in duplicate["message"]
 
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "Duplicate value exists" in payload["message"]
-
-
-def test_memory_values_add_echoes_normalized_category(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-
-    payload = json.loads(
-        memory_values_add(
-            description="Prefer snake_case categories to normalize consistently",
-            category="coding_style",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is True
-    assert payload["category"] == "coding-style"
-
-
-def test_memory_values_add_rejects_secret_description(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-
-    payload = json.loads(
-        memory_values_add(
-            description='Prefer storing api_key="AbCdEf1234567890" only in vaults',
-            category="security",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload == {
-        "ok": False,
-        "error_type": "validation_error",
-        "message": (
-            "Content appears to contain secrets (detected: generic_api_token). "
-            "Remove secrets or sanitize the content before retrying."
-        ),
-        "hint": (
-            "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
-            "from the content and retry."
-        ),
-        "exit_code": 2,
-    }
-    assert list((tmp_memory_dir / "values").glob("*.md")) == []
-
-
-def test_memory_values_add_rejects_secret_in_evidence_summary(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-
-    payload = json.loads(
-        memory_values_add(
-            description="Prefer documented secret handling",
-            category="security",
-            evidence=[
+    normalized = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
                 {
-                    "ref": "memory/2026-04-10/security.md",
-                    "summary": 'Rotate auth_token="AbCdEf1234567890" immediately',
-                    "date": "2026-04-10",
+                    "description": "Prefer snake_case categories to normalize consistently",
+                    "category": "coding_style",
                 }
             ],
-            memory_dir=str(tmp_memory_dir),
         )
     )
+    assert normalized["ok"] is True
+    assert normalized["category"] == "coding-style"
 
-    assert payload == {
+
+def test_memory_values_add_isolates_secret_and_schema_errors(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = _values_add_payload(
+        tmp_memory_dir,
+        [
+            {"description": "Prefer focused diffs", "category": "workflow"},
+            {
+                "description": 'Prefer storing api_key="AbCdEf1234567890" only in vaults',
+                "category": "security",
+            },
+            {
+                "description": "Prefer documented secret handling",
+                "category": "security",
+                "evidence": [
+                    {
+                        "ref": "memory/2026-04-10/security.md",
+                        "summary": 'Rotate auth_token="AbCdEf1234567890" immediately',
+                        "date": "2026-04-10",
+                    }
+                ],
+            },
+            {
+                "description": "Prefer evidence with complete metadata",
+                "category": "workflow",
+                "evidence": [{"ref": "memory/2026-04-10/note.md", "summary": "missing date"}],
+            },
+        ],
+    )
+
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 3
+    assert payload["results"][1] == {
+        "index": 1,
         "ok": False,
+        "id": None,
         "error_type": "validation_error",
         "message": (
             "Content appears to contain secrets (detected: generic_api_token). "
@@ -181,62 +216,154 @@ def test_memory_values_add_rejects_secret_in_evidence_summary(
             "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
             "from the content and retry."
         ),
-        "exit_code": 2,
     }
-    assert list((tmp_memory_dir / "values").glob("*.md")) == []
+    assert payload["results"][2]["ok"] is False
+    assert payload["results"][3]["ok"] is False
+    assert "{ref, summary, date}" in payload["results"][3]["hint"]
+    assert len(list((tmp_memory_dir / "values").glob("*.md"))) == 1
 
 
-def test_memory_values_add_malformed_evidence_returns_validation_error(
+def test_memory_values_add_rejects_malformed_description_per_item_and_continues(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
-    payload = json.loads(
-        memory_values_add(
-            description="Prefer evidence with complete metadata",
-            category="workflow",
-            evidence=[{"ref": "memory/2026-04-10/note.md", "summary": "missing date"}],
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _values_add_payload(
+        tmp_memory_dir,
+        [
+            {"description": None, "category": "workflow"},
+            {"description": "Prefer focused diffs", "category": "workflow"},
+            {"description": [], "category": "workflow"},
+        ],
     )
 
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "{ref, summary, date}" in payload["hint"]
-    assert "date" in payload["hint"]
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 2
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].description` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].description` as a non-empty string.",
+    }
+    assert payload["results"][1]["ok"] is True
+    assert payload["results"][2] == {
+        "index": 2,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].description` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].description` as a non-empty string.",
+    }
+    assert len(list((tmp_memory_dir / "values").glob("*.md"))) == 1
 
 
-def test_memory_values_search_requires_query_or_category(
+def test_memory_values_add_rejects_malformed_category_per_item_and_continues(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = _values_add_payload(
+        tmp_memory_dir,
+        [
+            {"description": "Bad category none", "category": None},
+            {"description": "Prefer focused diffs", "category": "workflow"},
+            {"description": "Bad category list", "category": []},
+            {"description": "Bad category blank", "category": ""},
+        ],
+    )
+
+    assert payload["ok"] is True
+    assert payload["success_count"] == 1
+    assert payload["error_count"] == 3
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].category` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].category` as a non-empty string.",
+    }
+    assert payload["results"][1]["ok"] is True
+    assert payload["results"][2] == {
+        "index": 2,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].category` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].category` as a non-empty string.",
+    }
+    assert payload["results"][3] == {
+        "index": 3,
+        "ok": False,
+        "id": None,
+        "error_type": "validation_error",
+        "message": "Invalid `entries[].category` entry: expected a non-empty string.",
+        "hint": "Pass `entries[].category` as a non-empty string.",
+    }
+    assert len(list((tmp_memory_dir / "values").glob("*.md"))) == 1
+
+
+def test_memory_values_add_respects_batch_limit_and_env_override(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    monkeypatch.setenv("AGENTIC_MEMORY_MAX_BATCH_SIZE", "100")
+
+    hundred_entries = [
+        {"description": f"Prefer item {index}", "category": "workflow"} for index in range(100)
+    ]
+    allowed = _values_add_payload(tmp_memory_dir, hundred_entries)
+    assert allowed["ok"] is True
+    assert allowed["success_count"] == 100
+    assert allowed["error_count"] == 0
+
+    oversize = _values_add_payload(
+        tmp_memory_dir,
+        hundred_entries + [{"description": "Prefer overflow", "category": "workflow"}],
+    )
+    assert oversize["ok"] is False
+    assert oversize["error_type"] == "validation_error"
+    assert oversize["message"] == (
+        "Batch size 101 exceeds maximum 100 (configurable via AGENTIC_MEMORY_MAX_BATCH_SIZE)"
+    )
+
+    empty = _values_add_payload(tmp_memory_dir, [])
+    assert empty["ok"] is False
+    assert empty["error_type"] == "validation_error"
+    assert empty["message"] == "Batch cannot be empty"
+
+
+def test_memory_values_search_and_list_behaviors(tmp_memory_dir: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
 
     payload = json.loads(memory_values_search(memory_dir=str(tmp_memory_dir)))
-
     assert payload["ok"] is False
     assert payload["error_type"] == "validation_error"
     assert payload["message"] == "At least one of 'query' or 'category' must be provided."
-    assert payload["hint"] == "Pass 'query', 'category', or both, and verify filter values."
 
-
-def test_memory_values_search_returns_ranked_entries(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    memory_values_add(
-        description="Add regression tests for bug fixes",
-        category="review",
-        confidence=0.9,
-        memory_dir=str(tmp_memory_dir),
+    _values_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "description": "Add regression tests for bug fixes",
+                "category": "review",
+                "confidence": 0.9,
+            },
+            {
+                "description": "Document release checklist",
+                "category": "workflow",
+                "confidence": 0.8,
+            },
+        ],
     )
-    memory_values_add(
-        description="Document release checklist",
-        category="workflow",
-        confidence=0.8,
-        memory_dir=str(tmp_memory_dir),
-    )
 
-    payload = json.loads(
+    search_payload = json.loads(
         memory_values_search(
             query="regression tests",
             min_confidence=0.5,
@@ -244,359 +371,370 @@ def test_memory_values_search_returns_ranked_entries(tmp_memory_dir: Path, monke
             memory_dir=str(tmp_memory_dir),
         )
     )
+    assert search_payload["ok"] is True
+    assert search_payload["entries"][0]["description"] == "Add regression tests for bug fixes"
+    assert search_payload["entries"][0]["score"] > 0
 
-    assert payload["ok"] is True
-    assert payload["entries"][0]["description"] == "Add regression tests for bug fixes"
-    assert payload["entries"][0]["score"] > 0
-
-
-def test_memory_values_update_validates_input_and_not_found(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    validation_payload = json.loads(
-        memory_values_update(
-            id="v-00000000-0000-0000-0000-000000000000",
-            memory_dir=str(tmp_memory_dir),
-        )
+    promoted_entry = _seed_promoted_entry(
+        tmp_memory_dir,
+        description="Prefer reversible schema migrations",
     )
-    not_found_payload = json.loads(
-        memory_values_update(
-            id="v-11111111-1111-1111-1111-111111111111",
-            confidence=0.4,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert validation_payload["ok"] is False
-    assert validation_payload["error_type"] == "validation_error"
-    assert validation_payload["message"] == (
-        "At least one update field is required (confidence, add_evidence, description)"
-    )
-    assert not_found_payload["ok"] is False
-    assert not_found_payload["error_type"] == "not_found"
-
-
-def test_memory_values_update_returns_promotion_and_demotion_notifications(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Require regression coverage for bug fixes",
-            category="review",
-            confidence=0.8,
-            evidence=[_evidence(index) for index in range(1, 5)],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    promoted_entry = _seed_promoted_entry(tmp_memory_dir)
-
-    promotion_payload = json.loads(
-        memory_values_update(
-            id=added["id"],
-            add_evidence=[_evidence(5)],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    demotion_payload = json.loads(
-        memory_values_update(
-            id=str(promoted_entry.id),
-            confidence=0.7,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert promotion_payload["ok"] is True
-    assert promotion_payload["promotion_candidate"] is True
-    assert demotion_payload["ok"] is True
-    assert demotion_payload["demotion_candidate"] is True
-
-
-def test_memory_values_update_add_evidence_accepts_list(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer accumulating evidence in batches",
-            category="workflow",
-            confidence=0.7,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_values_update(
-            id=added["id"],
-            add_evidence=[_evidence(1), _evidence(2)],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is True
-    entry = ValuesRepository(tmp_memory_dir).load(added["id"])
-    assert entry.total_evidence_count == 2
-    assert [item.ref for item in entry.evidence] == [
-        _evidence(2)["ref"],
-        _evidence(1)["ref"],
-    ]
-
-
-def test_memory_values_update_rejects_single_add_evidence_dict(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer explicit evidence batches",
-            category="workflow",
-            confidence=0.7,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_values_update(
-            id=added["id"],
-            add_evidence=cast(Any, _evidence(1)),
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert payload["message"] == "`add_evidence` must be a list of evidence objects."
-    assert payload["hint"] == "Verify the values parameters and retry."
-
-
-def test_memory_values_update_returns_secret_warning_for_description_update(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer documented secret handling",
-            category="security",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_values_update(
-            id=added["id"],
-            description='Prefer documenting auth_token="AbCdEf1234567890" handling',
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is True
-    assert payload["warnings"] == [
-        "Content may contain secrets (detected: generic_api_token). Review before sharing."
-    ]
-
-
-def test_memory_values_list_filters_promoted_only(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    _seed_promoted_entry(tmp_memory_dir)
-    memory_values_add(
-        description="Prefer draft PRs for large work",
-        category="review",
-        confidence=0.95,
-        memory_dir=str(tmp_memory_dir),
-    )
-
-    payload = json.loads(
+    list_payload = json.loads(
         memory_values_list(
             promoted_only=True,
             top=10,
             memory_dir=str(tmp_memory_dir),
         )
     )
+    assert list_payload["ok"] is True
+    assert len(list_payload["entries"]) == 1
+    assert list_payload["entries"][0]["id"] == str(promoted_entry.id)
 
-    assert payload["ok"] is True
-    assert len(payload["entries"]) == 1
-    assert payload["entries"][0]["promoted"] is True
 
-
-def test_memory_values_list_defaults_to_all_confidence_entries(
+def test_memory_values_update_validates_missing_fields_and_add_evidence_shape(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
-    low = json.loads(
-        memory_values_add(
-            description="Prefer low-confidence experiments",
-            category="workflow",
-            confidence=0.4,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    high = json.loads(
-        memory_values_add(
-            description="Prefer high-confidence changes",
-            category="workflow",
-            confidence=0.5,
-            memory_dir=str(tmp_memory_dir),
+    added = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer explicit evidence batches", "category": "workflow"}],
         )
     )
 
-    payload = json.loads(memory_values_list(memory_dir=str(tmp_memory_dir)))
+    missing_fields = _single_result(_values_update_payload(tmp_memory_dir, [{"id": added["id"]}]))
+    assert missing_fields["ok"] is False
+    assert missing_fields["id"] == added["id"]
+    assert missing_fields["error_type"] == "validation_error"
+    assert missing_fields["message"] == (
+        "At least one update field is required (confidence, add_evidence, description)"
+    )
+
+    invalid_shape = _single_result(
+        _values_update_payload(
+            tmp_memory_dir,
+            [{"id": added["id"], "add_evidence": cast(Any, _evidence(1))}],
+        )
+    )
+    assert invalid_shape["ok"] is False
+    assert invalid_shape["error_type"] == "validation_error"
+    assert invalid_shape["message"] == "`add_evidence` must be a list of evidence objects."
+
+
+def test_memory_values_update_isolates_missing_id_and_emits_notifications(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    candidate = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Require regression coverage for bug fixes",
+                    "category": "review",
+                    "confidence": 0.8,
+                    "evidence": [_evidence(index) for index in range(1, 5)],
+                }
+            ],
+        )
+    )
+    promoted_entry = _seed_promoted_entry(
+        tmp_memory_dir,
+        description="Prefer reversible schema migrations",
+    )
+    secret_entry = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer documented secret handling", "category": "security"}],
+        )
+    )
+
+    payload = _values_update_payload(
+        tmp_memory_dir,
+        [
+            {"id": candidate["id"], "add_evidence": [_evidence(5)]},
+            {"id": str(promoted_entry.id), "confidence": 0.7},
+            {
+                "id": secret_entry["id"],
+                "description": 'Prefer documenting auth_token="AbCdEf1234567890" handling',
+            },
+            {"id": "v-11111111-1111-1111-1111-111111111111", "confidence": 0.4},
+        ],
+    )
 
     assert payload["ok"] is True
-    assert [entry["id"] for entry in payload["entries"]] == [high["id"], low["id"]]
+    assert payload["success_count"] == 3
+    assert payload["error_count"] == 1
+    assert payload["results"][0]["promotion_candidate"] is True
+    assert payload["results"][1]["demotion_candidate"] is True
+    assert payload["results"][2]["warnings"] == [
+        "Content may contain secrets (detected: generic_api_token). Review before sharing."
+    ]
+    assert payload["results"][3] == {
+        "index": 3,
+        "ok": False,
+        "id": "v-11111111-1111-1111-1111-111111111111",
+        "error_type": "not_found",
+        "message": "Values entry not found: v-11111111-1111-1111-1111-111111111111",
+        "hint": "Verify the values `id` exists before retrying.",
+    }
 
 
-def test_memory_values_promote_preview_and_confirm(tmp_memory_dir: Path, monkeypatch) -> None:
+def test_memory_values_promote_bulk_preview_confirm_and_isolation(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
     agents_path = tmp_memory_dir.parent / "AGENTS.md"
     agents_path.write_text(
         "# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES -->\n<!-- END:PROMOTED_VALUES -->\n",
         encoding="utf-8",
     )
-    added = json.loads(
-        memory_values_add(
-            description="Prefer focused reversible changes",
-            category="workflow",
-            confidence=0.85,
-            evidence=[_evidence(index) for index in range(1, 6)],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
 
-    preview = json.loads(
-        memory_values_promote(
-            id=added["id"],
-            confirm=False,
-            memory_dir=str(tmp_memory_dir),
-        )
+    promotable = _values_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "description": "Prefer focused reversible changes",
+                "category": "workflow",
+                "confidence": 0.85,
+                "evidence": [_evidence(index) for index in range(1, 6)],
+            },
+            {
+                "description": "Prefer explicit rollback plans",
+                "category": "workflow",
+                "confidence": 0.9,
+                "evidence": [_evidence(index) for index in range(6, 11)],
+            },
+            {
+                "description": "Prefer shipping ineligible promoted values",
+                "category": "workflow",
+                "confidence": 0.7,
+                "evidence": [_evidence(index) for index in range(1, 5)],
+            },
+        ],
     )
-    result = json.loads(
-        memory_values_promote(
-            id=added["id"],
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
+    ids = [result["id"] for result in promotable["results"] if result["ok"]]
 
+    preview = _values_promote_payload(tmp_memory_dir, [ids[0], ids[1], ids[2]], confirm=False)
     assert preview["ok"] is True
-    assert preview["preview"] is True
-    assert result["ok"] is True
-    assert result["promoted"] is True
-    assert added["id"] in agents_path.read_text(encoding="utf-8")
+    assert preview["success_count"] == 2
+    assert preview["error_count"] == 1
+    assert preview["results"][0]["would_promote"] is True
+    assert preview["results"][1]["would_promote"] is True
+    assert preview["results"][2]["ok"] is False
+    assert agents_path.read_text(encoding="utf-8").count("- [") == 0
+
+    confirmed = _values_promote_payload(tmp_memory_dir, [ids[0], ids[1]], confirm=True)
+    assert confirmed["ok"] is True
+    assert confirmed["success_count"] == 2
+    assert confirmed["error_count"] == 0
+    assert all(result["promoted"] is True for result in confirmed["results"])
+    agents_text = agents_path.read_text(encoding="utf-8")
+    assert ids[0] in agents_text
+    assert ids[1] in agents_text
 
 
-def test_memory_values_demote_preview_and_confirm(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    agents_path = tmp_memory_dir.parent / "AGENTS.md"
-    promoted_entry = _seed_promoted_entry(tmp_memory_dir)
-    agents_path.write_text(
-        "# Agent Rules\n\n"
-        "<!-- BEGIN:PROMOTED_VALUES -->\n"
-        f"- [{promoted_entry.id}] {promoted_entry.description}\n"
-        "<!-- END:PROMOTED_VALUES -->\n",
-        encoding="utf-8",
-    )
-
-    preview = json.loads(
-        memory_values_demote(
-            id=str(promoted_entry.id),
-            reason="confidence dropped",
-            confirm=False,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    result = json.loads(
-        memory_values_demote(
-            id=str(promoted_entry.id),
-            reason="confidence dropped",
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert preview["ok"] is True
-    assert preview["preview"] is True
-    assert result["ok"] is True
-    assert result["promoted"] is False
-    assert result["demotion_reason"] == "confidence dropped"
-    assert str(promoted_entry.id) not in agents_path.read_text(encoding="utf-8")
-
-
-def test_memory_values_promote_and_demote_report_errors(tmp_memory_dir: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer explicit rollback plans",
-            category="workflow",
-            confidence=0.85,
-            evidence=[_evidence(index) for index in range(1, 6)],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    missing_agents_payload = json.loads(
-        memory_values_promote(
-            id=added["id"],
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    not_promoted = json.loads(
-        memory_values_demote(
-            id="v-11111111-1111-1111-1111-111111111111",
-            reason="missing",
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert missing_agents_payload["ok"] is False
-    assert missing_agents_payload["error_type"] == "not_found"
-    assert not_promoted["ok"] is False
-    assert not_promoted["error_type"] == "not_found"
-
-
-def test_memory_values_promote_ineligible_includes_current_and_threshold(
+def test_memory_values_promote_bulk_reports_missing_agents_md_per_item(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer shipping ineligible promoted values",
-            category="workflow",
-            confidence=0.7,
-            evidence=[_evidence(index) for index in range(1, 5)],
-            memory_dir=str(tmp_memory_dir),
-        )
+    promotable = _values_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "description": "Prefer focused reversible changes",
+                "category": "workflow",
+                "confidence": 0.85,
+                "evidence": [_evidence(index) for index in range(1, 6)],
+            },
+            {
+                "description": "Prefer explicit rollback plans",
+                "category": "workflow",
+                "confidence": 0.9,
+                "evidence": [_evidence(index) for index in range(6, 11)],
+            },
+        ],
+    )
+    promotable_ids = [result["id"] for result in promotable["results"] if result["ok"]]
+
+    payload = _values_promote_payload(
+        tmp_memory_dir,
+        [promotable_ids[0], "v-11111111-1111-1111-1111-111111111111", promotable_ids[1]],
+        confirm=True,
     )
 
-    payload = json.loads(
-        memory_values_promote(
-            id=added["id"],
-            confirm=False,
-            memory_dir=str(tmp_memory_dir),
+    assert payload["ok"] is True
+    assert payload["success_count"] == 0
+    assert payload["error_count"] == 3
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "id": promotable_ids[0],
+        "error_type": "not_found",
+        "message": "AGENTS.md not found",
+        "hint": (
+            "Set `AGENTS_MD_PATH` or place `AGENTS.md` / `CLAUDE.md` next to the memory directory."
+        ),
+    }
+    assert payload["results"][1] == {
+        "index": 1,
+        "ok": False,
+        "id": "v-11111111-1111-1111-1111-111111111111",
+        "error_type": "not_found",
+        "message": "Values entry not found: v-11111111-1111-1111-1111-111111111111",
+        "hint": "Verify the values `id` exists before retrying.",
+    }
+    assert payload["results"][2]["message"] == "AGENTS.md not found"
+
+
+def test_memory_values_demote_bulk_preview_confirm_and_isolation(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    promoted_one = _seed_promoted_entry(
+        tmp_memory_dir,
+        description="Prefer reversible schema migrations",
+    )
+    promoted_two = _seed_promoted_entry(
+        tmp_memory_dir,
+        description="Prefer explicit rollback plans",
+    )
+    unpromoted = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer draft PRs for large work", "category": "review"}],
         )
     )
-
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "confidence=0.7" in payload["message"]
-    assert "required>=0.8" in payload["message"]
-    assert "evidence_count=4" in payload["message"]
-    assert "required>=5" in payload["message"]
-    assert "promoted=False" in payload["message"]
-    assert "Increase confidence to >= 0.8" in payload["message"]
-    assert payload["hint"] == (
-        "Increase confidence to >= 0.8 and accumulate >= 5 evidence items via "
-        "memory_values_update, then retry promotion."
+    agents_path.write_text(
+        "# Agent Rules\n\n"
+        "<!-- BEGIN:PROMOTED_VALUES -->\n"
+        f"- [{promoted_one.id}] {promoted_one.description}\n"
+        f"- [{promoted_two.id}] {promoted_two.description}\n"
+        "<!-- END:PROMOTED_VALUES -->\n",
+        encoding="utf-8",
     )
+
+    preview = _values_demote_payload(
+        tmp_memory_dir,
+        [str(promoted_one.id), str(promoted_two.id), unpromoted["id"]],
+        reason="confidence dropped",
+        confirm=False,
+    )
+    assert preview["ok"] is True
+    assert preview["success_count"] == 2
+    assert preview["error_count"] == 1
+    assert preview["results"][0]["would_demote"] is True
+    assert preview["results"][1]["would_demote"] is True
+    assert preview["results"][2]["ok"] is False
+    assert agents_path.read_text(encoding="utf-8").count("- [") == 2
+
+    confirmed = _values_demote_payload(
+        tmp_memory_dir,
+        [str(promoted_one.id), str(promoted_two.id)],
+        reason="confidence dropped",
+        confirm=True,
+    )
+    assert confirmed["ok"] is True
+    assert confirmed["success_count"] == 2
+    assert confirmed["error_count"] == 0
+    assert all(result["promoted"] is False for result in confirmed["results"])
+    agents_text = agents_path.read_text(encoding="utf-8")
+    assert str(promoted_one.id) not in agents_text
+    assert str(promoted_two.id) not in agents_text
+
+
+def test_memory_values_delete_bulk_preview_confirm_and_agents_cleanup(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    added = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer focused diffs", "category": "workflow"}],
+        )
+    )
+    promoted = _seed_promoted_entry(
+        tmp_memory_dir,
+        description="Prefer reversible schema migrations",
+    )
+    agents_path.write_text(
+        "# Agent Rules\n\n"
+        "<!-- BEGIN:PROMOTED_VALUES -->\n"
+        f"- [{promoted.id}] {promoted.description}\n"
+        "<!-- END:PROMOTED_VALUES -->\n",
+        encoding="utf-8",
+    )
+
+    preview = _values_delete_payload(tmp_memory_dir, [added["id"], str(promoted.id)])
+    assert preview["ok"] is True
+    assert preview["success_count"] == 2
+    assert preview["error_count"] == 0
+    assert preview["results"][0]["would_delete"] is True
+    assert preview["results"][1]["would_delete"] is True
+    assert ValuesRepository(tmp_memory_dir).find_by_id(added["id"]) is not None
+    assert str(promoted.id) in agents_path.read_text(encoding="utf-8")
+
+    confirmed = _values_delete_payload(
+        tmp_memory_dir,
+        [added["id"], str(promoted.id), "v-11111111-1111-1111-1111-111111111111"],
+        confirm=True,
+        reason="cleanup duplicate value",
+    )
+    assert confirmed["ok"] is True
+    assert confirmed["success_count"] == 2
+    assert confirmed["error_count"] == 1
+    assert confirmed["results"][0] == {
+        "index": 0,
+        "ok": True,
+        "id": added["id"],
+        "deleted_id": added["id"],
+        "description": "Prefer focused diffs",
+        "deleted": True,
+        "was_promoted": False,
+        "reason": "cleanup duplicate value",
+    }
+    assert confirmed["results"][1]["was_promoted"] is True
+    assert confirmed["results"][1]["deleted"] is True
+    assert confirmed["results"][2]["ok"] is False
+    assert ValuesRepository(tmp_memory_dir).find_by_id(added["id"]) is None
+    assert ValuesRepository(tmp_memory_dir).find_by_id(promoted.id) is None
+    assert str(promoted.id) not in agents_path.read_text(encoding="utf-8")
+
+
+def test_memory_values_delete_promoted_missing_markers_reports_memory_init_hint(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    promoted = _seed_promoted_entry(
+        tmp_memory_dir,
+        description="Prefer reversible schema migrations",
+    )
+    (tmp_memory_dir.parent / "AGENTS.md").write_text("# Agent Rules\n", encoding="utf-8")
+
+    payload = _values_delete_payload(tmp_memory_dir, [str(promoted.id)], confirm=True)
+
+    assert payload["ok"] is True
+    assert payload["success_count"] == 0
+    assert payload["error_count"] == 1
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "id": str(promoted.id),
+        "error_type": "validation_error",
+        "message": (
+            "AGENTS.md is missing promoted values markers. Run memory_init to recreate them."
+        ),
+        "hint": "Run `memory_init` to recreate AGENTS.md markers, then retry deletion.",
+    }
 
 
 def test_memory_values_promote_rejects_secret_containing_entry(
@@ -615,162 +753,9 @@ def test_memory_values_promote_rejects_secret_containing_entry(
         "Content may contain secrets (detected: generic_api_token). Review before sharing."
     ]
 
-    payload = json.loads(
-        memory_values_promote(
-            id=str(entry.id),
-            confirm=False,
-            memory_dir=str(tmp_memory_dir),
-        )
+    payload = _single_result(
+        _values_promote_payload(tmp_memory_dir, [str(entry.id)], confirm=False)
     )
-
     assert payload["ok"] is False
     assert payload["error_type"] == "validation_error"
     assert payload["message"] == "Cannot promote value containing potential secrets"
-
-
-def test_memory_values_delete_removes_non_promoted_entry(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer focused diffs",
-            category="workflow",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    preview = json.loads(
-        memory_values_delete(
-            id=added["id"],
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    payload = json.loads(
-        memory_values_delete(
-            id=added["id"],
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert preview == {
-        "ok": True,
-        "deleted_id": added["id"],
-        "description": "Prefer focused diffs",
-        "preview": True,
-        "would_delete": True,
-        "was_promoted": False,
-    }
-    assert payload == {
-        "ok": True,
-        "deleted_id": added["id"],
-        "description": "Prefer focused diffs",
-        "deleted": True,
-        "was_promoted": False,
-    }
-    assert ValuesRepository(tmp_memory_dir).find_by_id(added["id"]) is None
-    assert not (tmp_memory_dir / f"values/{added['id']}.md").exists()
-
-
-def test_memory_values_delete_promoted_entry_requires_confirm_preview_then_deletes(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    agents_path = tmp_memory_dir.parent / "AGENTS.md"
-    promoted_entry = _seed_promoted_entry(tmp_memory_dir)
-    agents_path.write_text(
-        "# Agent Rules\n\n"
-        "<!-- BEGIN:PROMOTED_VALUES -->\n"
-        f"- [{promoted_entry.id}] {promoted_entry.description}\n"
-        "<!-- END:PROMOTED_VALUES -->\n",
-        encoding="utf-8",
-    )
-
-    preview = json.loads(
-        memory_values_delete(
-            id=str(promoted_entry.id),
-            confirm=False,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-    payload = json.loads(
-        memory_values_delete(
-            id=str(promoted_entry.id),
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert preview["ok"] is True
-    assert preview["deleted_id"] == str(promoted_entry.id)
-    assert preview["description"] == promoted_entry.description[:80]
-    assert preview["preview"] is True
-    assert preview["was_promoted"] is True
-    assert preview["entry_line"] == f"- [{promoted_entry.id}] {promoted_entry.description}"
-    assert payload == {
-        "ok": True,
-        "deleted_id": str(promoted_entry.id),
-        "description": "Prefer reversible schema migrations",
-        "deleted": True,
-        "was_promoted": True,
-    }
-    assert ValuesRepository(tmp_memory_dir).find_by_id(promoted_entry.id) is None
-    assert str(promoted_entry.id) not in agents_path.read_text(encoding="utf-8")
-
-
-def test_memory_values_delete_with_reason_echoes_back(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description="Prefer focused diffs",
-            category="workflow",
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    payload = json.loads(
-        memory_values_delete(
-            id=added["id"],
-            reason="cleanup duplicate value",
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload == {
-        "ok": True,
-        "deleted_id": added["id"],
-        "description": "Prefer focused diffs",
-        "deleted": True,
-        "was_promoted": False,
-        "reason": "cleanup duplicate value",
-    }
-
-
-def test_memory_values_delete_promoted_missing_markers_suggests_memory_init(
-    tmp_memory_dir: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_memory_dir.parent)
-    agents_path = tmp_memory_dir.parent / "AGENTS.md"
-    promoted_entry = _seed_promoted_entry(tmp_memory_dir)
-    agents_path.write_text("# Agent Rules\n", encoding="utf-8")
-
-    payload = json.loads(
-        memory_values_delete(
-            id=str(promoted_entry.id),
-            confirm=True,
-            memory_dir=str(tmp_memory_dir),
-        )
-    )
-
-    assert payload["ok"] is False
-    assert payload["error_type"] == "validation_error"
-    assert "Run memory_init to recreate them." in payload["message"]
-    assert "Run `memory_init`" in payload["hint"]

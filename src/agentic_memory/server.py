@@ -659,6 +659,189 @@ def _distillation_error_payload(message: str) -> str:
     )
 
 
+_DEFAULT_MAX_BATCH_SIZE = 50
+_MAX_BATCH_SIZE_ENV_VAR = "AGENTIC_MEMORY_MAX_BATCH_SIZE"
+_BATCH_ITEM_ID_MISSING = object()
+
+
+def _deserialize_payload(raw: str) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(raw))
+
+
+def _resolve_max_batch_size() -> int:
+    raw_value = os.environ.get(_MAX_BATCH_SIZE_ENV_VAR, str(_DEFAULT_MAX_BATCH_SIZE)).strip()
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return _DEFAULT_MAX_BATCH_SIZE
+    return parsed if parsed > 0 else _DEFAULT_MAX_BATCH_SIZE
+
+
+def _validate_batch_input(items: Any, *, field_name: str) -> str | None:
+    if not isinstance(items, list):
+        return _error_payload(
+            error_type="validation_error",
+            message=f"`{field_name}` must be a list.",
+            hint=f"Pass `{field_name}` as a non-empty list and retry.",
+            exit_code=2,
+        )
+    if not items:
+        return _error_payload(
+            error_type="validation_error",
+            message="Batch cannot be empty",
+            hint=f"Pass at least one item in `{field_name}` and retry.",
+            exit_code=2,
+        )
+
+    max_batch_size = _resolve_max_batch_size()
+    if len(items) > max_batch_size:
+        return _error_payload(
+            error_type="validation_error",
+            message=(
+                f"Batch size {len(items)} exceeds maximum {max_batch_size} "
+                f"(configurable via {_MAX_BATCH_SIZE_ENV_VAR})"
+            ),
+            hint=(
+                f"Split the request into batches of at most {max_batch_size} items, "
+                f"or raise `{_MAX_BATCH_SIZE_ENV_VAR}` and retry."
+            ),
+            exit_code=2,
+        )
+    return None
+
+
+def _batch_item_error_result(
+    index: int,
+    *,
+    item_id: str | None,
+    message: str,
+    hint: str | None,
+    error_type: str = "validation_error",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "index": index,
+        "ok": False,
+        "error_type": error_type,
+        "message": message,
+    }
+    result["id"] = item_id
+    if hint is not None:
+        result["hint"] = hint
+    return result
+
+
+def _invalid_batch_entry_result(
+    index: int,
+    *,
+    field_name: str,
+    schema_fields: tuple[str, ...],
+    payload: Any,
+    item_id: str | None,
+) -> dict[str, Any]:
+    return _batch_item_error_result(
+        index,
+        item_id=item_id,
+        message=f"Invalid `{field_name}` entry: required fields are missing or malformed.",
+        hint=_required_schema_hint(field_name, schema_fields, payload),
+    )
+
+
+def _batch_item_result_from_payload(
+    index: int,
+    raw_payload: str,
+    *,
+    item_id: object = _BATCH_ITEM_ID_MISSING,
+) -> dict[str, Any]:
+    payload = _deserialize_payload(raw_payload)
+    ok = bool(payload.pop("ok", True))
+    payload.pop("exit_code", None)
+
+    result: dict[str, Any] = {
+        "index": index,
+        "ok": ok,
+    }
+    if item_id is _BATCH_ITEM_ID_MISSING:
+        payload_id = payload.pop("id", None)
+        if payload_id is not None or not ok:
+            result["id"] = payload_id
+    else:
+        result["id"] = item_id
+        payload.pop("id", None)
+
+    result.update(payload)
+    return result
+
+
+def _batch_success_payload(results: list[dict[str, Any]]) -> str:
+    success_count = sum(1 for result in results if result["ok"])
+    return _success_payload(
+        {
+            "success_count": success_count,
+            "error_count": len(results) - success_count,
+            "results": results,
+        }
+    )
+
+
+def _require_mapping_item(
+    item: Any,
+    *,
+    index: int,
+    field_name: str,
+    schema_fields: tuple[str, ...],
+    item_id: str | None = None,
+) -> tuple[Mapping[str, Any] | None, dict[str, Any] | None]:
+    if not isinstance(item, Mapping):
+        return None, _invalid_batch_entry_result(
+            index,
+            field_name=field_name,
+            schema_fields=schema_fields,
+            payload=item,
+            item_id=item_id,
+        )
+
+    missing_fields = [field for field in schema_fields if field not in item]
+    if missing_fields:
+        return None, _invalid_batch_entry_result(
+            index,
+            field_name=field_name,
+            schema_fields=schema_fields,
+            payload=item,
+            item_id=item_id,
+        )
+    return item, None
+
+
+def _require_non_empty_string_field(
+    value: Any,
+    *,
+    index: int,
+    field_name: str,
+    item_id: str | None = None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    if not isinstance(value, str) or not value.strip():
+        return None, _batch_item_error_result(
+            index,
+            item_id=item_id,
+            message=f"Invalid `{field_name}` entry: expected a non-empty string.",
+            hint=f"Pass `{field_name}` as a non-empty string.",
+        )
+    return value, None
+
+
+def _require_batch_id(
+    item: Any, *, index: int, field_name: str = "ids"
+) -> tuple[str | None, dict[str, Any] | None]:
+    if not isinstance(item, str) or not item.strip():
+        return None, _batch_item_error_result(
+            index,
+            item_id=None,
+            message=f"Invalid `{field_name}` entry: expected a non-empty string id.",
+            hint=f"Pass `{field_name}` as a non-empty list of strings.",
+        )
+    return item.strip(), None
+
+
 _values_service = ValuesService()
 _distillation_preparer = DistillationPreparer()
 _promotion_service = PromotionService()
@@ -689,8 +872,7 @@ def _resolve_paths_from_task_id(task_id: str, memory_dir: Path) -> list[Path]:
     return resolved_paths
 
 
-@mcp.tool(annotations=_ADDITIVE)
-def memory_values_add(
+def _memory_values_add_single(
     description: str,
     category: str,
     confidence: float = 0.3,
@@ -751,6 +933,78 @@ def memory_values_add(
     return _success_payload(payload)
 
 
+@mcp.tool(annotations=_ADDITIVE)
+def memory_values_add(
+    entries: list[dict[str, Any]],
+    memory_dir: str | None = None,
+) -> str:
+    """Add one or more Values entries.
+
+    `entries` must be a non-empty list. Each item requires `description` and `category`.
+    Each item's `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
+    Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Promotion eligibility still requires
+    `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
+    `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
+    Each item's `evidence` accepts a list of evidence objects with shape
+    `{ref: str, summary: str, date: "YYYY-MM-DD"}`; the newest 10 are stored.
+    Secret detection rejects only the affected item with `validation_error`.
+    Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
+    per-item `ok`, and either `{id, path, category}` plus optional warnings/notifications,
+    or `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(entries, field_name="entries")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(entries):
+        entry, item_error = _require_mapping_item(
+            item,
+            index=item_index,
+            field_name="entries",
+            schema_fields=("description", "category"),
+        )
+        if item_error is not None:
+            results.append(item_error)
+            continue
+        assert entry is not None
+
+        description, description_error = _require_non_empty_string_field(
+            entry["description"],
+            index=item_index,
+            field_name="entries[].description",
+        )
+        if description_error is not None:
+            results.append(description_error)
+            continue
+        assert description is not None
+
+        category, category_error = _require_non_empty_string_field(
+            entry["category"],
+            index=item_index,
+            field_name="entries[].category",
+        )
+        if category_error is not None:
+            results.append(category_error)
+            continue
+        assert category is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_values_add_single(
+                    description=description,
+                    category=category,
+                    confidence=cast(float, entry.get("confidence", 0.3)),
+                    evidence=cast(list[dict[str, Any]] | None, entry.get("evidence")),
+                    memory_dir=memory_dir,
+                ),
+            )
+        )
+    return _batch_success_payload(results)
+
+
 @mcp.tool(annotations=_READONLY)
 def memory_values_search(
     query: str | None = None,
@@ -785,8 +1039,7 @@ def memory_values_search(
     )
 
 
-@mcp.tool(annotations=_IDEMPOTENT)
-def memory_values_update(
+def _memory_values_update_single(
     id: str,
     confidence: float | None = None,
     add_evidence: list[dict[str, Any]] | None = None,
@@ -822,6 +1075,64 @@ def memory_values_update(
         payload["warnings"] = secret_warnings
     payload.update(notifications)
     return _success_payload(payload)
+
+
+@mcp.tool(annotations=_IDEMPOTENT)
+def memory_values_update(
+    updates: list[dict[str, Any]],
+    memory_dir: str | None = None,
+) -> str:
+    """Update one or more Values entries.
+
+    `updates` must be a non-empty list. Each item requires `id` and may include
+    `confidence`, `add_evidence`, and/or `description`.
+    Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    `add_evidence` still accepts a list of evidence objects with shape
+    `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
+    Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
+    `id`, per-item `ok`, and either update notifications or `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(updates, field_name="updates")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(updates):
+        update, item_error = _require_mapping_item(
+            item,
+            index=item_index,
+            field_name="updates",
+            schema_fields=("id",),
+        )
+        if item_error is not None:
+            results.append(item_error)
+            continue
+        assert update is not None
+
+        item_id, id_error = _require_batch_id(
+            update["id"],
+            index=item_index,
+            field_name="updates[].id",
+        )
+        if id_error is not None:
+            results.append(id_error)
+            continue
+        assert item_id is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_values_update_single(
+                    id=item_id,
+                    confidence=cast(float | None, update.get("confidence")),
+                    add_evidence=cast(list[dict[str, Any]] | None, update.get("add_evidence")),
+                    description=cast(str | None, update.get("description")),
+                    memory_dir=memory_dir,
+                ),
+                item_id=item_id,
+            )
+        )
+    return _batch_success_payload(results)
 
 
 @mcp.tool(annotations=_READONLY)
@@ -1186,8 +1497,7 @@ def _commit_values(
     return _success_payload(payload)
 
 
-@mcp.tool(annotations=_DESTRUCTIVE)
-def memory_values_promote(
+def _memory_values_promote_single(
     id: str,
     confirm: bool = False,
     memory_dir: str | None = None,
@@ -1212,7 +1522,48 @@ def memory_values_promote(
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
-def memory_values_demote(
+def memory_values_promote(
+    ids: list[str],
+    confirm: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Promote one or more Values entries into AGENTS.md.
+
+    `ids` must be a non-empty list. `confirm` is shared across the whole batch:
+    `confirm=false` returns per-item previews without side effects, and `confirm=true`
+    performs the promotion. Each call validates batch size against
+    `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
+    `id`, per-item `ok`, and either promotion metadata / `would_promote`, or
+    `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(ids, field_name="ids")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(ids):
+        item_id, id_error = _require_batch_id(item, index=item_index)
+        if id_error is not None:
+            results.append(id_error)
+            continue
+        assert item_id is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_values_promote_single(
+                    id=item_id,
+                    confirm=confirm,
+                    memory_dir=memory_dir,
+                ),
+                item_id=item_id,
+            )
+        )
+    return _batch_success_payload(results)
+
+
+def _memory_values_demote_single(
     id: str,
     reason: str,
     confirm: bool = False,
@@ -1237,7 +1588,50 @@ def memory_values_demote(
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
-def memory_values_delete(
+def memory_values_demote(
+    ids: list[str],
+    reason: str,
+    confirm: bool = False,
+    memory_dir: str | None = None,
+) -> str:
+    """Demote one or more promoted Values entries from AGENTS.md.
+
+    `ids` must be a non-empty list. `reason` and `confirm` are shared across the batch.
+    `confirm=false` returns per-item previews without side effects, and `confirm=true`
+    performs the demotion. Each call validates batch size against
+    `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
+    `id`, per-item `ok`, and either demotion metadata / `would_demote`, or
+    `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(ids, field_name="ids")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(ids):
+        item_id, id_error = _require_batch_id(item, index=item_index)
+        if id_error is not None:
+            results.append(id_error)
+            continue
+        assert item_id is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_values_demote_single(
+                    id=item_id,
+                    reason=reason,
+                    confirm=confirm,
+                    memory_dir=memory_dir,
+                ),
+                item_id=item_id,
+            )
+        )
+    return _batch_success_payload(results)
+
+
+def _memory_values_delete_single(
     id: str,
     confirm: bool = False,
     reason: str | None = None,
@@ -1271,6 +1665,50 @@ def memory_values_delete(
             )
         return _values_error_payload(message)
     return _success_payload(payload)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def memory_values_delete(
+    ids: list[str],
+    confirm: bool = False,
+    reason: str | None = None,
+    memory_dir: str | None = None,
+) -> str:
+    """Delete one or more Values entries.
+
+    `ids` must be a non-empty list. `confirm` and optional `reason` are shared across
+    the batch. `confirm=false` returns per-item previews without deleting anything, and
+    `confirm=true` performs deletion plus AGENTS.md cleanup for promoted entries.
+    Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
+    `id`, per-item `ok`, and either deletion metadata / `would_delete`, or
+    `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(ids, field_name="ids")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(ids):
+        item_id, id_error = _require_batch_id(item, index=item_index)
+        if id_error is not None:
+            results.append(id_error)
+            continue
+        assert item_id is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_values_delete_single(
+                    id=item_id,
+                    confirm=confirm,
+                    reason=reason,
+                    memory_dir=memory_dir,
+                ),
+                item_id=item_id,
+            )
+        )
+    return _batch_success_payload(results)
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -1954,8 +2392,7 @@ def memory_update_weights(
     return _success_payload(result)
 
 
-@mcp.tool(annotations=_ADDITIVE)
-def memory_knowledge_add(
+def _memory_knowledge_add_single(
     title: str,
     content: str,
     domain: str,
@@ -2035,6 +2472,100 @@ def memory_knowledge_add(
     return _success_payload(payload)
 
 
+@mcp.tool(annotations=_ADDITIVE)
+def memory_knowledge_add(
+    entries: list[dict[str, Any]],
+    memory_dir: str | None = None,
+) -> str:
+    """Create one or more Knowledge entries.
+
+    `entries` must be a non-empty list. Each item requires `title`, `content`, and
+    `domain`; optional metadata includes `tags`, `accuracy`, `sources`, `source_type`,
+    `user_understanding`, and `related`. When omitted, `accuracy` defaults to
+    `"uncertain"` and `user_understanding` defaults to `"unknown"`.
+    Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Each item's `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
+    Secret detection rejects only the affected item with `validation_error`.
+    Returns `{ok, success_count, error_count, results}`. Top-level `ok` indicates the
+    batch was processed, not that every item succeeded. Each result includes `index`,
+    per-item `ok`, and either `{id, path, domain}` or `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(entries, field_name="entries")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(entries):
+        entry, item_error = _require_mapping_item(
+            item,
+            index=item_index,
+            field_name="entries",
+            schema_fields=("title", "content", "domain"),
+        )
+        if item_error is not None:
+            results.append(item_error)
+            continue
+        assert entry is not None
+
+        title, title_error = _require_non_empty_string_field(
+            entry["title"],
+            index=item_index,
+            field_name="entries[].title",
+        )
+        if title_error is not None:
+            results.append(title_error)
+            continue
+        assert title is not None
+
+        content, content_error = _require_non_empty_string_field(
+            entry["content"],
+            index=item_index,
+            field_name="entries[].content",
+        )
+        if content_error is not None:
+            results.append(content_error)
+            continue
+        assert content is not None
+
+        domain, domain_error = _require_non_empty_string_field(
+            entry["domain"],
+            index=item_index,
+            field_name="entries[].domain",
+        )
+        if domain_error is not None:
+            results.append(domain_error)
+            continue
+        assert domain is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_knowledge_add_single(
+                    title=title,
+                    content=content,
+                    domain=domain,
+                    tags=cast(list[str] | None, entry.get("tags")),
+                    accuracy=cast(
+                        Literal["verified", "likely", "uncertain"] | None,
+                        entry.get("accuracy"),
+                    ),
+                    sources=cast(list[dict[str, Any]] | None, entry.get("sources")),
+                    source_type=cast(
+                        Literal["memory_distillation", "autonomous_research", "user_taught"] | None,
+                        entry.get("source_type"),
+                    ),
+                    user_understanding=cast(
+                        Literal["unknown", "novice", "familiar", "proficient", "expert"] | None,
+                        entry.get("user_understanding"),
+                    ),
+                    related=cast(list[str] | None, entry.get("related")),
+                    memory_dir=memory_dir,
+                ),
+            )
+        )
+    return _batch_success_payload(results)
+
+
 @mcp.tool(annotations=_READONLY)
 def memory_knowledge_search(
     query: str | None = None,
@@ -2090,8 +2621,7 @@ def memory_knowledge_search(
     return _success_payload(payload)
 
 
-@mcp.tool(annotations=_IDEMPOTENT)
-def memory_knowledge_update(
+def _memory_knowledge_update_single(
     id: str,
     content: str | None = None,
     accuracy: Literal["verified", "likely", "uncertain"] | None = None,
@@ -2153,8 +2683,73 @@ def memory_knowledge_update(
     return _success_payload(payload)
 
 
-@mcp.tool(annotations=_DESTRUCTIVE)
-def memory_knowledge_delete(
+@mcp.tool(annotations=_IDEMPOTENT)
+def memory_knowledge_update(
+    updates: list[dict[str, Any]],
+    memory_dir: str | None = None,
+) -> str:
+    """Update selected fields on one or more Knowledge entries.
+
+    `updates` must be a non-empty list. Each item requires `id` and may include
+    `content`, `accuracy`, `sources`, `user_understanding`, `related`, and/or `tags`.
+    Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    `sources` and `related` remain append/merge operations, and related links stay
+    bidirectional. Returns `{ok, success_count, error_count, results}` with per-item
+    `index`, `id`, `ok`, and either update metadata or `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(updates, field_name="updates")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(updates):
+        update, item_error = _require_mapping_item(
+            item,
+            index=item_index,
+            field_name="updates",
+            schema_fields=("id",),
+        )
+        if item_error is not None:
+            results.append(item_error)
+            continue
+        assert update is not None
+
+        item_id, id_error = _require_batch_id(
+            update["id"],
+            index=item_index,
+            field_name="updates[].id",
+        )
+        if id_error is not None:
+            results.append(id_error)
+            continue
+        assert item_id is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_knowledge_update_single(
+                    id=item_id,
+                    content=cast(str | None, update.get("content")),
+                    accuracy=cast(
+                        Literal["verified", "likely", "uncertain"] | None,
+                        update.get("accuracy"),
+                    ),
+                    sources=cast(list[dict[str, Any]] | None, update.get("sources")),
+                    user_understanding=cast(
+                        Literal["unknown", "novice", "familiar", "proficient", "expert"] | None,
+                        update.get("user_understanding"),
+                    ),
+                    related=cast(list[str] | None, update.get("related")),
+                    tags=cast(list[str] | None, update.get("tags")),
+                    memory_dir=memory_dir,
+                ),
+                item_id=item_id,
+            )
+        )
+    return _batch_success_payload(results)
+
+
+def _memory_knowledge_delete_single(
     id: str,
     confirm: bool = False,
     reason: str | None = None,
@@ -2186,6 +2781,50 @@ def memory_knowledge_delete(
             default_hint="Provide a valid knowledge `id` and retry.",
         )
     return _success_payload(payload)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def memory_knowledge_delete(
+    ids: list[str],
+    confirm: bool = False,
+    reason: str | None = None,
+    memory_dir: str | None = None,
+) -> str:
+    """Delete one or more Knowledge entries and clean related back-links.
+
+    `ids` must be a non-empty list. `confirm` and optional `reason` are shared across
+    the batch. `confirm=false` returns per-item previews without deleting anything, and
+    `confirm=true` performs deletion plus related back-link cleanup.
+    Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
+    `id`, per-item `ok`, and either deletion metadata / `would_delete`, or
+    `{error_type, message, hint}`.
+    """
+    validation_error = _validate_batch_input(ids, field_name="ids")
+    if validation_error is not None:
+        return validation_error
+
+    results: list[dict[str, Any]] = []
+    for item_index, item in enumerate(ids):
+        item_id, id_error = _require_batch_id(item, index=item_index)
+        if id_error is not None:
+            results.append(id_error)
+            continue
+        assert item_id is not None
+
+        results.append(
+            _batch_item_result_from_payload(
+                item_index,
+                _memory_knowledge_delete_single(
+                    id=item_id,
+                    confirm=confirm,
+                    reason=reason,
+                    memory_dir=memory_dir,
+                ),
+                item_id=item_id,
+            )
+        )
+    return _batch_success_payload(results)
 
 
 def run_server(
