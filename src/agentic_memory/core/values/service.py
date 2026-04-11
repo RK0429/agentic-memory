@@ -337,6 +337,7 @@ class ValuesService:
         candidates = [
             entry
             for entry in entries
+            if entry.category == category
             if not self._is_duplicate(entry, description=description, category=category)
         ]
         documents = [self._score_document(entry) for entry in candidates]

@@ -115,6 +115,43 @@ def test_add_reports_similarity_and_keeps_initial_evidence_newest_first(
     assert entry.promotion_state.eligible is True
 
 
+def test_add_no_similarity_warning_for_different_category(tmp_memory_dir: Path) -> None:
+    service = ValuesService()
+    _seed_entry(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky changes",
+        category="review",
+    )
+
+    _entry, warnings = service.add(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky deployments",
+        category="operations",
+    )
+
+    similarity_warnings = [w for w in warnings if w.startswith("Similar value exists")]
+    assert similarity_warnings == []
+
+
+def test_add_similarity_warning_fires_for_same_category(tmp_memory_dir: Path) -> None:
+    service = ValuesService()
+    first = _seed_entry(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky changes",
+        category="review",
+    )
+
+    _entry, warnings = service.add(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky deployments",
+        category="review",
+    )
+
+    similarity_warnings = [w for w in warnings if w.startswith("Similar value exists")]
+    assert similarity_warnings
+    assert str(first.id) in similarity_warnings[0]
+
+
 def test_add_no_similarity_warning_for_cjk_short_prefix(tmp_memory_dir: Path) -> None:
     """Short shared CJK prefix should not trigger false positive similarity warning."""
     service = ValuesService()
