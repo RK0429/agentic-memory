@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import agentic_memory.server as server_module
 from agentic_memory.core.values import (
     Evidence,
     SourceType,
@@ -219,8 +220,45 @@ def test_memory_values_add_isolates_secret_and_schema_errors(
     }
     assert payload["results"][2]["ok"] is False
     assert payload["results"][3]["ok"] is False
-    assert "{ref, summary, date}" in payload["results"][3]["hint"]
+    assert "{ref, summary, date (YYYY-MM-DD)}" in payload["results"][3]["hint"]
     assert len(list((tmp_memory_dir / "values").glob("*.md"))) == 1
+
+
+def test_memory_values_add_invalid_evidence_date_reports_iso_hint(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    payload = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer ISO formatted evidence dates",
+                    "category": "workflow",
+                    "evidence": [
+                        {
+                            "ref": "memory/2026-04-10/note.md",
+                            "summary": "bad date",
+                            "date": "2026/04/10",
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert (
+        payload["message"] == "Invalid `evidence` entry: required fields are missing or malformed."
+    )
+    assert "{ref, summary, date (YYYY-MM-DD)}" in payload["hint"]
+
+    public_doc = server_module.memory_values_add.__doc__ or ""
+    private_doc = server_module._memory_values_add_single.__doc__ or ""
+    assert "YYYY-MM-DD" in public_doc
+    assert "YYYY-MM-DD" in private_doc
 
 
 def test_memory_values_add_rejects_malformed_description_per_item_and_continues(
@@ -391,6 +429,62 @@ def test_memory_values_search_and_list_behaviors(tmp_memory_dir: Path, monkeypat
     assert list_payload["entries"][0]["id"] == str(promoted_entry.id)
 
 
+def test_memory_values_search_supports_cjk_full_content_and_toggle(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    created = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "コードレビュー観点を標準化する",
+                    "category": "review",
+                    "confidence": 0.9,
+                    "evidence": [_evidence(1)],
+                }
+            ],
+        )
+    )
+
+    exact_payload = json.loads(
+        memory_values_search(query="レビュー", memory_dir=str(tmp_memory_dir))
+    )
+    assert exact_payload["ok"] is True
+    assert exact_payload["entries"][0]["id"] == created["id"]
+    assert "evidence" not in exact_payload["entries"][0]
+
+    expanded_payload = json.loads(
+        memory_values_search(query="レビュー観点集", memory_dir=str(tmp_memory_dir))
+    )
+    assert expanded_payload["ok"] is True
+    assert expanded_payload["entries"][0]["id"] == created["id"]
+
+    disabled_payload = json.loads(
+        memory_values_search(
+            query="レビュー観点集",
+            no_cjk_expand=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    assert disabled_payload == {"entries": [], "ok": True}
+
+    full_payload = json.loads(
+        memory_values_search(
+            query="レビュー",
+            include_full_content=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    entry = full_payload["entries"][0]
+    assert entry["evidence"] == [_evidence(1)]
+    assert "source_type" in entry
+    assert "created_at" in entry
+    assert "updated_at" in entry
+
+
 def test_memory_values_update_validates_missing_fields_and_add_evidence_shape(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -467,8 +561,11 @@ def test_memory_values_update_isolates_missing_id_and_emits_notifications(
     assert payload["ok"] is True
     assert payload["success_count"] == 3
     assert payload["error_count"] == 1
+    assert payload["results"][0]["updated_fields"] == ["evidence"]
     assert payload["results"][0]["promotion_candidate"] is True
+    assert payload["results"][1]["updated_fields"] == ["confidence"]
     assert payload["results"][1]["demotion_candidate"] is True
+    assert payload["results"][2]["updated_fields"] == ["description"]
     assert payload["results"][2]["warnings"] == [
         "Content may contain secrets (detected: generic_api_token). Review before sharing."
     ]
@@ -631,7 +728,14 @@ def test_memory_values_demote_bulk_preview_confirm_and_isolation(
     assert preview["error_count"] == 1
     assert preview["results"][0]["would_demote"] is True
     assert preview["results"][1]["would_demote"] is True
-    assert preview["results"][2]["ok"] is False
+    assert preview["results"][2] == {
+        "index": 2,
+        "ok": False,
+        "id": unpromoted["id"],
+        "error_type": "state_error",
+        "message": f"Values entry is not promoted: {unpromoted['id']}",
+        "hint": "This entry is not currently promoted. No demotion is needed.",
+    }
     assert agents_path.read_text(encoding="utf-8").count("- [") == 2
 
     confirmed = _values_demote_payload(

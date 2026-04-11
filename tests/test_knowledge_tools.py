@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import agentic_memory.server as server_module
 from agentic_memory.core.knowledge import KnowledgeRepository
 from agentic_memory.server import (
     memory_knowledge_add,
@@ -120,7 +121,20 @@ def test_memory_knowledge_tools_add_search_update_flow(
         "ok": True,
         "success_count": 1,
         "error_count": 0,
-        "results": [{"index": 0, "ok": True, "id": base["id"]}],
+        "results": [
+            {
+                "index": 0,
+                "ok": True,
+                "id": base["id"],
+                "updated_fields": [
+                    "accuracy",
+                    "sources",
+                    "user_understanding",
+                    "related",
+                    "tags",
+                ],
+            }
+        ],
     }
 
     updated_entry = repository.load(base["id"])
@@ -387,6 +401,93 @@ def test_memory_knowledge_add_validates_schema_enum_defaults_and_batch_limits(
     assert empty["ok"] is False
     assert empty["error_type"] == "validation_error"
     assert empty["message"] == "Batch cannot be empty"
+
+
+def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    created = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "設計の原則",
+                    "content": "KISS 原則と YAGNI 原則を優先する。",
+                    "domain": "design",
+                    "tags": ["architecture"],
+                    "sources": [
+                        {
+                            "type": "document",
+                            "ref": "docs/design-principles.md",
+                            "summary": "設計原則のメモ",
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+
+    exact_payload = json.loads(
+        memory_knowledge_search(query="原則", memory_dir=str(tmp_memory_dir))
+    )
+    assert exact_payload["ok"] is True
+    assert exact_payload["entries"][0]["id"] == created["id"]
+    assert "content" not in exact_payload["entries"][0]
+
+    expanded_payload = json.loads(
+        memory_knowledge_search(query="原則詳細論", memory_dir=str(tmp_memory_dir))
+    )
+    assert expanded_payload["ok"] is True
+    assert expanded_payload["entries"][0]["id"] == created["id"]
+
+    disabled_payload = json.loads(
+        memory_knowledge_search(
+            query="原則詳細論",
+            no_cjk_expand=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    assert disabled_payload == {"entries": [], "ok": True}
+
+    full_payload = json.loads(
+        memory_knowledge_search(
+            query="原則",
+            include_full_content=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    entry = full_payload["entries"][0]
+    assert entry["content"] == "KISS 原則と YAGNI 原則を優先する。"
+    assert entry["sources"] == [
+        {
+            "type": "document",
+            "ref": "docs/design-principles.md",
+            "summary": "設計原則のメモ",
+        }
+    ]
+    assert entry["tags"] == ["architecture"]
+    assert entry["related"] == []
+    assert "source_type" in entry
+    assert "created_at" in entry
+    assert "updated_at" in entry
+
+
+def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
+    doc = server_module.memory_knowledge_add.__doc__ or ""
+
+    assert "{type: str, ref: str, summary: str}" in doc
+    for value in (
+        '"memory_note"',
+        '"web"',
+        '"user_direct"',
+        '"document"',
+        '"code"',
+        '"other"',
+    ):
+        assert value in doc
 
 
 def test_memory_knowledge_update_reports_warnings_and_isolates_missing_id(

@@ -15,7 +15,7 @@ from agentic_memory.core.knowledge.model import (
     is_substantially_equal,
 )
 from agentic_memory.core.knowledge.repository import KnowledgeRepository
-from agentic_memory.core.query import parse_query
+from agentic_memory.core.query import expand_terms, parse_query
 from agentic_memory.core.scorer import build_idf_cache, score_generic_entry
 from agentic_memory.core.security import SecretScanPolicy
 
@@ -76,6 +76,7 @@ class KnowledgeService:
         accuracy: Accuracy | str | None = None,
         user_understanding: UserUnderstanding | str | None = None,
         top: int = 10,
+        no_cjk_expand: bool = False,
     ) -> list[tuple[float, KnowledgeEntry]]:
         normalized_query = (query or "").strip()
         normalized_domain = self._normalize_domain(domain)
@@ -108,6 +109,7 @@ class KnowledgeService:
             return [(0.0, entry) for entry in filtered_entries[:top]]
 
         qterms = parse_query(normalized_query)
+        qterms = expand_terms(qterms, config={}, enable=True, no_cjk_expand=no_cjk_expand)
         docs = [self._field_texts(entry) for entry in entries]
         idf_cache = build_idf_cache(qterms, docs)
         avg_field_lengths = self._average_field_lengths(docs)

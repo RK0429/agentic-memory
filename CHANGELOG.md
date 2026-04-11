@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-04-12
+
+### Added
+
+- `memory_knowledge_search` and `memory_values_search` accept `no_cjk_expand` flag to suppress CJK n-gram expansion when exact matching is preferred
+- `memory_knowledge_search` and `memory_values_search` accept `include_full_content` flag to return full content, sources/evidence, and timestamps alongside the default summary
+- `memory_knowledge_update` and `memory_values_update` responses now include `updated_fields` listing which fields were changed
+- `memory_knowledge_add` docstring documents accepted `sources` object schema (`{type, ref, summary}`) and valid `type` values
+
+### Fixed
+
+- `memory_values_add` and `memory_values_update` evidence date validation now shows ISO 8601 format hint (`YYYY-MM-DD`) instead of generic missing-field message
+- `memory_values_demote` for non-promoted entries now returns structured `state_error` with actionable hint instead of a generic error
+
 ## [0.18.0] - 2026-04-11
 
 ### BREAKING CHANGES
@@ -706,7 +720,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/RK0429/agentic-memory/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/RK0429/agentic-memory/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/RK0429/agentic-memory/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/RK0429/agentic-memory/compare/v0.16.2...v0.16.3

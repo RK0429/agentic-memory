@@ -31,6 +31,7 @@ from agentic_memory.core import (
 from agentic_memory.core.distillation.prepare import DistillationPreparer
 from agentic_memory.core.knowledge import (
     DuplicateKnowledgeError,
+    KnowledgeEntry,
     KnowledgeService,
     Source,
 )
@@ -413,6 +414,37 @@ def _knowledge_content_snippet(content: str, limit: int = 200) -> str:
     return normalized[:limit]
 
 
+def _knowledge_entry_payload(
+    entry: KnowledgeEntry,
+    *,
+    score: float,
+    include_full_content: bool = False,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": str(entry.id),
+        "title": entry.title,
+        "domain": str(entry.domain),
+        "accuracy": str(entry.accuracy),
+        "user_understanding": str(entry.user_understanding),
+        "content_snippet": _knowledge_content_snippet(entry.content),
+        "score": round(score, 6),
+    }
+    if include_full_content:
+        entry_dict = entry.to_dict()
+        payload.update(
+            {
+                "content": entry_dict["content"],
+                "sources": entry_dict["sources"],
+                "tags": entry_dict["tags"],
+                "related": entry_dict["related"],
+                "source_type": entry_dict["source_type"],
+                "created_at": entry_dict["created_at"],
+                "updated_at": entry_dict["updated_at"],
+            }
+        )
+    return payload
+
+
 def _flatten_results(
     results: list,
     exclude: frozenset[str] = frozenset(),
@@ -551,7 +583,12 @@ def _filter_notes_by_since(notes: list[Path], since: str | None) -> list[Path]:
     return filtered
 
 
-def _values_entry_payload(entry: ValuesEntry, *, score: float | None = None) -> dict[str, Any]:
+def _values_entry_payload(
+    entry: ValuesEntry,
+    *,
+    score: float | None = None,
+    include_full_content: bool = False,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": str(entry.id),
         "description": entry.description,
@@ -562,6 +599,16 @@ def _values_entry_payload(entry: ValuesEntry, *, score: float | None = None) -> 
     }
     if score is not None:
         payload["score"] = score
+    if include_full_content:
+        entry_dict = entry.to_dict()
+        payload.update(
+            {
+                "evidence": entry_dict["evidence"],
+                "source_type": entry_dict["source_type"],
+                "created_at": entry_dict["created_at"],
+                "updated_at": entry_dict["updated_at"],
+            }
+        )
     return payload
 
 
@@ -592,6 +639,12 @@ def _values_error_payload(message: str) -> str:
                 f"{PromotionManager.EVIDENCE_THRESHOLD} evidence items via "
                 "memory_values_update, then retry promotion."
             ),
+        )
+    if text.startswith("Values entry is not promoted:"):
+        return _error_payload(
+            error_type="state_error",
+            message=text,
+            hint="This entry is not currently promoted. No demotion is needed.",
         )
     return _error_payload(
         error_type="validation_error",
@@ -888,6 +941,7 @@ def _memory_values_add_single(
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     `evidence` accepts a list of evidence objects with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
+    `evidence[].date` must use ISO 8601 date format (`YYYY-MM-DD`).
     The newest 10 evidence objects are stored.
     Secret detection blocks the call with `error_type="validation_error"`.
     Returns `{ok: true, id, path, category}` where `category` is the normalized value,
@@ -916,9 +970,23 @@ def _memory_values_add_single(
         return _error_payload(
             error_type="validation_error",
             message="Invalid `evidence` entry: required fields are missing or malformed.",
-            hint=_required_schema_hint("evidence", ("ref", "summary", "date"), evidence),
+            hint=_required_schema_hint(
+                "evidence",
+                ("ref", "summary", "date (YYYY-MM-DD)"),
+                evidence,
+            ),
         )
     except ValueError as exc:
+        if evidence is not None and "isoformat" in str(exc).lower():
+            return _error_payload(
+                error_type="validation_error",
+                message="Invalid `evidence` entry: required fields are missing or malformed.",
+                hint=_required_schema_hint(
+                    "evidence",
+                    ("ref", "summary", "date (YYYY-MM-DD)"),
+                    evidence,
+                ),
+            )
         return _values_error_payload(str(exc))
 
     payload: dict[str, Any] = {
@@ -948,6 +1016,7 @@ def memory_values_add(
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     Each item's `evidence` accepts a list of evidence objects with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`; the newest 10 are stored.
+    `evidence[].date` must use ISO 8601 date format (`YYYY-MM-DD`).
     Secret detection rejects only the affected item with `validation_error`.
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     per-item `ok`, and either `{id, path, category}` plus optional warnings/notifications,
@@ -1011,13 +1080,18 @@ def memory_values_search(
     category: str | None = None,
     min_confidence: float = 0.0,
     top: int = 5,
+    no_cjk_expand: bool = False,
+    include_full_content: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Search Values entries by query and/or category.
 
     At least one of `query` or `category` is required.
     `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
+    CJK query expansion is enabled by default; set `no_cjk_expand=true` to suppress
+    n-gram expansion for Japanese/Chinese/Korean search terms.
     Results include score, confidence, evidence count, and promotion state.
+    Set `include_full_content=true` to also return evidence and timestamps.
     """
     resolved = _resolve_dir(memory_dir)
     try:
@@ -1027,6 +1101,7 @@ def memory_values_search(
             category=category,
             min_confidence=min_confidence,
             top=top,
+            no_cjk_expand=no_cjk_expand,
         )
     except ValueError as exc:
         return _validation_error_payload(
@@ -1035,7 +1110,16 @@ def memory_values_search(
         )
 
     return _success_payload(
-        {"entries": [_values_entry_payload(entry, score=score) for score, entry in results]}
+        {
+            "entries": [
+                _values_entry_payload(
+                    entry,
+                    score=score,
+                    include_full_content=include_full_content,
+                )
+                for score, entry in results
+            ]
+        }
     )
 
 
@@ -1053,11 +1137,20 @@ def _memory_values_update_single(
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     `add_evidence` accepts a list of evidence objects, each with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
-    Returns the updated ID. Includes `promotion_candidate: true` when the entry
-    becomes eligible for promotion, or `demotion_candidate: true` when a promoted
-    entry's confidence drops. Includes `warnings` for secret detection.
+    Returns the updated ID plus `updated_fields`. Includes `promotion_candidate: true`
+    when the entry becomes eligible for promotion, or `demotion_candidate: true` when
+    a promoted entry's confidence drops. Includes `warnings` for secret detection.
     """
     resolved = _resolve_dir(memory_dir)
+    updated_fields = [
+        name
+        for name, value in [
+            ("confidence", confidence),
+            ("evidence", add_evidence),
+            ("description", description),
+        ]
+        if value is not None
+    ]
     try:
         entry, notifications = _values_service.update(
             resolved,
@@ -1066,10 +1159,44 @@ def _memory_values_update_single(
             add_evidence=add_evidence,
             description=description,
         )
-    except (FileNotFoundError, TypeError, ValueError) as exc:
+    except KeyError:
+        return _error_payload(
+            error_type="validation_error",
+            message="Invalid `add_evidence` entry: required fields are missing or malformed.",
+            hint=_required_schema_hint(
+                "add_evidence",
+                ("ref", "summary", "date (YYYY-MM-DD)"),
+                add_evidence,
+            ),
+        )
+    except TypeError as exc:
+        if str(exc) == "`add_evidence` must be a list of evidence objects.":
+            return _values_error_payload(str(exc))
+        return _error_payload(
+            error_type="validation_error",
+            message="Invalid `add_evidence` entry: required fields are missing or malformed.",
+            hint=_required_schema_hint(
+                "add_evidence",
+                ("ref", "summary", "date (YYYY-MM-DD)"),
+                add_evidence,
+            ),
+        )
+    except FileNotFoundError as exc:
+        return _values_error_payload(str(exc))
+    except ValueError as exc:
+        if add_evidence is not None and "isoformat" in str(exc).lower():
+            return _error_payload(
+                error_type="validation_error",
+                message="Invalid `add_evidence` entry: required fields are missing or malformed.",
+                hint=_required_schema_hint(
+                    "add_evidence",
+                    ("ref", "summary", "date (YYYY-MM-DD)"),
+                    add_evidence,
+                ),
+            )
         return _values_error_payload(str(exc))
 
-    payload: dict[str, Any] = {"id": str(entry.id)}
+    payload: dict[str, Any] = {"id": str(entry.id), "updated_fields": updated_fields}
     secret_warnings = notifications.pop("secret_warnings", [])
     if secret_warnings:
         payload["warnings"] = secret_warnings
@@ -2485,6 +2612,9 @@ def memory_knowledge_add(
     `"uncertain"` and `user_understanding` defaults to `"unknown"`.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
     Each item's `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
+    `sources` accepts a list of source objects with shape
+    `{type: str, ref: str, summary: str}`. Valid `type` values:
+    `"memory_note"`, `"web"`, `"user_direct"`, `"document"`, `"code"`, `"other"`.
     Secret detection rejects only the affected item with `validation_error`.
     Returns `{ok, success_count, error_count, results}`. Top-level `ok` indicates the
     batch was processed, not that every item succeeded. Each result includes `index`,
@@ -2574,6 +2704,8 @@ def memory_knowledge_search(
     user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
     | None = None,
     top: int = 10,
+    no_cjk_expand: bool = False,
+    include_full_content: bool = False,
     memory_dir: str | None = None,
 ) -> str:
     """Search Knowledge entries by text query and/or domain.
@@ -2582,7 +2714,10 @@ def memory_knowledge_search(
     over title/content/domain/tags. Domain-only searches return the filtered entries in
     `updated_at` descending order. The `domain` filter is normalized to kebab-case
     (e.g. `"coding_style"` → `"coding-style"`). Optional `accuracy` and
-    `user_understanding` filters are applied to the result set.
+    `user_understanding` filters are applied to the result set. CJK query expansion is
+    enabled by default; set `no_cjk_expand=true` to suppress n-gram expansion for
+    Japanese/Chinese/Korean search terms. Set `include_full_content=true` to also
+    return the full content and metadata fields.
     Returns `{ok: true, entries: [...]}` with each entry
     containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
     `content_snippet`, and `score`.
@@ -2597,6 +2732,7 @@ def memory_knowledge_search(
             accuracy=accuracy,
             user_understanding=user_understanding,
             top=top,
+            no_cjk_expand=no_cjk_expand,
         )
     except ValueError as exc:
         return _validation_error_payload(
@@ -2606,15 +2742,11 @@ def memory_knowledge_search(
 
     payload = {
         "entries": [
-            {
-                "id": str(entry.id),
-                "title": entry.title,
-                "domain": str(entry.domain),
-                "accuracy": str(entry.accuracy),
-                "user_understanding": str(entry.user_understanding),
-                "content_snippet": _knowledge_content_snippet(entry.content),
-                "score": round(score, 6),
-            }
+            _knowledge_entry_payload(
+                entry,
+                score=score,
+                include_full_content=include_full_content,
+            )
             for score, entry in results
         ]
     }
@@ -2637,12 +2769,24 @@ def _memory_knowledge_update_single(
     `id` identifies the knowledge entry. At least one of `content`, `accuracy`,
     `sources`, `user_understanding`, `related`, or `tags` must be provided.
     `sources` and `related` are appended/merged instead of replaced, and `related`
-    links are maintained bidirectionally. Returns `{ok: true, id}` on success and
-    includes `warnings` when updated content may contain secrets.
+    links are maintained bidirectionally. Returns `{ok: true, id, updated_fields}` on
+    success and includes `warnings` when updated content may contain secrets.
     """
     resolved = _resolve_dir(memory_dir)
     service = KnowledgeService()
     typed_sources: list[Source | dict[str, Any]] | None = cast(Any, sources)
+    updated_fields = [
+        name
+        for name, value in [
+            ("content", content),
+            ("accuracy", accuracy),
+            ("sources", sources),
+            ("user_understanding", user_understanding),
+            ("related", related),
+            ("tags", tags),
+        ]
+        if value is not None
+    ]
     try:
         entry = service.update(
             memory_dir=resolved,
@@ -2677,7 +2821,7 @@ def _memory_knowledge_update_single(
             str(exc),
             default_hint="Provide at least one update field and valid metadata values.",
         )
-    payload: dict[str, Any] = {"id": str(entry.id)}
+    payload: dict[str, Any] = {"id": str(entry.id), "updated_fields": updated_fields}
     if service.last_warnings:
         payload["warnings"] = service.last_warnings
     return _success_payload(payload)

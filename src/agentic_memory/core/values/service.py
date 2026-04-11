@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from agentic_memory.core import tokenizer as _tokenizer
-from agentic_memory.core.query import parse_query
+from agentic_memory.core.query import expand_terms, parse_query
 from agentic_memory.core.scorer import build_idf_cache, score_generic_entry
 from agentic_memory.core.security import SecretScanPolicy
 from agentic_memory.core.values.agents_md import AgentsMdAdapter
@@ -101,6 +101,7 @@ class ValuesService:
         category: str | None = None,
         min_confidence: float = 0.0,
         top: int = 5,
+        no_cjk_expand: bool = False,
     ) -> list[tuple[float, ValuesEntry]]:
         if top <= 0:
             raise ValueError("top must be greater than 0")
@@ -121,6 +122,7 @@ class ValuesService:
             return [(entry.confidence, entry) for entry in ordered[:top]]
 
         qterms = parse_query(query_text)
+        qterms = expand_terms(qterms, config={}, enable=True, no_cjk_expand=no_cjk_expand)
         if not qterms:
             return []
 
