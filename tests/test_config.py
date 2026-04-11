@@ -77,7 +77,7 @@ def test_init_memory_dir_recognizes_annotated_promoted_values_markers(tmp_path: 
     annotated_begin = (
         "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->"
     )
-    annotated_end = "<!-- END:PROMOTED_VALUES -->"
+    annotated_end = "<!-- END:PROMOTED_VALUES (agentic-memory managed) -->"
     original = (
         "# Agent Rules\n\n"
         "## 内面化された価値観\n\n"
@@ -90,11 +90,42 @@ def test_init_memory_dir_recognizes_annotated_promoted_values_markers(tmp_path: 
     config.init_memory_dir(memory_dir)
 
     content = agents_path.read_text(encoding="utf-8")
-    # The original annotated block must be preserved unchanged.
+    # Both annotated marker lines must be preserved unchanged.
     assert annotated_begin in content
+    assert annotated_end in content
     # No bare-form duplicate should be appended.
     assert content.count("BEGIN:PROMOTED_VALUES") == 1
     assert content.count("END:PROMOTED_VALUES") == 1
+
+
+def test_init_memory_dir_ignores_similarly_named_markers(tmp_path: Path) -> None:
+    """Marker detection must use word-boundary anchors to reject typos.
+
+    The PROMOTED_VALUES detection regex uses ``\\b`` (word boundary) so that
+    derivative names such as ``PROMOTED_VALUES_FOO`` or ``PROMOTED_VALUESXYZ``
+    are *not* mistaken for the canonical PROMOTED_VALUES markers. Without the
+    word boundary, a future refactor that simplifies the regex (for example,
+    relaxing ``\\b.*-->$`` to ``\\s*.*-->$``) would silently start matching
+    these typos. This negative test locks in the false-positive protection.
+    """
+
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(
+        "# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES_FOO -->\n<!-- END:PROMOTED_VALUES_FOO -->\n",
+        encoding="utf-8",
+    )
+
+    config.init_memory_dir(memory_dir)
+
+    content = agents_path.read_text(encoding="utf-8")
+    # The unrelated _FOO markers must remain untouched.
+    assert "BEGIN:PROMOTED_VALUES_FOO" in content
+    assert "END:PROMOTED_VALUES_FOO" in content
+    # And the canonical bare markers must be appended exactly once because
+    # the _FOO markers are not recognized as the canonical block.
+    assert content.count(config.PROMOTED_VALUES_BEGIN) == 1
+    assert content.count(config.PROMOTED_VALUES_END) == 1
 
 
 def test_init_dense_config(tmp_path: Path) -> None:
