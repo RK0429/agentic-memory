@@ -227,8 +227,9 @@ class ValuesService:
                 raise FileNotFoundError("AGENTS.md not found")
 
             preview["agents_md_path"] = str(agents_md_path)
-            preview["entry_line"] = (
-                f"- [{entry.id}] {self._agents_md_adapter.project_description(entry.description)}"
+            preview["entry_line"] = self._agents_md_adapter.format_entry_line(
+                description=entry.description,
+                entry_id=str(entry.id),
             )
 
         if not confirm:
