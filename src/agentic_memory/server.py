@@ -659,8 +659,8 @@ def memory_values_add(
 
     `description` and `category` are required.
     `confidence` defaults to 0.3.
-    Promotion eligibility requires `confidence >= CONFIDENCE_THRESHOLD (0.8)` and
-    `evidence_count >= EVIDENCE_THRESHOLD (5)`.
+    Promotion eligibility requires `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
+    `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     `evidence` accepts a list of evidence objects with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
     The newest 10 evidence objects are stored.
@@ -739,8 +739,8 @@ def memory_values_update(
     """Update one Values entry.
 
     At least one of `confidence`, `add_evidence`, or `description` must be provided.
-    Promotion eligibility requires `confidence >= CONFIDENCE_THRESHOLD (0.8)` and
-    `evidence_count >= EVIDENCE_THRESHOLD (5)`.
+    Promotion eligibility requires `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
+    `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     `add_evidence` accepts a list of evidence objects, each with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
     Returns the updated ID. Includes `promotion_candidate: true` when the entry
@@ -1136,8 +1136,8 @@ def memory_values_promote(
 ) -> str:
     """Promote one Values entry into AGENTS.md.
 
-    Promotion eligibility requires `confidence >= CONFIDENCE_THRESHOLD (0.8)` and
-    `evidence_count >= EVIDENCE_THRESHOLD (5)`.
+    Promotion eligibility requires `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
+    `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     `confirm=true` is required for the actual promotion.
     `confirm=false` returns a preview without making changes.
     """
