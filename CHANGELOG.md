@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+## [0.16.2] - 2026-04-11
+
+### Fixed
+
+- Values evidence eviction now keeps the newest 10 entries by date when appended evidence would otherwise exceed the storage limit
+- Similar-value warnings now compare entries only within the same category, reducing false positives across unrelated categories
+- `memory_values_update` and `memory_values_promote` now return more actionable validation errors and recovery hints
+
+### Documentation
+
+- Documented kebab-case normalization for `domain` and `category` parameters in MCP tool docstrings
+
 ## [0.16.1] - 2026-04-11
 
 ### Changed
@@ -565,3 +577,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional Japanese tokenization (sudachipy)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
+
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/RK0429/agentic-memory/compare/v0.16.1...v0.16.2
+[0.16.1]: https://github.com/RK0429/agentic-memory/compare/v0.16.0...v0.16.1
