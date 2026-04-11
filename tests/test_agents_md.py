@@ -103,6 +103,35 @@ def test_list_append_and_remove_entries(tmp_path: Path, begin_marker: str, end_m
     assert adapter.list_entries(agents_path) == ["- [v-2] new value"]
 
 
+def test_lock_dir_places_lock_outside_agents_md_directory(tmp_path: Path) -> None:
+    """When callers pass `lock_dir`, the AGENTS.md.lock file must not appear
+    next to AGENTS.md. Production callers (promote/demote/delete/health) rely
+    on this to keep the workspace root clean."""
+    adapter = AgentsMdAdapter()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agents_path = workspace / "AGENTS.md"
+    agents_path.write_text(_agents_content(), encoding="utf-8")
+
+    memory_dir = workspace / "memory"
+    memory_dir.mkdir()
+
+    adapter.append_entry(agents_path, "new value", "v-1", lock_dir=memory_dir)
+    adapter.update_entry(agents_path, "updated value", "v-1", lock_dir=memory_dir)
+    adapter.remove_entry(agents_path, "v-1", lock_dir=memory_dir)
+
+    # The workspace directory containing AGENTS.md must not be polluted with
+    # the implementation-detail lock file.
+    assert not (workspace / "AGENTS.md.lock").exists()
+
+    # The lock file lives inside memory_dir, which is already gitignored by
+    # typical agentic-workspace setups.
+    assert (memory_dir / "_agents_md.lock").exists()
+
+    # Only AGENTS.md itself (and memory/) remain at the workspace level.
+    assert sorted(p.name for p in workspace.iterdir()) == ["AGENTS.md", "memory"]
+
+
 def test_adapter_requires_valid_markers(tmp_path: Path) -> None:
     adapter = AgentsMdAdapter()
     agents_path = tmp_path / "AGENTS.md"

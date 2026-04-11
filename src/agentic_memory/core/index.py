@@ -590,8 +590,14 @@ def _index_lock_path(index_path: Path) -> Path:
     return Path(f"{index_path}.lock")
 
 
-def _acquire_index_lock(index_path: Path, timeout_seconds: float = 5.0) -> TextIO:
-    lock_path = _index_lock_path(index_path)
+def _acquire_file_lock(lock_path: Path, timeout_seconds: float = 5.0) -> TextIO:
+    """Acquire an exclusive advisory lock at `lock_path`.
+
+    Unlike `_acquire_index_lock`, this helper treats `lock_path` as the actual
+    lock file path (no `.lock` suffix is appended). Callers can place lock
+    files wherever they want — useful when the protected resource and the lock
+    file should live in different directories.
+    """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = lock_path.open("w", encoding="utf-8")  # noqa: SIM115
     deadline = time.monotonic() + timeout_seconds
@@ -602,8 +608,13 @@ def _acquire_index_lock(index_path: Path, timeout_seconds: float = 5.0) -> TextI
         except BlockingIOError as exc:
             if time.monotonic() >= deadline:
                 lock_file.close()
-                raise TimeoutError("Could not acquire index lock within 5s") from exc
+                raise TimeoutError("Could not acquire file lock within 5s") from exc
             time.sleep(0.1)
+
+
+def _acquire_index_lock(index_path: Path, timeout_seconds: float = 5.0) -> TextIO:
+    """Acquire a sibling `.lock` file next to `index_path`."""
+    return _acquire_file_lock(_index_lock_path(index_path), timeout_seconds=timeout_seconds)
 
 
 def _read_index_rows(index_path: Path) -> list[dict]:

@@ -3,21 +3,43 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agentic_memory.core.config import (
     PROMOTED_VALUES_BEGIN_RE,
     PROMOTED_VALUES_END_RE,
 )
-from agentic_memory.core.index import _acquire_index_lock, _atomic_write_text
+from agentic_memory.core.index import (
+    _acquire_file_lock,
+    _acquire_index_lock,
+    _atomic_write_text,
+)
 from agentic_memory.core.values.model import ValuesEntry
+
+if TYPE_CHECKING:
+    from typing import TextIO
 
 _ENTRY_LINE_RE = re.compile(r"^- \[(?P<id>v-[^\]]+)\]\s+(?P<description>.+)$")
 _PROJECTED_DESCRIPTION_LIMIT = 200
 _BLOCKED_MARKERS = ("BEGIN:PROMOTED_VALUES", "END:PROMOTED_VALUES")
+_LOCK_FILENAME = "_agents_md.lock"
 
 
 class AgentsMdAdapter:
+    @staticmethod
+    def _acquire_lock(agents_md_path: Path, lock_dir: Path | None) -> TextIO:
+        """Acquire the AGENTS.md edit lock.
+
+        When `lock_dir` is provided (production path), the lock file is placed
+        inside it so that the workspace directory containing AGENTS.md stays
+        clean. When `lock_dir` is None, the lock falls back to a sibling
+        `AGENTS.md.lock` next to the target (backward-compatible default used
+        by tests and callers that do not have a memory dir handy).
+        """
+        if lock_dir is not None:
+            return _acquire_file_lock(lock_dir / _LOCK_FILENAME)
+        return _acquire_index_lock(agents_md_path)
+
     def resolve_agents_md_path(self, memory_dir: Path) -> Path | None:
         candidates: list[Path] = []
         env_path = os.environ.get("AGENTS_MD_PATH")
@@ -39,9 +61,16 @@ class AgentsMdAdapter:
         lines, begin_index, end_index = self._load_marked_lines(agents_md_path)
         return [line.strip() for line in lines[begin_index + 1 : end_index] if line.strip()]
 
-    def append_entry(self, agents_md_path: Path, description: str, entry_id: str) -> None:
+    def append_entry(
+        self,
+        agents_md_path: Path,
+        description: str,
+        entry_id: str,
+        *,
+        lock_dir: Path | None = None,
+    ) -> None:
         entry_line = self.format_entry_line(description=description, entry_id=entry_id)
-        lock_file = _acquire_index_lock(agents_md_path)
+        lock_file = self._acquire_lock(agents_md_path, lock_dir)
         try:
             lines, begin_index, end_index = self._load_marked_lines(agents_md_path)
             new_lines = [
@@ -53,9 +82,16 @@ class AgentsMdAdapter:
         finally:
             lock_file.close()
 
-    def update_entry(self, agents_md_path: Path, description: str, entry_id: str) -> bool:
+    def update_entry(
+        self,
+        agents_md_path: Path,
+        description: str,
+        entry_id: str,
+        *,
+        lock_dir: Path | None = None,
+    ) -> bool:
         entry_line = self.format_entry_line(description=description, entry_id=entry_id)
-        lock_file = _acquire_index_lock(agents_md_path)
+        lock_file = self._acquire_lock(agents_md_path, lock_dir)
         try:
             lines, begin_index, end_index = self._load_marked_lines(agents_md_path)
             updated = False
@@ -73,8 +109,14 @@ class AgentsMdAdapter:
         finally:
             lock_file.close()
 
-    def remove_entry(self, agents_md_path: Path, entry_id: str) -> bool:
-        lock_file = _acquire_index_lock(agents_md_path)
+    def remove_entry(
+        self,
+        agents_md_path: Path,
+        entry_id: str,
+        *,
+        lock_dir: Path | None = None,
+    ) -> bool:
+        lock_file = self._acquire_lock(agents_md_path, lock_dir)
         try:
             lines, begin_index, end_index = self._load_marked_lines(agents_md_path)
             kept_entries: list[str] = []
