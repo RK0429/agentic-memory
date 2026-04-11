@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-04-11
+
 ### Breaking
 
 > **Migration**: workspace 側の AGENTS.md で `memory_distill_knowledge` / `memory_distill_values` への参照を `memory_distill_prepare` / `memory_distill_commit` に更新する必要がある。`agentic-core/.agents/skills/agentic-setup/references/agents_md_template.md` も同期が必要。
