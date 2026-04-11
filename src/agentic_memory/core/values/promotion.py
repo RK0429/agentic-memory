@@ -15,9 +15,16 @@ def _now() -> dt.datetime:
 
 
 class PromotionManager:
+    CONFIDENCE_THRESHOLD = 0.8
+    EVIDENCE_THRESHOLD = 5
+
     @staticmethod
     def check_candidate(entry: ValuesEntry) -> bool:
-        return entry.confidence >= 0.8 and entry.total_evidence_count >= 5 and not entry.promoted
+        return (
+            entry.confidence >= PromotionManager.CONFIDENCE_THRESHOLD
+            and entry.total_evidence_count >= PromotionManager.EVIDENCE_THRESHOLD
+            and not entry.promoted
+        )
 
     @staticmethod
     def check_demotion(entry: ValuesEntry) -> bool:
@@ -51,7 +58,17 @@ class PromotionService:
         if SecretScanPolicy.contains_secret(entry.description):
             raise ValueError("Cannot promote value containing potential secrets")
         if not self._promotion_manager.check_candidate(entry):
-            raise ValueError(f"Values entry does not meet promotion criteria: {id}")
+            raise ValueError(
+                "Values entry does not meet promotion criteria: "
+                f"{id} (confidence={entry.confidence}, "
+                f"required>={PromotionManager.CONFIDENCE_THRESHOLD}; "
+                f"evidence_count={entry.total_evidence_count}, "
+                f"required>={PromotionManager.EVIDENCE_THRESHOLD}; "
+                f"promoted={entry.promoted}). "
+                f"Increase confidence to >= {PromotionManager.CONFIDENCE_THRESHOLD} "
+                f"and accumulate >= {PromotionManager.EVIDENCE_THRESHOLD} evidence items "
+                "via memory_values_update."
+            )
 
         agents_md_path = self._agents_md_adapter.resolve_agents_md_path(Path(memory_dir))
         if agents_md_path is None:

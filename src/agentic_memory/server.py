@@ -7,7 +7,7 @@ import datetime as _dt
 import io
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import redirect_stderr, redirect_stdout, suppress
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -67,6 +67,13 @@ _DESTRUCTIVE = ToolAnnotations(destructiveHint=True, openWorldHint=False)
 
 
 def _resolve_dir(explicit: str | None = None) -> Path:
+    """Resolve the memory directory from explicit input, env, or config defaults.
+
+    Resolution order is:
+    1. explicit `memory_dir`
+    2. `MEMORY_DIR` environment variable
+    3. `config.resolve_memory_dir()`
+    """
     if explicit:
         return Path(explicit)
     env = os.environ.get("MEMORY_DIR")
@@ -577,6 +584,30 @@ def _values_error_payload(message: str) -> str:
     )
 
 
+def _required_schema_hint(
+    field_name: str,
+    schema_fields: tuple[str, ...],
+    payload: Any,
+) -> str:
+    missing_fields = _missing_required_fields(payload, schema_fields)
+    schema = "{" + ", ".join(schema_fields) + "}"
+    return (
+        f"Pass `{field_name}` as a list of objects with shape {schema}. "
+        f"Missing fields: {', '.join(missing_fields)}."
+    )
+
+
+def _missing_required_fields(payload: Any, schema_fields: tuple[str, ...]) -> list[str]:
+    candidates = payload if isinstance(payload, list | tuple) else [payload]
+    for item in candidates:
+        if not isinstance(item, Mapping):
+            return list(schema_fields)
+        missing = [field for field in schema_fields if field not in item]
+        if missing:
+            return missing
+    return list(schema_fields)
+
+
 def _distillation_error_payload(message: str) -> str:
     text = message.strip() or "Distillation failed"
     return _error_payload(
@@ -628,7 +659,9 @@ def memory_values_add(
 
     `description` and `category` are required.
     `confidence` defaults to 0.3.
-    `evidence` accepts up to any number of evidence objects; the newest 10 are stored.
+    `evidence` accepts a list of evidence objects with shape
+    `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
+    The newest 10 evidence objects are stored.
     Returns the created ID/path and optional warnings/notifications.
     """
     resolved = _resolve_dir(memory_dir)
@@ -639,6 +672,12 @@ def memory_values_add(
             category=category,
             confidence=confidence,
             evidence=evidence,
+        )
+    except (KeyError, TypeError):
+        return _error_payload(
+            error_type="validation_error",
+            message="Invalid `evidence` entry: required fields are missing or malformed.",
+            hint=_required_schema_hint("evidence", ("ref", "summary", "date"), evidence),
         )
     except ValueError as exc:
         return _values_error_payload(str(exc))
@@ -688,14 +727,18 @@ def memory_values_search(
 def memory_values_update(
     id: str,
     confidence: float | None = None,
-    add_evidence: dict[str, Any] | None = None,
+    add_evidence: dict[str, Any] | list[dict[str, Any]] | None = None,
     description: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Update one Values entry.
 
     At least one of `confidence`, `add_evidence`, or `description` must be provided.
-    Returns the updated ID and optional promotion/demotion/secret notifications.
+    `add_evidence` accepts one evidence object or a list, each with shape
+    `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
+    Returns the updated ID. Includes `promotion_candidate: true` when the entry
+    becomes eligible for promotion, or `demotion_candidate: true` when a promoted
+    entry's confidence drops. Includes `warnings` for secret detection.
     """
     resolved = _resolve_dir(memory_dir)
     try:
@@ -719,7 +762,7 @@ def memory_values_update(
 
 @mcp.tool(annotations=_READONLY)
 def memory_values_list(
-    min_confidence: float = 0.5,
+    min_confidence: float = 0.0,
     category: str | None = None,
     promoted_only: bool = False,
     top: int = 20,
@@ -727,6 +770,7 @@ def memory_values_list(
 ) -> str:
     """List Values entries with optional filters.
 
+    `min_confidence` defaults to 0.0.
     Results are sorted by confidence descending, with `updated_at` as the tiebreaker.
     """
     resolved = _resolve_dir(memory_dir)
@@ -1864,6 +1908,8 @@ def memory_knowledge_add(
     `accuracy`, `sources`, `source_type`, `user_understanding`, and `related`.
     `sources` accepts a list of source objects with shape
     `{type: "memory_note"|"web"|"user_direct"|"document"|"code"|"other", ref: str, summary: str}`.
+    `source_type` accepts `"memory_distillation"`, `"autonomous_research"`, or
+    `"user_taught"` (default: `"user_taught"`).
     Returns `{ok: true, id, path}` and includes `warnings` when the content may contain
     secrets. Duplicate content (`title` + `domain` + `content`) returns an error.
     """
@@ -1879,7 +1925,7 @@ def memory_knowledge_add(
             tags=tags,
             accuracy=accuracy or "uncertain",
             sources=typed_sources,
-            source_type=source_type or "memory_distillation",
+            source_type=source_type or "user_taught",
             user_understanding=user_understanding or "unknown",
             related=related,
         )
@@ -1894,6 +1940,12 @@ def memory_knowledge_add(
             error_type="not_found",
             message=str(exc),
             hint="Verify all `related` knowledge ids exist before retrying.",
+        )
+    except (KeyError, TypeError):
+        return _error_payload(
+            error_type="validation_error",
+            message="Invalid `sources` entry: required fields are missing or malformed.",
+            hint=_required_schema_hint("sources", ("type", "ref", "summary"), sources),
         )
     except ValueError as exc:
         return _validation_error_payload(
@@ -2008,6 +2060,12 @@ def memory_knowledge_update(
             error_type="not_found",
             message=str(exc),
             hint="Verify the knowledge id and any `related` ids exist before retrying.",
+        )
+    except (KeyError, TypeError):
+        return _error_payload(
+            error_type="validation_error",
+            message="Invalid `sources` entry: required fields are missing or malformed.",
+            hint=_required_schema_hint("sources", ("type", "ref", "summary"), sources),
         )
     except ValueError as exc:
         return _validation_error_payload(

@@ -110,6 +110,73 @@ def test_memory_knowledge_add_returns_secret_warning(
     ]
 
 
+def test_memory_knowledge_add_malformed_sources_returns_validation_error(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_knowledge_add(
+            title="Rust ownership",
+            content="Ownership summary",
+            domain="rust",
+            sources=[{"type": "user_taught", "ref": "memory/2026-04-10/rust.md"}],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "{type, ref, summary}" in payload["hint"]
+    assert "summary" in payload["hint"]
+
+
+def test_memory_knowledge_add_invalid_source_type_returns_valid_values(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_knowledge_add(
+            title="Rust ownership",
+            content="Ownership summary",
+            domain="rust",
+            source_type="invalid_source_type",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "is not a valid SourceType" in payload["message"]
+    assert '"memory_distillation"' in payload["hint"]
+    assert '"autonomous_research"' in payload["hint"]
+    assert '"user_taught"' in payload["hint"]
+
+
+def test_memory_knowledge_add_defaults_source_type_to_user_taught(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    repository = KnowledgeRepository(tmp_memory_dir)
+
+    payload = json.loads(
+        memory_knowledge_add(
+            title="Rust ownership",
+            content="Ownership summary",
+            domain="rust",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    entry = repository.load(payload["id"])
+    assert str(entry.source_type) == "user_taught"
+
+
 def test_memory_knowledge_update_returns_secret_warning_for_content_update(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -138,6 +205,35 @@ def test_memory_knowledge_update_returns_secret_warning_for_content_update(
     assert payload["warnings"] == [
         "Content may contain secrets (detected: generic_api_token). Review before sharing."
     ]
+
+
+def test_memory_knowledge_update_malformed_sources_returns_validation_error(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    added = json.loads(
+        memory_knowledge_add(
+            title="Rust ownership",
+            content="Ownership summary",
+            domain="rust",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_knowledge_update(
+            id=added["id"],
+            sources=[{"type": "user_taught", "ref": "memory/2026-04-10/rust.md"}],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "{type, ref, summary}" in payload["hint"]
+    assert "summary" in payload["hint"]
 
 
 def test_memory_knowledge_tools_validate_inputs_and_duplicates(

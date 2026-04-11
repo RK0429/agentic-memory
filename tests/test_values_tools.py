@@ -113,6 +113,27 @@ def test_memory_values_add_returns_secret_warning(
     ]
 
 
+def test_memory_values_add_malformed_evidence_returns_validation_error(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_values_add(
+            description="Prefer evidence with complete metadata",
+            category="workflow",
+            evidence=[{"ref": "memory/2026-04-10/note.md", "summary": "missing date"}],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "{ref, summary, date}" in payload["hint"]
+    assert "date" in payload["hint"]
+
+
 def test_memory_values_search_requires_query_or_category(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -216,6 +237,37 @@ def test_memory_values_update_returns_promotion_and_demotion_notifications(
     assert demotion_payload["demotion_candidate"] is True
 
 
+def test_memory_values_update_add_evidence_accepts_list(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_values_add(
+            description="Prefer accumulating evidence in batches",
+            category="workflow",
+            confidence=0.7,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_values_update(
+            id=added["id"],
+            add_evidence=[_evidence(1), _evidence(2)],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    entry = ValuesRepository(tmp_memory_dir).load(added["id"])
+    assert entry.total_evidence_count == 2
+    assert [item.ref for item in entry.evidence] == [
+        _evidence(2)["ref"],
+        _evidence(1)["ref"],
+    ]
+
+
 def test_memory_values_update_returns_secret_warning_for_description_update(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -266,7 +318,7 @@ def test_memory_values_list_filters_promoted_only(tmp_memory_dir: Path, monkeypa
     assert payload["entries"][0]["promoted"] is True
 
 
-def test_memory_values_list_defaults_to_high_confidence_entries(
+def test_memory_values_list_defaults_to_all_confidence_entries(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
@@ -291,8 +343,7 @@ def test_memory_values_list_defaults_to_high_confidence_entries(
     payload = json.loads(memory_values_list(memory_dir=str(tmp_memory_dir)))
 
     assert payload["ok"] is True
-    assert [entry["id"] for entry in payload["entries"]] == [high["id"]]
-    assert low["id"] not in [entry["id"] for entry in payload["entries"]]
+    assert [entry["id"] for entry in payload["entries"]] == [high["id"], low["id"]]
 
 
 def test_memory_values_promote_preview_and_confirm(tmp_memory_dir: Path, monkeypatch) -> None:
@@ -403,6 +454,39 @@ def test_memory_values_promote_and_demote_report_errors(tmp_memory_dir: Path, mo
     assert missing_agents_payload["error_type"] == "not_found"
     assert not_promoted["ok"] is False
     assert not_promoted["error_type"] == "not_found"
+
+
+def test_memory_values_promote_ineligible_includes_current_and_threshold(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = json.loads(
+        memory_values_add(
+            description="Prefer shipping ineligible promoted values",
+            category="workflow",
+            confidence=0.7,
+            evidence=[_evidence(index) for index in range(1, 5)],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_values_promote(
+            id=added["id"],
+            confirm=False,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "confidence=0.7" in payload["message"]
+    assert "required>=0.8" in payload["message"]
+    assert "evidence_count=4" in payload["message"]
+    assert "required>=5" in payload["message"]
+    assert "promoted=False" in payload["message"]
+    assert "Increase confidence to >= 0.8" in payload["message"]
 
 
 def test_memory_values_promote_rejects_secret_containing_entry(

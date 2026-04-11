@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -130,7 +130,7 @@ class ValuesService:
         memory_dir: str | Path,
         id: str,
         confidence: float | None = None,
-        add_evidence: Evidence | dict[str, Any] | None = None,
+        add_evidence: Evidence | dict[str, Any] | Sequence[Evidence | dict[str, Any]] | None = None,
         description: str | None = None,
     ) -> tuple[ValuesEntry, dict[str, bool | list[str]]]:
         if confidence is None and add_evidence is None and description is None:
@@ -158,7 +158,13 @@ class ValuesService:
             entry.confidence = confidence_value
 
         if add_evidence is not None:
-            entry.add_evidence(add_evidence)
+            evidence_items = (
+                list(add_evidence)
+                if isinstance(add_evidence, Sequence) and not isinstance(add_evidence, dict)
+                else [add_evidence]
+            )
+            for item in evidence_items:
+                entry.add_evidence(item)
 
         entry.updated_at = _now()
         repository.save(entry)
@@ -231,7 +237,7 @@ class ValuesService:
     def list_values(
         self,
         memory_dir: str | Path,
-        min_confidence: float = 0.5,
+        min_confidence: float = 0.0,
         category: str | None = None,
         promoted_only: bool = False,
         top: int = 20,
