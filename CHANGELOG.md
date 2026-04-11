@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [0.16.1] - 2026-04-11
+
+### Changed
+
 - Promotion/demotion/delete preview `entry_line` generation is now consolidated through `AgentsMdAdapter.format_entry_line`, matching AGENTS.md formatting (newline replacement, HTML comment stripping, 200-char truncation)
 - Promotion eligibility threshold docstrings now reference `PromotionManager.CONFIDENCE_THRESHOLD` and `PromotionManager.EVIDENCE_THRESHOLD` constant names alongside literal values
 
