@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | バージョン | 0.1.0（ドラフト） |
-| 最終更新日 | 2026-04-10 |
+| 最終更新日 | 2026-04-11 |
 | 関連要件 | [REQ-knowledge-values.md](../requirements/REQ-knowledge-values.md) |
 
 ## 変更履歴
@@ -21,6 +21,7 @@
 | — | 2026-04-10 | レビュー残件対応: 最終更新日修正、Evidence.date 導出規則の注釈にエントリ日付プレフィックス形式を明記、DistillationTrigger 用語集の datetime 精度記述を shouldDistill() の契約と整合 |
 | — | 2026-04-10 | must/should 指摘対応: Evidence 用語集定義を拡充し `_state.md` セクション参照と各フィールド名（`ref` / `summary` / `date`）を明記 |
 | — | 2026-04-10 | must/should 指摘対応（再レビュー）: BR-17（Knowledge 統合 4 アクション、REQ-FUNC-012）追加、BR-10 を Values 統合 4 アクションに拡充（REQ-FUNC-013）、KnowledgeIntegrationResult.conflictDetail の公開経路（ReportEntry.detail 転記）を明記、ReportEntry.targetId の outcome 別 null/非 null を注釈に追加、DistillationTrigger の `time` 未設定時フォールバック（`T23:59:59`）を §3.3 補足と §5.4 用語集に追加 |
+| — | 2026-04-11 | prepare/commit パターン移行と `ReferenceType` 分離を反映。`Source.type` を `ReferenceType` に変更し、蒸留コンテキストの説明を呼び出し元エージェント委譲モデルへ更新 |
 
 ---
 
@@ -127,7 +128,7 @@ classDiagram
 
     class Source {
         <<ValueObject>>
-        +SourceType type
+        +ReferenceType type
         +string ref
         +string summary
     }
@@ -144,6 +145,16 @@ classDiagram
         MEMORY_DISTILLATION
         AUTONOMOUS_RESEARCH
         USER_TAUGHT
+    }
+
+    class ReferenceType {
+        <<Enumeration>>
+        MEMORY_NOTE
+        WEB
+        USER_DIRECT
+        DOCUMENT
+        CODE
+        OTHER
     }
 
     class UserUnderstanding {
@@ -187,7 +198,7 @@ classDiagram
     KnowledgeEntry --> SourceType
     KnowledgeEntry --> UserUnderstanding
     KnowledgeEntry o-- KnowledgeId : related
-    Source --> SourceType
+    Source --> ReferenceType
     KnowledgeIntegrator ..> KnowledgeIntegrationResult
     KnowledgeIntegrationResult --> IntegrationAction
 ```
@@ -203,6 +214,7 @@ classDiagram
 |---|---|
 | `VERIFIED` / `LIKELY` / `UNCERTAIN` | `verified` / `likely` / `uncertain` |
 | `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT` | `memory_distillation` / `autonomous_research` / `user_taught` |
+| `MEMORY_NOTE` / `WEB` / `USER_DIRECT` / `DOCUMENT` / `CODE` / `OTHER` | `memory_note` / `web` / `user_direct` / `document` / `code` / `other` |
 | `UNKNOWN` / `NOVICE` / `FAMILIAR` / `PROFICIENT` / `EXPERT` | `unknown` / `novice` / `familiar` / `proficient` / `expert` |
 | `CREATE_NEW` / `MERGE_EXISTING` / `LINK_RELATED` / `SKIP_DUPLICATE` | `create_new` / `merge_existing` / `link_related` / `skip_duplicate` |
 | `REINFORCE_EXISTING` / `CONTRADICT_EXISTING` | `reinforce_existing` / `contradict_existing` |
@@ -364,83 +376,60 @@ classDiagram
         +string? category
     }
 
+    class DistillationPreparer {
+        <<ApplicationService>>
+        +prepareKnowledge(memoryDir, dateFrom?, dateTo?, domain?) PrepareResult
+        +prepareValues(memoryDir, dateFrom?, dateTo?, category?) PrepareResult
+    }
+
+    class PrepareResult {
+        <<ValueObject>>
+        +list~dict~ notes
+        +string? decisions
+        +list~dict~ existingItems
+        +string instructions
+        +dict candidateSchema
+    }
+
     class KnowledgeCandidate {
         <<ValueObject>>
         +string title
         +string content
         +string domain
         +list~string~ tags
-        +string sourceRef
-        +string sourceSummary
+        +Accuracy accuracy
+        +list~Source~ sources
+        +UserUnderstanding userUnderstanding
+        +list~KnowledgeId~ related
     }
 
     class ValuesCandidate {
         <<ValueObject>>
         +string description
         +string category
-        +string sourceRef
-        +string sourceSummary
-    }
-
-    class DistillationReport {
-        <<ValueObject>>
-        +list~ReportEntry~ entries
-        +int newCount
-        +int mergedCount
-        +int linkedCount
-        +int reinforcedCount
-        +int contradictedCount
-        +int skippedCount
-        +int secretSkippedCount
-    }
-
-    class ReportEntry {
-        <<ValueObject>>
-        +string candidateSummary
-        +DistillationOutcome outcome
-        +string? targetId
-        +string? detail
-    }
-
-    class DistillationOutcome {
-        <<Enumeration>>
-        CREATED
-        MERGED
-        LINKED
-        REINFORCED
-        CONTRADICTED
-        SKIPPED
-        SECRET_SKIPPED
-    }
-
-    class DistillationTrigger {
-        <<ValueObject>>
-        +int noteCountThreshold = 10
-        +int elapsedHoursThreshold = 168
-        +int bootstrapNoteThreshold = 1
-        +shouldDistill(lastEvaluatedAt: datetime?, notesSince: int, hoursSince: int) bool
+        +float confidence
+        +list~Evidence~ evidence
     }
 
     KnowledgeDistillationRequest --|> DistillationRequest
     ValuesDistillationRequest --|> DistillationRequest
-    note for ReportEntry "targetId の意味（outcome 別）:\n- MERGED: マージ先の既存 Knowledge ID\n- LINKED: リンク先の既存 Knowledge ID\n- REINFORCED: 強化対象の既存 Values ID\n- CONTRADICTED: 矛盾する既存 Values ID\n- CREATED / SKIPPED / SECRET_SKIPPED: null\n\ndetail:\n- conflictDetail / contradictionDetail が\n  設定されている場合にそのまま転記\n- CREATED では新規作成されたエントリ ID\n- 該当なしの場合は null"
-
-    DistillationReport o-- ReportEntry
-    ReportEntry --> DistillationOutcome
-    KnowledgeCandidate ..> KnowledgeDistillationRequest : "extract 結果"
-    ValuesCandidate ..> ValuesDistillationRequest : "extract 結果"
+    DistillationPreparer ..> KnowledgeDistillationRequest : "prepare input"
+    DistillationPreparer ..> ValuesDistillationRequest : "prepare input"
+    DistillationPreparer ..> PrepareResult
+    KnowledgeCandidate ..> KnowledgeDistillationRequest : "commit 入力"
+    ValuesCandidate ..> ValuesDistillationRequest : "commit 入力"
 ```
 
 **補足:**
 - Values 蒸留は MemoryNote に加えて MemoryState（`_state.md`）の「主要な判断」セクションも入力とする。Knowledge 蒸留の入力は MemoryNote のみ
-- 蒸留の「抽出」は `DistillationExtractorPort` 経由で LLM に委譲する。ツールは collect（ノート選定）→ extract（抽出委譲）→ integrate（統合・永続化）の全段階をオーケストレーションする
-- `DistillationTrigger` は蒸留種別（Knowledge / Values）ごとに個別にインスタンス化される。閾値は全種別で共通だが、`shouldDistill()` に渡す `lastEvaluatedAt` は `_state.md` に `last_knowledge_evaluated_at` / `last_values_evaluated_at` として種別ごとに永続化する。`notesSince` の算出にはノート起点タイムスタンプ（`_index.jsonl` の `date` + `time` フィールド由来、再インデックスで不変）を使用する。`time` が未設定の場合は当日末 `T23:59:59` にフォールバックする
-- **Bootstrap rule**: `lastEvaluatedAt` が null（初回蒸留前）の場合、ノートが 1 件以上存在すれば `shouldDistill()` は true を返す。これにより、蒸留未経験のワークスペースでも初回蒸留が推奨される
-- **2つの起動経路と `shouldDistill()` の適用範囲**:
-  - *公開 API ベースの推奨判定*: エージェント/スキルが `memory_state_show`（最終評価日時）と `memory_stats`（前回評価以降のノート蓄積数）を取得し、`DistillationTrigger.shouldDistill()` と同じ条件（BR-12）を評価する。条件充足時に蒸留を推奨する（自動実行ではない）。セッション終了時の振り返り（REQ-FUNC-021）と retrospective スキル（REQ-FUNC-029）がこの経路に該当する
-  - *ユーザーの直接呼び出し* (`memory_distill_*`): `shouldDistill()` を**バイパス**して即座に蒸留パイプライン（collect → extract → integrate）を実行する。トリガー条件は評価しない
+- 蒸留の「抽出」は agentic-memory 内部では行わず、`memory_distill_prepare` が prepare（ノート選定 + スナップショット構築）を担い、呼び出し元エージェントが agent-side extraction を実施し、`memory_distill_commit` が commit（検証 + 永続化）を担う
+- `DistillationTrigger` クラスは削除されたが、蒸留推奨の閾値条件（BR-12: 10 ノート以上、168 時間以上、初回は 1 ノート以上）は AGENTS.md に運用ルールとして文書化されている。`notesSince` の算出にはノート起点タイムスタンプ（`_index.jsonl` の `date` + `time` フィールド由来、再インデックスで不変）を使用し、`time` が未設定の場合は当日末 `T23:59:59` にフォールバックする
+- **Bootstrap rule**: 初回評価前は、ノートが 1 件以上存在すれば蒸留を推奨する。これにより、蒸留未経験のワークスペースでも初回蒸留の判断条件が明確になる
+- **2つの起動経路と蒸留推奨条件の適用範囲**:
+  - *公開 API ベースの推奨判定*: エージェント/スキルが `memory_state_show`（最終評価日時）と `memory_stats`（前回評価以降のノート蓄積数）を取得し、AGENTS.md に文書化された BR-12 相当の条件を評価する。条件充足時に蒸留を推奨する（自動実行ではない）。セッション終了時の振り返り（REQ-FUNC-021）と retrospective スキル（REQ-FUNC-029）がこの経路に該当する
+  - *ユーザーまたはエージェントの実行* (`memory_distill_prepare` → agent-side extraction → `memory_distill_commit`): ツール自体は推奨条件を評価せず、prepare/commit パターンをそのまま実行する
 - **タイムスタンプの永続化と更新**: `_state.md` のフロントマターには蒸留種別ごとに 2 つの日時フィールドを記録する。各フィールドは `memory_init` 時には作成せず、更新条件を初めて満たした時点で独立に遅延追加する:
-  - `lastEvaluatedAt`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で追加または更新（永続化 0 件でも更新）。`DistillationTrigger.shouldDistill()` はこの日時を基準に判定する。初回 `dry_run=false` 蒸留完了時にフィールドが出現する
+  - `lastEvaluatedAt`（最終評価日時）: `dry_run=false` の蒸留が完了した時点で追加または更新（永続化 0 件でも更新）。初回 `dry_run=false` 蒸留完了時にフィールドが出現する
   - `lastDistilledAt`（最終永続化日時）: `dry_run=false` かつ 1 件以上の永続化（create / merge / link / reinforce）が発生した場合にのみ追加または更新。`CONTRADICT_EXISTING` は既存エントリの `confidence` を低下させ `memory_values_update` で永続化するが、`lastDistilledAt` の目的は新たなエントリの追加・統合の発生記録であり、既存エントリの品質指標調整はこれに該当しないため除外する。永続化が発生しない蒸留では `lastEvaluatedAt` のみが存在し、`lastDistilledAt` は null のままとなりうる
   - `dry_run=true` の実行ではいずれも更新しない。起動経路による差異はない
 
@@ -508,8 +497,9 @@ stateDiagram-v2
 | KnowledgeEntry | 抽象的な宣言的知識のエンティティ。事実・概念・ルールを含む | Source, Accuracy |
 | KnowledgeId | `k-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | KnowledgeEntry |
 | Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
-| Source | Knowledge の引用元。型（`SourceType`）・参照先・要約で構成。`merge_existing` 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | SourceType |
-| SourceType | Knowledge の出自分類。`memory_distillation` / `autonomous_research` / `user_taught` の3値（クラス図での内部表現は `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT`）。`KnowledgeEntry.sourceType`（エントリレベル）と `Source.type`（個別引用元レベル）の両方で使用される。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry, Source |
+| Source | Knowledge の引用元。型（`ReferenceType`）・参照先・要約で構成。`merge_existing` 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | ReferenceType |
+| SourceType | Knowledge / Values エントリ全体の provenance を表す出自分類。`memory_distillation` / `autonomous_research` / `user_taught` の3値（クラス図での内部表現は `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT`）。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry |
+| ReferenceType | 個別の `Source.type` に使用する引用元分類。`memory_note` / `web` / `user_direct` / `document` / `code` / `other` の6値（クラス図での内部表現は `MEMORY_NOTE` / `WEB` / `USER_DIRECT` / `DOCUMENT` / `CODE` / `OTHER`） | Source |
 | Accuracy | Knowledge の品質指標。verified（複数ソース確認）/ likely（単一ソース）/ uncertain（未確認） | KnowledgeEntry |
 | UserUnderstanding | ユーザーのその知識に対する理解度。unknown / novice / familiar / proficient / expert の5段階 | KnowledgeEntry |
 | KnowledgeIntegrator | 蒸留候補と既存 Knowledge の重複検出・マージを行うドメインサービス | IntegrationAction |
@@ -532,13 +522,14 @@ stateDiagram-v2
 
 | 用語 | 定義 | 関連概念 |
 |---|---|---|
-| Distillation | Memory ノート群から Knowledge/Values を抽出するプロセス全体。Values 蒸留では MemoryState（`_state.md`）の「主要な判断」セクションも入力とする | DistillationRequest |
-| DistillationRequest | 蒸留のパラメータ（期間・フィルタ・dry_run） | KnowledgeCandidate, ValuesCandidate |
-| KnowledgeCandidate | LLM が抽出した Knowledge の候補。title / content / domain / tags / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
-| ValuesCandidate | LLM が抽出した Values の候補。description / category / sourceRef / sourceSummary を持つ統合前の中間表現 | DistillationReport |
-| DistillationReport | 蒸留結果の報告。Knowledge 蒸留では新規・マージ・リンク・スキップ、Values 蒸留では新規・強化・矛盾・スキップの件数と詳細を保持する。`secretSkippedCount` は機密情報（シークレット・認証情報等）を含むと判定されスキップされた候補の件数を記録する（対応する `DistillationOutcome` は `secret_skipped`）。公開 API では snake_case（`new_count` 等）に変換される（変換責務は MCP ツール層） | DistillationOutcome |
-| DistillationTrigger | 蒸留推奨の閾値定義と判定を担う値オブジェクト。蒸留種別（Knowledge / Values）ごとにインスタンス化され、最終評価日時（`lastEvaluatedAt`）からの経過ノート数（≥ 10）または経過時間（≥ 168 時間）が閾値を超えた場合に `shouldDistill()` が true を返す（`lastEvaluatedAt` が null の場合はノート 1 件以上で true）。`shouldDistill()` は事前算出された整数値（`notesSince`, `hoursSince`）を閾値と比較する。`notesSince` の算出時にノート起点タイムスタンプと `lastEvaluatedAt` を `datetime` 精度（`YYYY-MM-DD HH:MM`）で比較する（`time` 未設定時は当日末 `T23:59:59` にフォールバック）。公開 API ベースの推奨判定（セッション終了時の振り返りと retrospective）で使用され、ユーザーの `memory_distill_*` 直接呼び出し時はバイパスされる | DistillationRequest |
-| DistillationExtractorPort | 蒸留パイプラインにおける LLM 抽出処理のインフラ層ポート（インターフェース）。`DistillationService`（アプリケーション層）がこのポートを介して外部 LLM に抽出を委譲する。CLI / API / 将来の provider に差し替え可能な設計（実装配置の詳細はアーキテクチャ文書 §4.2 参照） | DistillationRequest, KnowledgeCandidate, ValuesCandidate |
+| Distillation | Memory ノート群から Knowledge/Values 候補を導出して永続化するプロセス全体。現行ツール契約は prepare（材料収集）→ 呼び出し元エージェントによる抽出 → commit（検証 + 永続化）で構成される。Values 蒸留では MemoryState（`_state.md`）の「主要な判断」セクションも入力とする | DistillationRequest, DistillationPreparer |
+| DistillationRequest | 蒸留のパラメータ。prepare 側では期間・種別フィルタ、commit 側では `candidates` と `dry_run` を受け取る | KnowledgeCandidate, ValuesCandidate |
+| DistillationPreparer | prepare 段を担うアプリケーションサービス。期間条件に合致するノート、Values 用 decisions、既存項目一覧、抽出 instructions、candidate schema を収集し `PrepareResult` として返す。LLM 呼び出しは行わない | PrepareResult, DistillationRequest |
+| PrepareResult | `memory_distill_prepare` の返却スナップショット。`notes` / `decisions` / `existing_items` / `instructions` / `candidate_schema` を含み、呼び出し元エージェントの agent-side extraction の入力になる | DistillationPreparer |
+| KnowledgeCandidate | 呼び出し元エージェントが抽出して commit に渡す Knowledge 候補。title / content / domain / tags / sources / user_understanding / related を持つ統合前の中間表現 | DistillationRequest |
+| ValuesCandidate | 呼び出し元エージェントが抽出して commit に渡す Values 候補。description / category / confidence / evidence を持つ統合前の中間表現 | DistillationRequest |
+
+**注記:** `DistillationTrigger` クラスは削除済みだが、蒸留推奨の閾値定数と評価ルール自体は AGENTS.md に運用ルールとして文書化されており、BR-12 は引き続き有効。`DistillationReport` / `ReportEntry` / `DistillationOutcome` も prepare/commit パターン移行に伴い削除され、commit 結果は MCP レスポンスの `created` / `skipped` / `warnings` として返される。
 
 ---
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+> **Migration**: workspace 側の AGENTS.md で `memory_distill_knowledge` / `memory_distill_values` への参照を `memory_distill_prepare` / `memory_distill_commit` に更新する必要がある。`agentic-core/.agents/skills/agentic-setup/references/agents_md_template.md` も同期が必要。
+
+- `memory_distill_knowledge` and `memory_distill_values` MCP tools replaced by `memory_distill_prepare` and `memory_distill_commit`. The new prepare/commit pattern delegates LLM extraction to the calling agent instead of using an internal extractor port
+- `Source.type` field changed from `SourceType` to new `ReferenceType` enum. API parameter `sources[].type` now accepts `memory_note`, `web`, `user_direct`, `document`, `code`, `other` instead of the previous `SourceType` values
+
+### Added
+
+- `memory_distill_prepare` MCP tool: collects notes and returns snapshot with instructions and candidate schema for agent-side LLM extraction
+- `memory_distill_commit` MCP tool: validates and persists knowledge/values candidates with dry_run support, duplicate detection, and secret warnings
+- `ReferenceType` enum (`memory_note`, `web`, `user_direct`, `document`, `code`, `other`) for `Source.type` reference classification, distinct from entry-level `SourceType` provenance
+- CJK false-positive suppression in Values similarity detection using topic overlap ratio check
+- `add_evidence` in `memory_values_update` now accepts both a single dict and a list of dicts
+
+### Fixed
+
+- `memory_knowledge_add`, `memory_values_add`, and `memory_knowledge_update` now return structured `validation_error` with hint containing expected schema and missing field names instead of raw `KeyError`/`TypeError`
+- Invalid `source_type` errors now include valid enum values in the error hint
+- Values promote ineligibility message now includes current/threshold values and next-action hint
+
+### Changed
+
+- `memory_values_list` default `min_confidence` changed from 0.3 to 0.0, returning all entries by default
+- `memory_knowledge_add` default `source_type` changed to `user_taught`
+- Legacy `SourceType` values in `Source.type` are automatically mapped to `ReferenceType` equivalents on read for backward compatibility
+- Improved MCP tool docstrings: nested dict schema and valid enum values for `evidence`/`sources` parameters, `promotion_candidate`/`demotion_candidate` notification fields, `_resolve_dir` path resolution order, `add_evidence` list support
+
+### Removed
+
+- `DistillationService`, `DistillationExtractorPort`, `MockExtractorPort`, `UnconfiguredExtractorPort`, `KnowledgeCandidate` (extractor), `ValuesCandidate` (extractor) classes
+- `DistillationTrigger` class
+- `DistillationReport` and `ReportEntry` classes
+
 ## [0.14.1] - 2026-04-11
 
 ### Fixed
