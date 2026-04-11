@@ -564,7 +564,7 @@ Rust の所有権ルール:
 REQ-NF-007 に対応するため、永続化前に `KnowledgeService` / `ValuesService` / `PromotionService` で共通の `SecretScanPolicy` を適用する。
 
 - `memory_knowledge_add` / `memory_knowledge_update` / `memory_values_add` / `memory_values_update`（直接呼び出し）:
-  シークレット検出時は保存自体は継続可能としつつ、警告をレスポンスへ含める。ユーザーが警告を確認し対処を判断できるインタラクティブな文脈を前提とする
+  `memory_knowledge_add` は `content`、`memory_values_add` は `description` と `evidence[].summary` に対してラッパー層の preflight secret scan を行う。検出時は `{ok: false, error_type: "validation_error", ...}` を返し、永続化せずに終了する。`memory_knowledge_update` / `memory_values_update` は従来どおり警告をレスポンスへ含めつつ保存を継続する
 - 蒸留パイプライン（`DistillationService`）の integrate ステップ:
   上記 add/update を内部的に呼び出すが、機密検出警告が返された場合は該当エントリの永続化をスキップし `secret_skipped_count` に計上する（§10.1 参照）。蒸留は自律的プロセスでありユーザー判断を介在させられないため、機密候補は永続化しない
 - `memory_values_promote`:
@@ -583,7 +583,7 @@ Knowledge / Values の削除はファイル（`knowledge/{id}.md` / `values/{id}
 
 **削除成功時のレスポンス契約:**
 
-- **Knowledge 削除** (`memory_knowledge_delete`): `{ok: true, deleted_id, title}`。`reason` が指定された場合はレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（REQ-FUNC-023 参照）
+- **Knowledge 削除** (`memory_knowledge_delete`): `confirm=false`（デフォルト）または未指定では `{ok: true, deleted_id, title, preview: true, would_delete: true}` を返し、ファイル・インデックス・バックリンクは変更しない。`confirm=true` の場合のみ `{ok: true, deleted_id, title, deleted: true}` を返して実削除とバックリンク除去を行う。`reason` が指定された場合は preview / 実削除のいずれでもレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（REQ-FUNC-023 参照）
 - **Values 削除** (`memory_values_delete`): `{ok: true, deleted_id, description, was_promoted}`。`reason` が指定された場合はレスポンスにエコーバックする。`reason` はレスポンス以外には永続化しない（REQ-FUNC-024 参照）
 
 ---

@@ -600,6 +600,32 @@ def _values_error_payload(message: str) -> str:
     )
 
 
+def _secret_validation_error_payload(*texts: str) -> str | None:
+    detector_names: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        for match in SecretScanPolicy.scan(text):
+            if match.pattern_name in seen:
+                continue
+            seen.add(match.pattern_name)
+            detector_names.append(match.pattern_name)
+    if not detector_names:
+        return None
+    return _error_payload(
+        error_type="validation_error",
+        message=(
+            "Content appears to contain secrets "
+            f"(detected: {', '.join(detector_names)}). "
+            "Remove secrets or sanitize the content before retrying."
+        ),
+        hint=(
+            "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
+            "from the content and retry."
+        ),
+        exit_code=2,
+    )
+
+
 def _required_schema_hint(
     field_name: str,
     schema_fields: tuple[str, ...],
@@ -681,9 +707,21 @@ def memory_values_add(
     `evidence` accepts a list of evidence objects with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
     The newest 10 evidence objects are stored.
-    Returns the created ID/path and optional warnings/notifications.
+    Secret detection blocks the call with `error_type="validation_error"`.
+    Returns `{ok: true, id, path, category}` where `category` is the normalized value,
+    plus optional warnings/notifications.
     """
     resolved = _resolve_dir(memory_dir)
+    secret_check = _secret_validation_error_payload(
+        description,
+        *[
+            summary
+            for item in evidence or []
+            if isinstance(item, Mapping) and isinstance(summary := item.get("summary"), str)
+        ],
+    )
+    if secret_check is not None:
+        return secret_check
     try:
         entry, warnings = _values_service.add(
             resolved,
@@ -704,6 +742,7 @@ def memory_values_add(
     payload: dict[str, Any] = {
         "id": str(entry.id),
         "path": f"values/{entry.id}.md",
+        "category": str(entry.category),
     }
     if entry.promotion_state.eligible:
         payload["promotion_candidate"] = True
@@ -1934,17 +1973,23 @@ def memory_knowledge_add(
     Registers a knowledge record under `knowledge/{id}.md` and updates `_knowledge.jsonl`.
     `title`, `content`, and `domain` are required. Optional metadata includes `tags`,
     `accuracy`, `sources`, `source_type`, `user_understanding`, and `related`.
+    When omitted, `accuracy` defaults to `"uncertain"` and
+    `user_understanding` defaults to `"unknown"`.
     `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     `sources` accepts a list of source objects with shape
     `{type: "memory_note"|"web"|"user_direct"|"document"|"code"|"other", ref: str, summary: str}`.
     `source_type` accepts `"memory_distillation"`, `"autonomous_research"`, or
     `"user_taught"` (default: `"user_taught"`).
-    Returns `{ok: true, id, path}` and includes `warnings` when the content may contain
-    secrets. Duplicate content (`title` + `domain` + `content`) returns an error.
+    Secret detection blocks the call with `error_type="validation_error"`.
+    Returns `{ok: true, id, path}`. Duplicate content (`title` + `domain` + `content`)
+    returns an error.
     """
     resolved = _resolve_dir(memory_dir)
     service = KnowledgeService()
     typed_sources: list[Source | dict[str, Any]] | None = cast(Any, sources)
+    secret_check = _secret_validation_error_payload(content)
+    if secret_check is not None:
+        return secret_check
     try:
         entry = service.add(
             memory_dir=resolved,
@@ -1987,8 +2032,6 @@ def memory_knowledge_add(
         "path": f"knowledge/{entry.id}.md",
         "domain": str(entry.domain),
     }
-    if service.last_warnings:
-        payload["warnings"] = service.last_warnings
     return _success_payload(payload)
 
 
@@ -2113,16 +2156,22 @@ def memory_knowledge_update(
 @mcp.tool(annotations=_DESTRUCTIVE)
 def memory_knowledge_delete(
     id: str,
+    confirm: bool = False,
     reason: str | None = None,
     memory_dir: str | None = None,
 ) -> str:
-    """Delete one Knowledge entry and clean related back-links."""
+    """Delete one Knowledge entry and clean related back-links.
+
+    `confirm=false` returns a preview without deleting.
+    `confirm=true` performs the deletion and backlink cleanup.
+    """
     resolved = _resolve_dir(memory_dir)
     service = KnowledgeService()
     try:
         payload = service.delete(
             memory_dir=resolved,
             id=id,
+            confirm=confirm,
             reason=reason,
         )
     except FileNotFoundError as exc:

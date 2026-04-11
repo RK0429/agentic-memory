@@ -154,7 +154,10 @@ class KnowledgeService:
             value is None
             for value in (content, accuracy, sources, user_understanding, related, tags)
         ):
-            raise ValueError("At least one update field must be provided.")
+            raise ValueError(
+                "At least one update field is required "
+                "(content, accuracy, sources, user_understanding, related, tags)"
+            )
 
         repository = self._repository(memory_dir)
         existing = repository.find_by_id(id)
@@ -203,6 +206,7 @@ class KnowledgeService:
         self,
         memory_dir: str | Path,
         id: str,
+        confirm: bool = False,
         reason: str | None = None,
     ) -> dict[str, Any]:
         repository = self._repository(memory_dir)
@@ -211,6 +215,17 @@ class KnowledgeService:
             raise FileNotFoundError(f"Knowledge entry not found: {id}")
 
         deleted_id = str(entry.id)
+        preview: dict[str, Any] = {
+            "deleted_id": deleted_id,
+            "title": entry.title,
+            "preview": True,
+            "would_delete": True,
+        }
+        if reason is not None:
+            preview["reason"] = reason
+        if not confirm:
+            return preview
+
         repository.delete(entry.id)
         for candidate in repository.list_all():
             candidate_related = [str(related_id) for related_id in candidate.related]

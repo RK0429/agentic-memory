@@ -7,11 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-11
+
+### Breaking
+
+> **Migration**:
+> - `memory_knowledge_delete` now returns a preview by default. Pass `confirm=true` to perform the actual deletion; omitted `confirm` or `confirm=false` only returns the preview.
+> - `memory_knowledge_add` and `memory_values_add` now reject secret-containing input with `validation_error` instead of returning warn-only success. Sanitize content before retrying.
+
+### Added
+
+- `memory_values_add` success payload now echoes the normalized `category`, matching Knowledge add's normalized `domain`
+
 ### Changed
+
+- `KnowledgeService.update()` and `memory_knowledge_update` now enumerate valid update fields in the missing-field validation message
 
 ### Fixed
 
-### Removed
+- `memory_knowledge_delete` now supports preview/confirm two-phase deletion before removing the entry and cleaning related backlinks
+- MCP add wrappers for Knowledge and Values now reject secret-containing input with structured `validation_error`; service-layer direct usage remains warn-only
+- `memory_values_add` now checks both `description` and `evidence[].summary` for secrets before creating the entry
+
+### Documentation
+
+- `memory_knowledge_add` docstring now documents the implicit defaults `accuracy="uncertain"` and `user_understanding="unknown"` when callers omit them
 
 ## [0.16.3] - 2026-04-11
 

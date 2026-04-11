@@ -90,7 +90,7 @@ def test_memory_knowledge_tools_add_search_update_flow(
     assert [str(related_id) for related_id in related_entry.related] == [base["id"]]
 
 
-def test_memory_knowledge_add_returns_secret_warning(
+def test_memory_knowledge_add_rejects_secret_content(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
@@ -105,10 +105,20 @@ def test_memory_knowledge_add_returns_secret_warning(
         )
     )
 
-    assert payload["ok"] is True
-    assert payload["warnings"] == [
-        "Content may contain secrets (detected: generic_api_token). Review before sharing."
-    ]
+    assert payload == {
+        "ok": False,
+        "error_type": "validation_error",
+        "message": (
+            "Content appears to contain secrets (detected: generic_api_token). "
+            "Remove secrets or sanitize the content before retrying."
+        ),
+        "hint": (
+            "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
+            "from the content and retry."
+        ),
+        "exit_code": 2,
+    }
+    assert list((tmp_memory_dir / "knowledge").glob("*.md")) == []
 
 
 def test_memory_knowledge_add_malformed_sources_returns_validation_error(
@@ -293,9 +303,13 @@ def test_memory_knowledge_tools_validate_inputs_and_duplicates(
     )
     assert update_payload["ok"] is False
     assert update_payload["error_type"] == "validation_error"
+    assert update_payload["message"] == (
+        "At least one update field is required "
+        "(content, accuracy, sources, user_understanding, related, tags)"
+    )
 
 
-def test_memory_knowledge_delete_removes_entry_and_related_links(
+def test_memory_knowledge_delete_preview_does_not_remove_entry_or_related_links(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
@@ -331,6 +345,53 @@ def test_memory_knowledge_delete_removes_entry_and_related_links(
         "ok": True,
         "deleted_id": base["id"],
         "title": "Rust ownership",
+        "preview": True,
+        "would_delete": True,
+    }
+    assert repository.find_by_id(base["id"]) is not None
+    assert (tmp_memory_dir / f"knowledge/{base['id']}.md").exists()
+    assert [str(related_id) for related_id in repository.load(related["id"]).related] == [
+        base["id"]
+    ]
+
+
+def test_memory_knowledge_delete_removes_entry_and_related_links(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    repository = KnowledgeRepository(tmp_memory_dir)
+
+    base = json.loads(
+        memory_knowledge_add(
+            title="Rust ownership",
+            content="Ownership summary",
+            domain="rust",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+    related = json.loads(
+        memory_knowledge_add(
+            title="Rust borrowing",
+            content="Borrowing summary",
+            domain="rust",
+            related=[base["id"]],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    payload = json.loads(
+        memory_knowledge_delete(
+            id=base["id"],
+            confirm=True,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload == {
+        "ok": True,
+        "deleted_id": base["id"],
+        "title": "Rust ownership",
         "deleted": True,
     }
     assert repository.find_by_id(base["id"]) is None
@@ -355,6 +416,7 @@ def test_memory_knowledge_delete_with_reason_echoes_back(
     payload = json.loads(
         memory_knowledge_delete(
             id=added["id"],
+            confirm=True,
             reason="cleanup duplicate knowledge",
             memory_dir=str(tmp_memory_dir),
         )

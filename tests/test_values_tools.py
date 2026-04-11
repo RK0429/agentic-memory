@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from agentic_memory.core.values import Evidence, SourceType, ValuesEntry, ValuesRepository
+from agentic_memory.core.values import (
+    Evidence,
+    SourceType,
+    ValuesEntry,
+    ValuesRepository,
+    ValuesService,
+)
 from agentic_memory.server import (
     memory_values_add,
     memory_values_delete,
@@ -66,6 +72,7 @@ def test_memory_values_add_returns_path_warning_and_promotion_candidate(
 
     assert payload["ok"] is True
     assert payload["path"] == f"values/{payload['id']}.md"
+    assert payload["category"] == "workflow"
     assert payload["promotion_candidate"] is True
     assert str(first["id"]) in payload["warnings"][0]
 
@@ -94,7 +101,25 @@ def test_memory_values_add_reports_duplicate_as_validation_error(
     assert "Duplicate value exists" in payload["message"]
 
 
-def test_memory_values_add_returns_secret_warning(
+def test_memory_values_add_echoes_normalized_category(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_values_add(
+            description="Prefer snake_case categories to normalize consistently",
+            category="coding_style",
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["category"] == "coding-style"
+
+
+def test_memory_values_add_rejects_secret_description(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
@@ -108,10 +133,57 @@ def test_memory_values_add_returns_secret_warning(
         )
     )
 
-    assert payload["ok"] is True
-    assert payload["warnings"] == [
-        "Content may contain secrets (detected: generic_api_token). Review before sharing."
-    ]
+    assert payload == {
+        "ok": False,
+        "error_type": "validation_error",
+        "message": (
+            "Content appears to contain secrets (detected: generic_api_token). "
+            "Remove secrets or sanitize the content before retrying."
+        ),
+        "hint": (
+            "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
+            "from the content and retry."
+        ),
+        "exit_code": 2,
+    }
+    assert list((tmp_memory_dir / "values").glob("*.md")) == []
+
+
+def test_memory_values_add_rejects_secret_in_evidence_summary(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_values_add(
+            description="Prefer documented secret handling",
+            category="security",
+            evidence=[
+                {
+                    "ref": "memory/2026-04-10/security.md",
+                    "summary": 'Rotate auth_token="AbCdEf1234567890" immediately',
+                    "date": "2026-04-10",
+                }
+            ],
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload == {
+        "ok": False,
+        "error_type": "validation_error",
+        "message": (
+            "Content appears to contain secrets (detected: generic_api_token). "
+            "Remove secrets or sanitize the content before retrying."
+        ),
+        "hint": (
+            "Sanitize sensitive values (API keys, tokens, high-entropy strings) "
+            "from the content and retry."
+        ),
+        "exit_code": 2,
+    }
+    assert list((tmp_memory_dir / "values").glob("*.md")) == []
 
 
 def test_memory_values_add_malformed_evidence_returns_validation_error(
@@ -532,19 +604,20 @@ def test_memory_values_promote_rejects_secret_containing_entry(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_memory_dir.parent)
-    added = json.loads(
-        memory_values_add(
-            description='Prefer sharing api_key="AbCdEf1234567890" in chat',
-            category="security",
-            confidence=0.85,
-            evidence=[_evidence(index) for index in range(1, 6)],
-            memory_dir=str(tmp_memory_dir),
-        )
+    entry, warnings = ValuesService().add(
+        tmp_memory_dir,
+        description='Prefer sharing api_key="AbCdEf1234567890" in chat',
+        category="security",
+        confidence=0.85,
+        evidence=[_evidence(index) for index in range(1, 6)],
     )
+    assert warnings == [
+        "Content may contain secrets (detected: generic_api_token). Review before sharing."
+    ]
 
     payload = json.loads(
         memory_values_promote(
-            id=added["id"],
+            id=str(entry.id),
             confirm=False,
             memory_dir=str(tmp_memory_dir),
         )

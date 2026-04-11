@@ -212,7 +212,13 @@ def test_knowledge_service_update_rejects_duplicate_content_and_missing_fields(
         domain="rust",
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"At least one update field is required "
+            r"\(content, accuracy, sources, user_understanding, related, tags\)"
+        ),
+    ):
         service.update(memory_dir=tmp_memory_dir, id=str(first.id))
 
     with pytest.raises(DuplicateKnowledgeError):
@@ -221,6 +227,42 @@ def test_knowledge_service_update_rejects_duplicate_content_and_missing_fields(
             id=str(second.id),
             content="Ownership summary",
         )
+
+
+def test_knowledge_service_delete_preview_does_not_remove_entry_or_backlinks(
+    tmp_memory_dir: Path,
+) -> None:
+    service = KnowledgeService()
+    repository = KnowledgeRepository(tmp_memory_dir)
+    first = service.add(
+        memory_dir=tmp_memory_dir,
+        title="Rust ownership",
+        content="Ownership summary",
+        domain="rust",
+    )
+    second = service.add(
+        memory_dir=tmp_memory_dir,
+        title="Rust lifetimes",
+        content="Lifetime summary",
+        domain="rust",
+        related=[str(first.id)],
+    )
+
+    payload = service.delete(
+        memory_dir=tmp_memory_dir,
+        id=str(first.id),
+        reason="cleanup duplicate knowledge",
+    )
+
+    assert payload == {
+        "deleted_id": str(first.id),
+        "title": "Rust ownership",
+        "preview": True,
+        "would_delete": True,
+        "reason": "cleanup duplicate knowledge",
+    }
+    assert repository.find_by_id(first.id) is not None
+    assert [str(related_id) for related_id in repository.load(second.id).related] == [str(first.id)]
 
 
 def test_knowledge_service_delete_returns_metadata_and_removes_backlinks(
@@ -245,6 +287,7 @@ def test_knowledge_service_delete_returns_metadata_and_removes_backlinks(
     payload = service.delete(
         memory_dir=tmp_memory_dir,
         id=str(first.id),
+        confirm=True,
         reason="cleanup duplicate knowledge",
     )
 

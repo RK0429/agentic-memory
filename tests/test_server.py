@@ -380,6 +380,26 @@ def test_memory_search_tools_mark_open_world_and_document_rerank_download() -> N
         assert "model download" in description
 
 
+def test_memory_knowledge_add_tool_documents_default_accuracy_and_understanding() -> None:
+    tool = server_module.mcp._tool_manager.get_tool("memory_knowledge_add")
+    description = " ".join(tool.description.split())
+
+    assert '`accuracy` defaults to `"uncertain"`' in description
+    assert '`user_understanding` defaults to `"unknown"`' in description
+    assert 'Secret detection blocks the call with `error_type="validation_error"`' in description
+
+
+def test_memory_values_add_tool_documents_secret_blocking_and_normalized_category() -> None:
+    tool = server_module.mcp._tool_manager.get_tool("memory_values_add")
+    description = " ".join(tool.description.split())
+
+    assert 'Secret detection blocks the call with `error_type="validation_error"`' in description
+    assert (
+        "Returns `{ok: true, id, path, category}` where `category` is the normalized value"
+        in description
+    )
+
+
 def test_memory_state_from_note_returns_json_error_for_missing_note(
     tmp_memory_dir: Path, monkeypatch
 ) -> None:
