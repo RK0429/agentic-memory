@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentic_memory.core import config
 
 
@@ -126,6 +128,39 @@ def test_init_memory_dir_ignores_similarly_named_markers(tmp_path: Path) -> None
     # the _FOO markers are not recognized as the canonical block.
     assert content.count(config.PROMOTED_VALUES_BEGIN) == 1
     assert content.count(config.PROMOTED_VALUES_END) == 1
+
+
+@pytest.mark.parametrize(
+    ("body", "case_id"),
+    [
+        pytest.param("# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES -->\n", "begin-only"),
+        pytest.param("# Agent Rules\n\n<!-- END:PROMOTED_VALUES -->\n", "end-only"),
+        pytest.param(
+            "# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->\n",
+            "annotated-begin-only",
+        ),
+    ],
+)
+def test_init_memory_dir_rejects_half_open_promoted_values_markers(
+    tmp_path: Path, body: str, case_id: str
+) -> None:
+    """Half-open marker state must raise instead of appending a fresh block.
+
+    If exactly one of BEGIN/END is present, the AGENTS.md is malformed and
+    appending a new bare-form block would create a duplicate-marker state
+    similar to the one the loose-detection fix is designed to prevent.
+    Fail loudly so the user can repair the file.
+    """
+
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="malformed PROMOTED_VALUES markers"):
+        config.init_memory_dir(memory_dir)
+
+    # The original file must remain untouched on failure.
+    assert agents_path.read_text(encoding="utf-8") == body
 
 
 def test_init_dense_config(tmp_path: Path) -> None:
