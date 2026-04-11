@@ -5,6 +5,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from agentic_memory.core import tokenizer as _tokenizer
 from agentic_memory.core.query import parse_query
 from agentic_memory.core.scorer import build_idf_cache, score_generic_entry
 from agentic_memory.core.security import SecretScanPolicy
@@ -22,8 +23,29 @@ from agentic_memory.core.values.repository import ValuesRepository
 
 _SEARCH_WEIGHTS = {"description": 6.0, "category": 4.0}
 _SIMILARITY_THRESHOLD = 0.7
+_TOPIC_OVERLAP_THRESHOLD = 0.3
 _SCORE_HALF_LIFE_DAYS = 30.0
 _SCORE_RECENCY_BOOST_MAX = 0.0
+_TOPIC_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "to",
+        "of",
+        "and",
+        "or",
+        "for",
+        "with",
+        "prefer",
+        "avoid",
+        "must",
+        "should",
+        "do",
+        "not",
+        "use",
+    }
+)
 
 
 def _now() -> dt.datetime:
@@ -313,6 +335,8 @@ class ValuesService:
         if not qterms:
             return []
 
+        new_tokens = self._topic_tokens(description)
+
         candidates = [
             entry
             for entry in entries
@@ -353,8 +377,23 @@ class ValuesService:
         ):
             normalized_score = score / max_score
             if normalized_score >= _SIMILARITY_THRESHOLD:
+                if new_tokens:
+                    entry_tokens = self._topic_tokens(entry.description)
+                    overlap = len(new_tokens & entry_tokens) / len(new_tokens)
+                    if overlap < _TOPIC_OVERLAP_THRESHOLD:
+                        continue
                 warnings.append(f"Similar value exists: {entry.id} - {entry.description}")
         return warnings
+
+    @staticmethod
+    def _topic_tokens(text: str) -> set[str]:
+        """Extract meaningful topic tokens for overlap comparison.
+
+        Uses the CJK-aware tokenizer to produce boundary-split tokens,
+        then filters stopwords and very short tokens.
+        """
+        tokens = _tokenizer.tokenize(text, min_length=2)
+        return {t.lower() for t in tokens if t.lower() not in _TOPIC_STOPWORDS}
 
     @staticmethod
     def _score_document(entry: ValuesEntry) -> dict[str, str]:

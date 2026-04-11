@@ -115,6 +115,45 @@ def test_add_reports_similarity_and_preserves_initial_evidence_order(
     assert entry.promotion_state.eligible is True
 
 
+def test_add_no_similarity_warning_for_cjk_short_prefix(tmp_memory_dir: Path) -> None:
+    """Short shared CJK prefix should not trigger false positive similarity warning."""
+    service = ValuesService()
+    _seed_entry(
+        tmp_memory_dir,
+        description="コード 品質を保つ",
+        category="workflow",
+    )
+
+    _entry, warnings = service.add(
+        tmp_memory_dir,
+        description="コード レビューを重視する",
+        category="workflow",
+    )
+
+    similarity_warnings = [w for w in warnings if w.startswith("Similar value exists")]
+    assert similarity_warnings == []
+
+
+def test_add_detects_similarity_for_genuine_cjk_overlap(tmp_memory_dir: Path) -> None:
+    """CJK descriptions sharing substantial tokens should still flag as similar."""
+    service = ValuesService()
+    first = _seed_entry(
+        tmp_memory_dir,
+        description="CI パイプラインで テストを自動実行する",
+        category="workflow",
+    )
+
+    _entry, warnings = service.add(
+        tmp_memory_dir,
+        description="CI パイプラインで カバレッジを計測する",
+        category="workflow",
+    )
+
+    similarity_warnings = [w for w in warnings if w.startswith("Similar value exists")]
+    assert similarity_warnings
+    assert str(first.id) in similarity_warnings[0]
+
+
 def test_search_with_query_applies_filters_and_scores(tmp_memory_dir: Path) -> None:
     service = ValuesService()
     primary = _seed_entry(
@@ -334,9 +373,9 @@ def test_list_values_filters_and_sorts(tmp_memory_dir: Path) -> None:
     assert [entry.id for entry in results] == [included_high.id, included_low.id]
 
 
-def test_list_values_defaults_to_min_confidence_half(tmp_memory_dir: Path) -> None:
+def test_list_values_defaults_to_zero_min_confidence(tmp_memory_dir: Path) -> None:
     service = ValuesService()
-    _seed_entry(
+    low_confidence = _seed_entry(
         tmp_memory_dir,
         description="Prefer low-confidence experiments",
         category="workflow",
@@ -353,7 +392,7 @@ def test_list_values_defaults_to_min_confidence_half(tmp_memory_dir: Path) -> No
 
     results = service.list_values(tmp_memory_dir)
 
-    assert [entry.id for entry in results] == [included.id]
+    assert [entry.id for entry in results] == [included.id, low_confidence.id]
 
 
 def test_delete_returns_metadata_and_reason_for_non_promoted_entry(
