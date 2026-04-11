@@ -240,7 +240,11 @@ class ValuesService:
         if entry.promoted:
             assert agents_md_path is not None
             try:
-                self._agents_md_adapter.remove_entry(agents_md_path, str(entry.id))
+                self._agents_md_adapter.remove_entry(
+                    agents_md_path,
+                    str(entry.id),
+                    lock_dir=Path(memory_dir),
+                )
             except ValueError as exc:
                 raise self._delete_agents_md_error(exc) from exc
 

@@ -91,6 +91,7 @@ class PromotionService:
             agents_md_path,
             description=entry.description,
             entry_id=str(entry.id),
+            lock_dir=Path(memory_dir),
         )
         timestamp = _now()
         entry.promoted = True
@@ -143,7 +144,11 @@ class PromotionService:
         if not confirm:
             return preview
 
-        self._agents_md_adapter.remove_entry(agents_md_path, str(entry.id))
+        self._agents_md_adapter.remove_entry(
+            agents_md_path,
+            str(entry.id),
+            lock_dir=Path(memory_dir),
+        )
         timestamp = _now()
         entry.promoted = False
         entry.demotion_reason = normalized_reason

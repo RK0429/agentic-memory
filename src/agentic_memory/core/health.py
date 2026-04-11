@@ -376,7 +376,7 @@ def _repair_promoted_values_sync(memory_dir: Path) -> dict[str, int]:
     updated = 0
 
     for orphan_id in report["orphan_in_agents_md"]:
-        if adapter.remove_entry(agents_md_path, orphan_id):
+        if adapter.remove_entry(agents_md_path, orphan_id, lock_dir=memory_dir):
             removed += 1
 
     for missing_id in report["missing_in_agents_md"]:
@@ -387,6 +387,7 @@ def _repair_promoted_values_sync(memory_dir: Path) -> dict[str, int]:
             agents_md_path,
             description=entry.description,
             entry_id=str(entry.id),
+            lock_dir=memory_dir,
         )
         added += 1
 
@@ -398,6 +399,7 @@ def _repair_promoted_values_sync(memory_dir: Path) -> dict[str, int]:
             agents_md_path,
             description=entry.description,
             entry_id=str(entry.id),
+            lock_dir=memory_dir,
         ):
             updated += 1
 
