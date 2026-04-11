@@ -70,16 +70,63 @@ def test_values_entry_keeps_evidence_newest_first_with_limit() -> None:
 
     assert len(entry.evidence) == 10
     assert entry.total_evidence_count == 11
-    assert entry.evidence[0].summary == "evidence-1"
-    assert entry.evidence[-1].summary == "evidence-10"
+    assert [item.summary for item in entry.evidence] == [
+        "evidence-11",
+        "evidence-10",
+        "evidence-9",
+        "evidence-8",
+        "evidence-7",
+        "evidence-6",
+        "evidence-5",
+        "evidence-4",
+        "evidence-3",
+        "evidence-2",
+    ]
 
     newest = Evidence(ref="memory/2026-04-12/new.md", summary="newest", date="2026-04-12")
     entry.add_evidence(newest)
 
     assert len(entry.evidence) == 10
     assert entry.total_evidence_count == 12
-    assert entry.evidence[0] == newest
-    assert entry.evidence[-1].summary == "evidence-9"
+    assert [item.summary for item in entry.evidence] == [
+        "newest",
+        "evidence-11",
+        "evidence-10",
+        "evidence-9",
+        "evidence-8",
+        "evidence-7",
+        "evidence-6",
+        "evidence-5",
+        "evidence-4",
+        "evidence-3",
+    ]
+
+
+def test_values_entry_add_evidence_reorders_by_date_and_keeps_top_ten() -> None:
+    entry = ValuesEntry(
+        description="Keep newest evidence only",
+        category="workflow",
+        confidence=0.5,
+        evidence=[_evidence(index) for index in (5, 1, 4, 2, 3)],
+        source_type=SourceType.MEMORY_DISTILLATION,
+    )
+
+    for index in (8, 6, 12, 7, 10, 9, 11):
+        entry.add_evidence(_evidence(index))
+
+    assert entry.total_evidence_count == 12
+    assert [item.date for item in entry.evidence] == [
+        "2026-04-12",
+        "2026-04-11",
+        "2026-04-10",
+        "2026-04-09",
+        "2026-04-08",
+        "2026-04-07",
+        "2026-04-06",
+        "2026-04-05",
+        "2026-04-04",
+        "2026-04-03",
+    ]
 
 
 def test_category_normalization_uses_kebab_case() -> None:

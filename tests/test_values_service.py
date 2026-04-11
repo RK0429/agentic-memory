@@ -87,7 +87,7 @@ def test_add_includes_secret_warning_on_suspicious_description(tmp_memory_dir: P
     ]
 
 
-def test_add_reports_similarity_and_preserves_initial_evidence_order(
+def test_add_reports_similarity_and_keeps_initial_evidence_newest_first(
     tmp_memory_dir: Path,
 ) -> None:
     service = ValuesService()
@@ -110,8 +110,8 @@ def test_add_reports_similarity_and_preserves_initial_evidence_order(
     assert str(first.id) in warnings[0]
     assert len(entry.evidence) == 10
     assert entry.total_evidence_count == 11
-    assert entry.evidence[0].summary == "evidence-1"
-    assert entry.evidence[-1].summary == "evidence-10"
+    assert entry.evidence[0].summary == "evidence-11"
+    assert entry.evidence[-1].summary == "evidence-2"
     assert entry.promotion_state.eligible is True
 
 

@@ -81,7 +81,7 @@ class ValuesService:
             description=normalized_description,
             category=normalized_category,
             confidence=confidence,
-            evidence=evidence_items[:10],
+            evidence=evidence_items,
             total_evidence_count=len(evidence_items),
             source_type=source_type,
         )
