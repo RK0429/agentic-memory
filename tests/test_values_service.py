@@ -87,7 +87,7 @@ def test_add_includes_secret_warning_on_suspicious_description(tmp_memory_dir: P
     ]
 
 
-def test_add_reports_similarity_and_preserves_initial_evidence_order(
+def test_add_reports_similarity_and_keeps_initial_evidence_newest_first(
     tmp_memory_dir: Path,
 ) -> None:
     service = ValuesService()
@@ -110,9 +110,46 @@ def test_add_reports_similarity_and_preserves_initial_evidence_order(
     assert str(first.id) in warnings[0]
     assert len(entry.evidence) == 10
     assert entry.total_evidence_count == 11
-    assert entry.evidence[0].summary == "evidence-1"
-    assert entry.evidence[-1].summary == "evidence-10"
+    assert entry.evidence[0].summary == "evidence-11"
+    assert entry.evidence[-1].summary == "evidence-2"
     assert entry.promotion_state.eligible is True
+
+
+def test_add_no_similarity_warning_for_different_category(tmp_memory_dir: Path) -> None:
+    service = ValuesService()
+    _seed_entry(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky changes",
+        category="review",
+    )
+
+    _entry, warnings = service.add(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky deployments",
+        category="operations",
+    )
+
+    similarity_warnings = [w for w in warnings if w.startswith("Similar value exists")]
+    assert similarity_warnings == []
+
+
+def test_add_similarity_warning_fires_for_same_category(tmp_memory_dir: Path) -> None:
+    service = ValuesService()
+    first = _seed_entry(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky changes",
+        category="review",
+    )
+
+    _entry, warnings = service.add(
+        tmp_memory_dir,
+        description="Prefer explicit review plans for risky deployments",
+        category="review",
+    )
+
+    similarity_warnings = [w for w in warnings if w.startswith("Similar value exists")]
+    assert similarity_warnings
+    assert str(first.id) in similarity_warnings[0]
 
 
 def test_add_no_similarity_warning_for_cjk_short_prefix(tmp_memory_dir: Path) -> None:
@@ -261,7 +298,13 @@ def test_update_rejects_duplicate_description_and_requires_fields(
         category="workflow",
     )
 
-    with pytest.raises(ValueError, match="At least one update field is required"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            "At least one update field is required "
+            r"\(confidence, add_evidence, description\)"
+        ),
+    ):
         service.update(tmp_memory_dir, id=str(first.id))
 
     with pytest.raises(ValueError, match="Duplicate value exists"):

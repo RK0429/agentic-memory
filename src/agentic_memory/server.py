@@ -43,7 +43,12 @@ from agentic_memory.core.task_ids import (
 from agentic_memory.core.task_ids import (
     normalize_task_id as _normalize_task_id,
 )
-from agentic_memory.core.values import PromotionService, ValuesEntry, ValuesService
+from agentic_memory.core.values import (
+    PromotionManager,
+    PromotionService,
+    ValuesEntry,
+    ValuesService,
+)
 
 try:
     mcp = FastMCP(
@@ -577,6 +582,17 @@ def _values_error_payload(message: str) -> str:
                 "next to the memory directory."
             ),
         )
+    if "does not meet promotion criteria" in text:
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint=(
+                "Increase confidence to >= "
+                f"{PromotionManager.CONFIDENCE_THRESHOLD} and accumulate >= "
+                f"{PromotionManager.EVIDENCE_THRESHOLD} evidence items via "
+                "memory_values_update, then retry promotion."
+            ),
+        )
     return _error_payload(
         error_type="validation_error",
         message=text,
@@ -658,6 +674,7 @@ def memory_values_add(
     """Add one Values entry.
 
     `description` and `category` are required.
+    `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     `confidence` defaults to 0.3.
     Promotion eligibility requires `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
@@ -706,6 +723,7 @@ def memory_values_search(
     """Search Values entries by query and/or category.
 
     At least one of `query` or `category` is required.
+    `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     Results include score, confidence, evidence count, and promotion state.
     """
     resolved = _resolve_dir(memory_dir)
@@ -778,6 +796,7 @@ def memory_values_list(
     """List Values entries with optional filters.
 
     `min_confidence` defaults to 0.0.
+    `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     Results are sorted by confidence descending, with `updated_at` as the tiebreaker.
     """
     resolved = _resolve_dir(memory_dir)
@@ -1915,6 +1934,7 @@ def memory_knowledge_add(
     Registers a knowledge record under `knowledge/{id}.md` and updates `_knowledge.jsonl`.
     `title`, `content`, and `domain` are required. Optional metadata includes `tags`,
     `accuracy`, `sources`, `source_type`, `user_understanding`, and `related`.
+    `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     `sources` accepts a list of source objects with shape
     `{type: "memory_note"|"web"|"user_direct"|"document"|"code"|"other", ref: str, summary: str}`.
     `source_type` accepts `"memory_distillation"`, `"autonomous_research"`, or
@@ -1986,8 +2006,10 @@ def memory_knowledge_search(
 
     At least one of `query` or `domain` is required. Query searches use BM25+ scoring
     over title/content/domain/tags. Domain-only searches return the filtered entries in
-    `updated_at` descending order. Optional `accuracy` and `user_understanding` filters
-    are applied to the result set. Returns `{ok: true, entries: [...]}` with each entry
+    `updated_at` descending order. The `domain` filter is normalized to kebab-case
+    (e.g. `"coding_style"` → `"coding-style"`). Optional `accuracy` and
+    `user_understanding` filters are applied to the result set.
+    Returns `{ok: true, entries: [...]}` with each entry
     containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
     `content_snippet`, and `score`.
     """

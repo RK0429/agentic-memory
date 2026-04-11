@@ -25,6 +25,11 @@ def _coerce_datetime(value: dt.datetime | str | None) -> dt.datetime | None:
     return dt.datetime.fromisoformat(value)
 
 
+def _sort_evidence_newest_first(evidence_items: list[Evidence]) -> list[Evidence]:
+    # Stable sort keeps same-day evidence in original insertion order.
+    return sorted(evidence_items, key=lambda item: item.date, reverse=True)
+
+
 class ValuesId(str):
     def __new__(cls, value: str) -> ValuesId:
         normalized = str(value).strip()
@@ -148,7 +153,7 @@ class ValuesEntry:
         self.total_evidence_count = int(self.total_evidence_count)
         if self.total_evidence_count < 0:
             raise ValueError("ValuesEntry.total_evidence_count cannot be negative")
-        self.evidence = evidence_items[:10]
+        self.evidence = _sort_evidence_newest_first(evidence_items)[:10]
         self.total_evidence_count = max(len(evidence_items), self.total_evidence_count)
         self.promoted = bool(self.promoted)
         self.promoted_at = _coerce_datetime(self.promoted_at)
@@ -169,7 +174,7 @@ class ValuesEntry:
 
     def add_evidence(self, evidence: Evidence | dict[str, Any]) -> None:
         candidate = evidence if isinstance(evidence, Evidence) else Evidence.from_dict(evidence)
-        self.evidence = [candidate, *self.evidence][:10]
+        self.evidence = _sort_evidence_newest_first([candidate, *self.evidence])[:10]
         self.total_evidence_count += 1
         self.updated_at = _now()
 

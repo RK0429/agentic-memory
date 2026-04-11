@@ -81,7 +81,7 @@ class ValuesService:
             description=normalized_description,
             category=normalized_category,
             confidence=confidence,
-            evidence=evidence_items[:10],
+            evidence=evidence_items,
             total_evidence_count=len(evidence_items),
             source_type=source_type,
         )
@@ -156,7 +156,9 @@ class ValuesService:
         description: str | None = None,
     ) -> tuple[ValuesEntry, dict[str, bool | list[str]]]:
         if confidence is None and add_evidence is None and description is None:
-            raise ValueError("At least one update field is required")
+            raise ValueError(
+                "At least one update field is required (confidence, add_evidence, description)"
+            )
 
         repository = self._repository(memory_dir)
         entry = repository.find_by_id(id)
@@ -337,6 +339,7 @@ class ValuesService:
         candidates = [
             entry
             for entry in entries
+            if entry.category == category
             if not self._is_duplicate(entry, description=description, category=category)
         ]
         documents = [self._score_document(entry) for entry in candidates]

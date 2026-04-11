@@ -199,6 +199,9 @@ def test_memory_values_update_validates_input_and_not_found(
 
     assert validation_payload["ok"] is False
     assert validation_payload["error_type"] == "validation_error"
+    assert validation_payload["message"] == (
+        "At least one update field is required (confidence, add_evidence, description)"
+    )
     assert not_found_payload["ok"] is False
     assert not_found_payload["error_type"] == "not_found"
 
@@ -518,6 +521,10 @@ def test_memory_values_promote_ineligible_includes_current_and_threshold(
     assert "required>=5" in payload["message"]
     assert "promoted=False" in payload["message"]
     assert "Increase confidence to >= 0.8" in payload["message"]
+    assert payload["hint"] == (
+        "Increase confidence to >= 0.8 and accumulate >= 5 evidence items via "
+        "memory_values_update, then retry promotion."
+    )
 
 
 def test_memory_values_promote_rejects_secret_containing_entry(
