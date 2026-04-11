@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Promotion/demotion preview `entry_line` now uses `project_description` projection, matching AGENTS.md formatting (newline replacement, HTML comment stripping, 200-char truncation)
+- Promotion eligibility threshold docstrings now reference `CONFIDENCE_THRESHOLD` and `EVIDENCE_THRESHOLD` constant names alongside literal values
+
+### Fixed
+
+- `memory_knowledge_search` docstring referred to "each result" instead of "each entry", inconsistent with v0.16.0 response key rename
+
+### Removed
+
+- Unused `ValuesService._existing_agents_entry` and `ValuesService._entry_line` methods (functionality exists in `PromotionService`)
+
 ## [0.16.0] - 2026-04-11
 
 ### Breaking
