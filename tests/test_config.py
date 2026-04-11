@@ -59,6 +59,75 @@ def test_init_memory_dir_adds_promoted_values_markers_to_existing_agents_md(tmp_
     assert content.count(config.PROMOTED_VALUES_END) == 1
 
 
+def test_init_memory_dir_recognizes_annotated_promoted_values_markers(tmp_path: Path) -> None:
+    """Annotated marker lines must be recognized as the existing block.
+
+    Regression: ``_ensure_promoted_values_markers`` previously used a substring
+    check against the bare ``<!-- BEGIN:PROMOTED_VALUES -->`` constant, which
+    failed to match a hand-annotated form such as
+    ``<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->``.
+    The detector then appended a fresh bare-marker block at the end of the
+    file, leaving the AGENTS.md with two PROMOTED_VALUES blocks (one annotated,
+    one bare). The annotated block must be treated as the existing block so
+    that ``init_memory_dir`` is idempotent regardless of marker decoration.
+    """
+
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    annotated_begin = (
+        "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->"
+    )
+    annotated_end = "<!-- END:PROMOTED_VALUES (agentic-memory managed) -->"
+    original = (
+        "# Agent Rules\n\n"
+        "## 内面化された価値観\n\n"
+        f"{annotated_begin}\n\n{annotated_end}\n\n"
+        "## 継続的改善\n"
+    )
+    agents_path.write_text(original, encoding="utf-8")
+
+    config.init_memory_dir(memory_dir)
+    config.init_memory_dir(memory_dir)
+
+    content = agents_path.read_text(encoding="utf-8")
+    # Both annotated marker lines must be preserved unchanged.
+    assert annotated_begin in content
+    assert annotated_end in content
+    # No bare-form duplicate should be appended.
+    assert content.count("BEGIN:PROMOTED_VALUES") == 1
+    assert content.count("END:PROMOTED_VALUES") == 1
+
+
+def test_init_memory_dir_ignores_similarly_named_markers(tmp_path: Path) -> None:
+    """Marker detection must use word-boundary anchors to reject typos.
+
+    The PROMOTED_VALUES detection regex uses ``\\b`` (word boundary) so that
+    derivative names such as ``PROMOTED_VALUES_FOO`` or ``PROMOTED_VALUESXYZ``
+    are *not* mistaken for the canonical PROMOTED_VALUES markers. Without the
+    word boundary, a future refactor that simplifies the regex (for example,
+    relaxing ``\\b.*-->$`` to ``\\s*.*-->$``) would silently start matching
+    these typos. This negative test locks in the false-positive protection.
+    """
+
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(
+        "# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES_FOO -->\n<!-- END:PROMOTED_VALUES_FOO -->\n",
+        encoding="utf-8",
+    )
+
+    config.init_memory_dir(memory_dir)
+
+    content = agents_path.read_text(encoding="utf-8")
+    # The unrelated _FOO markers must remain untouched.
+    assert "BEGIN:PROMOTED_VALUES_FOO" in content
+    assert "END:PROMOTED_VALUES_FOO" in content
+    # And the canonical bare markers must be appended exactly once because
+    # the _FOO markers are not recognized as the canonical block.
+    assert content.count(config.PROMOTED_VALUES_BEGIN) == 1
+    assert content.count(config.PROMOTED_VALUES_END) == 1
+
+
 def test_init_dense_config(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
 
