@@ -430,17 +430,6 @@ class ValuesService:
         pattern_names = ", ".join(sorted({match.pattern_name for match in matches}))
         return [f"Content may contain secrets (detected: {pattern_names}). Review before sharing."]
 
-    def _existing_agents_entry(self, agents_md_path: Path, entry: ValuesEntry) -> str | None:
-        prefix = f"- [{entry.id}] "
-        for line in self._agents_md_adapter.list_entries(agents_md_path):
-            if line.startswith(prefix):
-                return line
-        return None
-
-    @staticmethod
-    def _entry_line(entry: ValuesEntry) -> str:
-        return f"- [{entry.id}] {entry.description}"
-
     @staticmethod
     def _delete_description(entry: ValuesEntry) -> str:
         desc = entry.description
