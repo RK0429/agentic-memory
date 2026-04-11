@@ -130,19 +130,59 @@ def test_init_memory_dir_ignores_similarly_named_markers(tmp_path: Path) -> None
     assert content.count(config.PROMOTED_VALUES_END) == 1
 
 
+def test_promoted_values_regex_requires_fullmatch_semantics() -> None:
+    """``PROMOTED_VALUES_*_RE`` are intentionally unanchored.
+
+    The detection regexes in ``config.py`` have no ``^``/``$`` anchors and
+    are designed for use with ``re.fullmatch`` against a stripped marker
+    line. This test locks in that contract by demonstrating two
+    properties:
+
+    1. ``fullmatch`` accepts both bare and annotated marker lines.
+    2. ``fullmatch`` rejects marker patterns embedded in surrounding
+       text, even though ``re.search`` would happily match them. A
+       future refactor that switches a call site to ``re.search`` (or
+       removes ``line.strip()``) would silently begin matching
+       prose-mentioned marker text — this test makes that mistake
+       visible.
+    """
+
+    bare_begin = "<!-- BEGIN:PROMOTED_VALUES -->"
+    annotated_begin = "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->"
+    bare_end = "<!-- END:PROMOTED_VALUES -->"
+    annotated_end = "<!-- END:PROMOTED_VALUES (agentic-memory managed) -->"
+
+    # Property 1: fullmatch accepts the canonical and annotated forms.
+    assert config.PROMOTED_VALUES_BEGIN_RE.fullmatch(bare_begin) is not None
+    assert config.PROMOTED_VALUES_BEGIN_RE.fullmatch(annotated_begin) is not None
+    assert config.PROMOTED_VALUES_END_RE.fullmatch(bare_end) is not None
+    assert config.PROMOTED_VALUES_END_RE.fullmatch(annotated_end) is not None
+
+    # Property 2: marker text embedded in surrounding prose must NOT match
+    # via ``fullmatch``, even though ``re.search`` would find it. This
+    # protects against accidental ``re.search`` migration at call sites.
+    embedded = f"prose before {bare_begin} prose after"
+    assert config.PROMOTED_VALUES_BEGIN_RE.fullmatch(embedded) is None
+    assert config.PROMOTED_VALUES_BEGIN_RE.search(embedded) is not None  # sanity
+
+
 @pytest.mark.parametrize(
-    ("body", "case_id"),
+    "body",
     [
-        pytest.param("# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES -->\n", "begin-only"),
-        pytest.param("# Agent Rules\n\n<!-- END:PROMOTED_VALUES -->\n", "end-only"),
+        pytest.param("# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES -->\n", id="begin-only"),
+        pytest.param("# Agent Rules\n\n<!-- END:PROMOTED_VALUES -->\n", id="end-only"),
         pytest.param(
             "# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->\n",
-            "annotated-begin-only",
+            id="annotated-begin-only",
+        ),
+        pytest.param(
+            "# Agent Rules\n\n<!-- END:PROMOTED_VALUES (agentic-memory managed) -->\n",
+            id="annotated-end-only",
         ),
     ],
 )
 def test_init_memory_dir_rejects_half_open_promoted_values_markers(
-    tmp_path: Path, body: str, case_id: str
+    tmp_path: Path, body: str
 ) -> None:
     """Half-open marker state must raise instead of appending a fresh block.
 

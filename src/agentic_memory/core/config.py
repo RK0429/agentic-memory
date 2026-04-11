@@ -194,8 +194,11 @@ def _ensure_promoted_values_markers(agents_path: Path) -> None:
         # is malformed; appending a fresh marker block here would create
         # the duplicate state that the loose-detection fix is designed
         # to prevent. Fail loudly so the user can repair the file.
+        present = "BEGIN" if has_begin else "END"
+        missing = "END" if has_begin else "BEGIN"
         raise ValueError(
-            "AGENTS.md has malformed PROMOTED_VALUES markers: exactly one of BEGIN/END is present"
+            f"AGENTS.md at {agents_path} has malformed PROMOTED_VALUES markers: "
+            f"{present} is present but {missing} is missing"
         )
 
     suffix = "" if content.endswith("\n") else "\n"

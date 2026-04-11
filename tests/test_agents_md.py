@@ -61,6 +61,7 @@ _ANNOTATED_END = "<!-- END:PROMOTED_VALUES (agentic-memory managed) -->"
     [
         pytest.param(PROMOTED_VALUES_BEGIN, PROMOTED_VALUES_END, id="bare"),
         pytest.param(_ANNOTATED_BEGIN, PROMOTED_VALUES_END, id="annotated-begin"),
+        pytest.param(PROMOTED_VALUES_BEGIN, _ANNOTATED_END, id="annotated-end"),
         pytest.param(_ANNOTATED_BEGIN, _ANNOTATED_END, id="fully-annotated"),
     ],
 )
