@@ -159,9 +159,8 @@ class PromotionService:
                 return line
         return None
 
-    @staticmethod
-    def _entry_line(entry: ValuesEntry) -> str:
-        return f"- [{entry.id}] {entry.description}"
+    def _entry_line(self, entry: ValuesEntry) -> str:
+        return f"- [{entry.id}] {self._agents_md_adapter.project_description(entry.description)}"
 
 
 __all__ = ["PromotionManager", "PromotionService"]
