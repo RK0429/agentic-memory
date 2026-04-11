@@ -52,41 +52,33 @@ def test_resolve_agents_md_path_uses_env_then_symlink(
     assert adapter.resolve_agents_md_path(tmp_memory_dir) == external_target
 
 
-def test_list_append_and_remove_entries(tmp_path: Path) -> None:
-    adapter = AgentsMdAdapter()
-    agents_path = tmp_path / "AGENTS.md"
-    agents_path.write_text(_agents_content("- [v-1] existing"), encoding="utf-8")
-
-    assert adapter.list_entries(agents_path) == ["- [v-1] existing"]
-
-    adapter.append_entry(agents_path, "new value", "v-2")
-    assert adapter.list_entries(agents_path) == [
-        "- [v-1] existing",
-        "- [v-2] new value",
-    ]
-
-    assert adapter.remove_entry(agents_path, "v-1") is True
-    assert adapter.remove_entry(agents_path, "v-missing") is False
-    assert adapter.list_entries(agents_path) == ["- [v-2] new value"]
+_ANNOTATED_BEGIN = "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->"
+_ANNOTATED_END = "<!-- END:PROMOTED_VALUES (agentic-memory managed) -->"
 
 
-def test_list_append_and_remove_entries_with_annotated_markers(tmp_path: Path) -> None:
-    """CRUD operations must work with hand-annotated marker lines.
+@pytest.mark.parametrize(
+    ("begin_marker", "end_marker"),
+    [
+        pytest.param(PROMOTED_VALUES_BEGIN, PROMOTED_VALUES_END, id="bare"),
+        pytest.param(_ANNOTATED_BEGIN, PROMOTED_VALUES_END, id="annotated-begin"),
+        pytest.param(PROMOTED_VALUES_BEGIN, _ANNOTATED_END, id="annotated-end"),
+        pytest.param(_ANNOTATED_BEGIN, _ANNOTATED_END, id="fully-annotated"),
+    ],
+)
+def test_list_append_and_remove_entries(tmp_path: Path, begin_marker: str, end_marker: str) -> None:
+    """CRUD operations must work for both bare and hand-annotated marker lines.
 
-    Some workspaces hand-annotate the BEGIN marker with a hint such as
+    Some workspaces hand-annotate the begin/end markers with hints such as
     ``(agentic-memory managed — do not edit manually)`` to discourage manual
     edits. The adapter must recognize these as the existing block instead of
-    raising "missing promoted values markers".
+    raising "missing promoted values markers", and must leave the annotation
+    text untouched.
     """
 
     adapter = AgentsMdAdapter()
     agents_path = tmp_path / "AGENTS.md"
-    annotated_begin = (
-        "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->"
-    )
-    annotated_end = "<!-- END:PROMOTED_VALUES -->"
     agents_path.write_text(
-        f"# Agent Rules\n\n{annotated_begin}\n- [v-1] existing\n{annotated_end}\n",
+        f"# Agent Rules\n\n{begin_marker}\n- [v-1] existing\n{end_marker}\n",
         encoding="utf-8",
     )
 
@@ -98,12 +90,16 @@ def test_list_append_and_remove_entries_with_annotated_markers(tmp_path: Path) -
         "- [v-2] new value",
     ]
 
-    # The annotated marker line itself must remain untouched.
+    # The original marker lines themselves must remain untouched, and there
+    # must be exactly one BEGIN/END pair regardless of annotation form.
     content = agents_path.read_text(encoding="utf-8")
-    assert annotated_begin in content
+    assert begin_marker in content
+    assert end_marker in content
     assert content.count("BEGIN:PROMOTED_VALUES") == 1
+    assert content.count("END:PROMOTED_VALUES") == 1
 
     assert adapter.remove_entry(agents_path, "v-1") is True
+    assert adapter.remove_entry(agents_path, "v-missing") is False
     assert adapter.list_entries(agents_path) == ["- [v-2] new value"]
 
 

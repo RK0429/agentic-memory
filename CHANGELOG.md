@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-04-11
+
+### Fixed
+
+- `_ensure_promoted_values_markers` and `AgentsMdAdapter._load_marked_lines` now recognize hand-annotated PROMOTED_VALUES markers such as `<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed — do not edit manually) -->`. Previously the substring/equality check only matched the bare canonical form, causing `init_memory_dir` to silently append a duplicate bare-form marker block to AGENTS.md and leaving the adapter operating on the wrong block.
+
+### Changed
+
+- `_ensure_promoted_values_markers` now raises `ValueError` when AGENTS.md is in a half-open marker state (exactly one of BEGIN/END present) instead of appending a fresh bare-form block on top of the malformed file. This matches the existing strict behavior of `_load_marked_lines` and surfaces user errors instead of compounding them.
+- Marker detection regex now relies on `re.fullmatch` instead of `re.match` with explicit `^`/`$` anchors, and `_ensure_promoted_values_markers` performs the existence check in a single pass over the file.
+
 ## [0.14.0] - 2026-04-10
 
 ### Added

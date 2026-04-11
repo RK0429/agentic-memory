@@ -77,9 +77,10 @@ PROMOTED_VALUES_END = "<!-- END:PROMOTED_VALUES -->"
 # comment, e.g. "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->".
 # Used by both ``_ensure_promoted_values_markers`` and the AgentsMdAdapter so
 # that hand-annotated marker lines are recognized as the existing block instead
-# of being treated as missing.
-PROMOTED_VALUES_BEGIN_RE = re.compile(r"^<!--\s*BEGIN:PROMOTED_VALUES\b.*-->$")
-PROMOTED_VALUES_END_RE = re.compile(r"^<!--\s*END:PROMOTED_VALUES\b.*-->$")
+# of being treated as missing. Use ``fullmatch`` at call sites — these patterns
+# intentionally have no anchors so the matching mode is explicit at the call.
+PROMOTED_VALUES_BEGIN_RE = re.compile(r"<!--\s*BEGIN:PROMOTED_VALUES\b.*-->")
+PROMOTED_VALUES_END_RE = re.compile(r"<!--\s*END:PROMOTED_VALUES\b.*-->")
 
 
 def _merge_config(defaults: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
@@ -173,10 +174,32 @@ def _ensure_promoted_values_markers(agents_path: Path) -> None:
         return
 
     content = agents_path.read_text(encoding="utf-8")
-    has_begin = any(PROMOTED_VALUES_BEGIN_RE.match(line.strip()) for line in content.splitlines())
-    has_end = any(PROMOTED_VALUES_END_RE.match(line.strip()) for line in content.splitlines())
-    if has_begin and has_end:
-        return
+
+    # Single-pass scan to detect both markers, exiting early once both
+    # are found. AGENTS.md is small in practice, but a single pass also
+    # documents the intent more clearly than two ``any()`` calls.
+    has_begin = False
+    has_end = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not has_begin and PROMOTED_VALUES_BEGIN_RE.fullmatch(stripped):
+            has_begin = True
+        if not has_end and PROMOTED_VALUES_END_RE.fullmatch(stripped):
+            has_end = True
+        if has_begin and has_end:
+            return
+
+    if has_begin or has_end:
+        # Half-open state: exactly one of begin/end is present. The file
+        # is malformed; appending a fresh marker block here would create
+        # the duplicate state that the loose-detection fix is designed
+        # to prevent. Fail loudly so the user can repair the file.
+        present = "BEGIN" if has_begin else "END"
+        missing = "END" if has_begin else "BEGIN"
+        raise ValueError(
+            f"AGENTS.md at {agents_path} has malformed PROMOTED_VALUES markers: "
+            f"{present} is present but {missing} is missing"
+        )
 
     suffix = "" if content.endswith("\n") else "\n"
     marker_block = f"{suffix}\n{PROMOTED_VALUES_BEGIN}\n{PROMOTED_VALUES_END}\n"

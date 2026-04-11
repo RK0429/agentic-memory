@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentic_memory.core import config
 
 
@@ -126,6 +128,79 @@ def test_init_memory_dir_ignores_similarly_named_markers(tmp_path: Path) -> None
     # the _FOO markers are not recognized as the canonical block.
     assert content.count(config.PROMOTED_VALUES_BEGIN) == 1
     assert content.count(config.PROMOTED_VALUES_END) == 1
+
+
+def test_promoted_values_regex_requires_fullmatch_semantics() -> None:
+    """``PROMOTED_VALUES_*_RE`` are intentionally unanchored.
+
+    The detection regexes in ``config.py`` have no ``^``/``$`` anchors and
+    are designed for use with ``re.fullmatch`` against a stripped marker
+    line. This test locks in that contract by demonstrating two
+    properties:
+
+    1. ``fullmatch`` accepts both bare and annotated marker lines.
+    2. ``fullmatch`` rejects marker patterns embedded in surrounding
+       text, even though ``re.search`` would happily match them. A
+       future refactor that switches a call site to ``re.search`` (or
+       removes ``line.strip()``) would silently begin matching
+       prose-mentioned marker text — this test makes that mistake
+       visible.
+    """
+
+    bare_begin = "<!-- BEGIN:PROMOTED_VALUES -->"
+    annotated_begin = "<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->"
+    bare_end = "<!-- END:PROMOTED_VALUES -->"
+    annotated_end = "<!-- END:PROMOTED_VALUES (agentic-memory managed) -->"
+
+    # Property 1: fullmatch accepts the canonical and annotated forms.
+    assert config.PROMOTED_VALUES_BEGIN_RE.fullmatch(bare_begin) is not None
+    assert config.PROMOTED_VALUES_BEGIN_RE.fullmatch(annotated_begin) is not None
+    assert config.PROMOTED_VALUES_END_RE.fullmatch(bare_end) is not None
+    assert config.PROMOTED_VALUES_END_RE.fullmatch(annotated_end) is not None
+
+    # Property 2: marker text embedded in surrounding prose must NOT match
+    # via ``fullmatch``, even though ``re.search`` would find it. This
+    # protects against accidental ``re.search`` migration at call sites.
+    embedded = f"prose before {bare_begin} prose after"
+    assert config.PROMOTED_VALUES_BEGIN_RE.fullmatch(embedded) is None
+    assert config.PROMOTED_VALUES_BEGIN_RE.search(embedded) is not None  # sanity
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES -->\n", id="begin-only"),
+        pytest.param("# Agent Rules\n\n<!-- END:PROMOTED_VALUES -->\n", id="end-only"),
+        pytest.param(
+            "# Agent Rules\n\n<!-- BEGIN:PROMOTED_VALUES (agentic-memory managed) -->\n",
+            id="annotated-begin-only",
+        ),
+        pytest.param(
+            "# Agent Rules\n\n<!-- END:PROMOTED_VALUES (agentic-memory managed) -->\n",
+            id="annotated-end-only",
+        ),
+    ],
+)
+def test_init_memory_dir_rejects_half_open_promoted_values_markers(
+    tmp_path: Path, body: str
+) -> None:
+    """Half-open marker state must raise instead of appending a fresh block.
+
+    If exactly one of BEGIN/END is present, the AGENTS.md is malformed and
+    appending a new bare-form block would create a duplicate-marker state
+    similar to the one the loose-detection fix is designed to prevent.
+    Fail loudly so the user can repair the file.
+    """
+
+    memory_dir = tmp_path / "memory"
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="malformed PROMOTED_VALUES markers"):
+        config.init_memory_dir(memory_dir)
+
+    # The original file must remain untouched on failure.
+    assert agents_path.read_text(encoding="utf-8") == body
 
 
 def test_init_dense_config(tmp_path: Path) -> None:

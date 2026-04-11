@@ -171,7 +171,7 @@ class AgentsMdAdapter:
             (
                 index
                 for index, line in enumerate(lines)
-                if PROMOTED_VALUES_BEGIN_RE.match(line.strip())
+                if PROMOTED_VALUES_BEGIN_RE.fullmatch(line.strip())
             ),
             None,
         )
@@ -179,7 +179,7 @@ class AgentsMdAdapter:
             (
                 index
                 for index, line in enumerate(lines)
-                if PROMOTED_VALUES_END_RE.match(line.strip())
+                if PROMOTED_VALUES_END_RE.fullmatch(line.strip())
             ),
             None,
         )
