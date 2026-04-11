@@ -1984,7 +1984,7 @@ def memory_knowledge_search(
     At least one of `query` or `domain` is required. Query searches use BM25+ scoring
     over title/content/domain/tags. Domain-only searches return the filtered entries in
     `updated_at` descending order. Optional `accuracy` and `user_understanding` filters
-    are applied to the result set. Returns `{ok: true, entries: [...]}` with each result
+    are applied to the result set. Returns `{ok: true, entries: [...]}` with each entry
     containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
     `content_snippet`, and `score`.
     """
