@@ -40,7 +40,7 @@ class AgentsMdAdapter:
         return [line.strip() for line in lines[begin_index + 1 : end_index] if line.strip()]
 
     def append_entry(self, agents_md_path: Path, description: str, entry_id: str) -> None:
-        entry_line = self._format_entry_line(description=description, entry_id=entry_id)
+        entry_line = self.format_entry_line(description=description, entry_id=entry_id)
         lock_file = _acquire_index_lock(agents_md_path)
         try:
             lines, begin_index, end_index = self._load_marked_lines(agents_md_path)
@@ -54,7 +54,7 @@ class AgentsMdAdapter:
             lock_file.close()
 
     def update_entry(self, agents_md_path: Path, description: str, entry_id: str) -> bool:
-        entry_line = self._format_entry_line(description=description, entry_id=entry_id)
+        entry_line = self.format_entry_line(description=description, entry_id=entry_id)
         lock_file = _acquire_index_lock(agents_md_path)
         try:
             lines, begin_index, end_index = self._load_marked_lines(agents_md_path)
@@ -140,7 +140,7 @@ class AgentsMdAdapter:
         return projected
 
     @classmethod
-    def _format_entry_line(cls, *, description: str, entry_id: str) -> str:
+    def format_entry_line(cls, *, description: str, entry_id: str) -> str:
         return f"- [{entry_id}] {cls.project_description(description)}"
 
     @staticmethod

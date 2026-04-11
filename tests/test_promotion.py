@@ -79,6 +79,20 @@ def test_promote_preview_requires_confirm_and_keeps_state(tmp_memory_dir: Path) 
     assert agents_path.read_text(encoding="utf-8") == _agents_content()
 
 
+def test_promote_preview_projects_multiline_description(tmp_memory_dir: Path) -> None:
+    agents_path = tmp_memory_dir.parent / "AGENTS.md"
+    agents_path.write_text(_agents_content(), encoding="utf-8")
+    entry = _seed_entry(
+        tmp_memory_dir,
+        description="Prefer focused changes\nwith regression tests",
+    )
+    service = PromotionService()
+
+    preview = service.promote(tmp_memory_dir, str(entry.id), confirm=False)
+
+    assert preview["entry_line"] == f"- [{entry.id}] Prefer focused changes with regression tests"
+
+
 def test_promote_updates_agents_md_and_entry(tmp_memory_dir: Path) -> None:
     agents_path = tmp_memory_dir.parent / "AGENTS.md"
     agents_path.write_text(_agents_content(), encoding="utf-8")

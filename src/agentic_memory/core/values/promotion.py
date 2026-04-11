@@ -79,7 +79,10 @@ class PromotionService:
             "preview": True,
             "would_promote": True,
             "agents_md_path": str(agents_md_path),
-            "entry_line": self._entry_line(entry),
+            "entry_line": self._agents_md_adapter.format_entry_line(
+                description=entry.description,
+                entry_id=str(entry.id),
+            ),
         }
         if not confirm:
             return preview
@@ -131,8 +134,10 @@ class PromotionService:
             "would_demote": True,
             "demotion_reason": normalized_reason,
             "agents_md_path": str(agents_md_path),
-            "entry_line": (
-                self._existing_entry_line(agents_md_path, entry) or self._entry_line(entry)
+            "entry_line": self._existing_entry_line(agents_md_path, entry)
+            or self._agents_md_adapter.format_entry_line(
+                description=entry.description,
+                entry_id=str(entry.id),
             ),
         }
         if not confirm:
@@ -158,10 +163,6 @@ class PromotionService:
             if line.startswith(prefix):
                 return line
         return None
-
-    @staticmethod
-    def _entry_line(entry: ValuesEntry) -> str:
-        return f"- [{entry.id}] {entry.description}"
 
 
 __all__ = ["PromotionManager", "PromotionService"]
