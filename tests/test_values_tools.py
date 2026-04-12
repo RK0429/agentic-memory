@@ -133,6 +133,56 @@ def test_memory_values_add_returns_path_warning_and_promotion_candidate(
     assert str(first["id"]) in result["warnings"][0]
 
 
+def test_memory_values_add_accepts_origin_and_legacy_source_type_alias(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    repository = ValuesRepository(tmp_memory_dir)
+
+    explicit = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer documented benchmarks from research notes",
+                    "category": "workflow",
+                    "origin": "autonomous_research",
+                }
+            ],
+        )
+    )
+    legacy = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer distilled release heuristics",
+                    "category": "workflow",
+                    "source_type": "memory_distillation",
+                }
+            ],
+        )
+    )
+    explicit_wins = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer keeping user directives explicit",
+                    "category": "communication",
+                    "origin": "user_taught",
+                    "source_type": "autonomous_research",
+                }
+            ],
+        )
+    )
+
+    assert str(repository.load(explicit["id"]).origin) == "autonomous_research"
+    assert str(repository.load(legacy["id"]).origin) == "memory_distillation"
+    assert str(repository.load(explicit_wins["id"]).origin) == "user_taught"
+
+
 def test_memory_values_add_reports_duplicate_and_normalized_category(
     tmp_memory_dir: Path,
     monkeypatch,
@@ -262,6 +312,14 @@ def test_memory_values_add_invalid_evidence_date_reports_iso_hint(
     private_doc = server_module._memory_values_add_single.__doc__ or ""
     assert "YYYY-MM-DD" in public_doc
     assert "YYYY-MM-DD" in private_doc
+    assert "`origin` is the entry-level provenance classification" in public_doc
+    assert "`source_type` as an" in public_doc
+    for value in (
+        '"memory_distillation"',
+        '"autonomous_research"',
+        '"user_taught"',
+    ):
+        assert value in public_doc
 
 
 def test_memory_values_add_invalid_evidence_date_us_format(

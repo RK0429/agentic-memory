@@ -850,6 +850,18 @@ def _batch_item_result_from_payload(
     return result
 
 
+def _entry_origin(
+    payload: Mapping[str, Any],
+) -> Literal["memory_distillation", "autonomous_research", "user_taught"] | None:
+    raw_origin = payload.get("origin")
+    if raw_origin is None and "source_type" in payload:
+        raw_origin = payload.get("source_type")
+    return cast(
+        Literal["memory_distillation", "autonomous_research", "user_taught"] | None,
+        raw_origin,
+    )
+
+
 def _batch_success_payload(results: list[dict[str, Any]]) -> str:
     success_count = sum(1 for result in results if result["ok"])
     return _success_payload(
@@ -955,6 +967,7 @@ def _memory_values_add_single(
     category: str,
     confidence: float = 0.3,
     evidence: list[dict[str, Any]] | None = None,
+    origin: Literal["memory_distillation", "autonomous_research", "user_taught"] | None = None,
     memory_dir: str | None = None,
 ) -> str:
     """Add one Values entry.
@@ -962,6 +975,9 @@ def _memory_values_add_single(
     `description` and `category` are required.
     `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     `confidence` defaults to 0.3.
+    `origin` is the entry-level provenance classification and accepts
+    `"memory_distillation"`, `"autonomous_research"`, or `"user_taught"`
+    (default: `"user_taught"`).
     Promotion eligibility requires `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     `evidence` accepts a list of evidence objects with shape
@@ -990,6 +1006,7 @@ def _memory_values_add_single(
             category=category,
             confidence=confidence,
             evidence=evidence,
+            origin=origin or "user_taught",
         )
     except (KeyError, TypeError):
         return _error_payload(
@@ -1030,9 +1047,14 @@ def memory_values_add(
 ) -> str:
     """Add one or more Values entries.
 
-    `entries` must be a non-empty list. Each item requires `description` and `category`.
+    `entries` must be a non-empty list. Each item requires `description` and `category`,
+    and may also include `confidence`, `evidence`, and `origin`.
     Each item's `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    `origin` is the entry-level provenance classification and accepts
+    `"memory_distillation"`, `"autonomous_research"`, or `"user_taught"`.
+    For backward compatibility, each batch item may also pass `source_type` as an
+    alias of `origin`; if both are present, `origin` takes precedence.
     Promotion eligibility still requires
     `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
@@ -1089,6 +1111,7 @@ def memory_values_add(
                     category=category,
                     confidence=cast(float, entry.get("confidence", 0.3)),
                     evidence=cast(list[dict[str, Any]] | None, entry.get("evidence")),
+                    origin=_entry_origin(entry),
                     memory_dir=memory_dir,
                 ),
             )
@@ -2568,10 +2591,11 @@ def _memory_knowledge_add_single(
     When omitted, `accuracy` defaults to `"uncertain"` and
     `user_understanding` defaults to `"unknown"`.
     `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
-    `sources` accepts a list of source objects with shape
-    `{type: "memory_note"|"web"|"user_direct"|"document"|"code"|"other", ref: str, summary: str}`.
-    `origin` accepts `"memory_distillation"`, `"autonomous_research"`, or
-    `"user_taught"` (default: `"user_taught"`).
+    `origin` is the entry-level provenance classification and accepts
+    `"memory_distillation"`, `"autonomous_research"`, or `"user_taught"`
+    (default: `"user_taught"`).
+    `sources[].type` is the per-reference kind and accepts
+    `"memory_note"`, `"web"`, `"user_direct"`, `"document"`, `"code"`, or `"other"`.
     Secret detection blocks the call with `error_type="validation_error"`.
     Returns `{ok: true, id, path}`. Duplicate content (`title` + `domain` + `content`)
     returns an error.
@@ -2640,9 +2664,12 @@ def memory_knowledge_add(
     `"uncertain"` and `user_understanding` defaults to `"unknown"`.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
     Each item's `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
-    `sources` accepts a list of source objects with shape
-    `{type: str, ref: str, summary: str}`. Valid `type` values:
-    `"memory_note"`, `"web"`, `"user_direct"`, `"document"`, `"code"`, `"other"`.
+    `origin` is the entry-level provenance classification and accepts
+    `"memory_distillation"`, `"autonomous_research"`, or `"user_taught"`.
+    `sources[].type` is the per-reference kind and accepts
+    `"memory_note"`, `"web"`, `"user_direct"`, `"document"`, `"code"`, or `"other"`.
+    For backward compatibility, each batch item may also pass `source_type` as an
+    alias of `origin`; if both are present, `origin` takes precedence.
     Secret detection rejects only the affected item with `validation_error`.
     Returns `{ok, success_count, error_count, results}`. Top-level `ok` indicates the
     batch was processed, not that every item succeeded. Each result includes `index`,
@@ -2708,10 +2735,7 @@ def memory_knowledge_add(
                         entry.get("accuracy"),
                     ),
                     sources=cast(list[dict[str, Any]] | None, entry.get("sources")),
-                    origin=cast(
-                        Literal["memory_distillation", "autonomous_research", "user_taught"] | None,
-                        entry.get("origin"),
-                    ),
+                    origin=_entry_origin(entry),
                     user_understanding=cast(
                         Literal["unknown", "novice", "familiar", "proficient", "expert"] | None,
                         entry.get("user_understanding"),

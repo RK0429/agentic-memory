@@ -545,7 +545,15 @@ def test_memory_knowledge_search_domain_only_returns_null_score(
 def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
     doc = server_module.memory_knowledge_add.__doc__ or ""
 
-    assert "{type: str, ref: str, summary: str}" in doc
+    assert "`origin` is the entry-level provenance classification" in doc
+    assert "`sources[].type` is the per-reference kind" in doc
+    assert "`source_type` as an" in doc
+    for value in (
+        '"memory_distillation"',
+        '"autonomous_research"',
+        '"user_taught"',
+    ):
+        assert value in doc
     for value in (
         '"memory_note"',
         '"web"',
@@ -555,6 +563,45 @@ def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
         '"other"',
     ):
         assert value in doc
+
+
+def test_memory_knowledge_add_accepts_legacy_source_type_alias_and_origin_precedence(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    repository = KnowledgeRepository(tmp_memory_dir)
+
+    legacy = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Release checklist",
+                    "content": "Document the release checklist.",
+                    "domain": "ops",
+                    "source_type": "autonomous_research",
+                }
+            ],
+        )
+    )
+    explicit = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Review checklist",
+                    "content": "Document the review checklist.",
+                    "domain": "ops",
+                    "origin": "user_taught",
+                    "source_type": "autonomous_research",
+                }
+            ],
+        )
+    )
+
+    assert str(repository.load(legacy["id"]).origin) == "autonomous_research"
+    assert str(repository.load(explicit["id"]).origin) == "user_taught"
 
 
 def test_memory_knowledge_update_reports_warnings_and_isolates_missing_id(

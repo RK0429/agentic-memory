@@ -497,8 +497,8 @@ stateDiagram-v2
 | KnowledgeEntry | 抽象的な宣言的知識のエンティティ。事実・概念・ルールを含む | Source, Accuracy |
 | KnowledgeId | `k-` プレフィックス付き UUID ベースの識別子。作成時に一度だけ生成される immutable identifier。内容の変化に依存しない | KnowledgeEntry |
 | Domain | Knowledge の分類軸。自由入力の文字列を kebab-case に正規化する | KnowledgeEntry |
-| Source | Knowledge の引用元。型（`ReferenceType`）・参照先・要約で構成。`merge_existing` 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `sourceType` とは独立に管理される | ReferenceType |
-| SourceType | Knowledge / Values エントリ全体の provenance を表す出自分類。`memory_distillation` / `autonomous_research` / `user_taught` の3値（クラス図での内部表現は `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT`）。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry |
+| Source | Knowledge の引用元。型（`ReferenceType`）・参照先・要約で構成。`merge_existing` 時、既存エントリの `sources` に追加される。追加された Source の `type` はエントリレベルの `origin`（ドメイン内部では `sourceType` プロパティ）とは独立に管理される | ReferenceType |
+| SourceType | Knowledge / Values エントリ全体の provenance を表す出自分類。MCP API / 永続化の正式フィールド名は `origin` で、値は `memory_distillation` / `autonomous_research` / `user_taught` の3値（クラス図での内部表現は `MEMORY_DISTILLATION` / `AUTONOMOUS_RESEARCH` / `USER_TAUGHT`）。legacy `source_type` は読み取り互換 alias のみ。`KnowledgeEntry.sourceType` は作成時に固定され、以降の更新で変更されない | KnowledgeEntry |
 | ReferenceType | 個別の `Source.type` に使用する引用元分類。`memory_note` / `web` / `user_direct` / `document` / `code` / `other` の6値（クラス図での内部表現は `MEMORY_NOTE` / `WEB` / `USER_DIRECT` / `DOCUMENT` / `CODE` / `OTHER`） | Source |
 | Accuracy | Knowledge の品質指標。verified（複数ソース確認）/ likely（単一ソース）/ uncertain（未確認） | KnowledgeEntry |
 | UserUnderstanding | ユーザーのその知識に対する理解度。unknown / novice / familiar / proficient / expert の5段階 | KnowledgeEntry |

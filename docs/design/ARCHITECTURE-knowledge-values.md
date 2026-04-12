@@ -26,6 +26,7 @@
 | — | 2026-04-10 | must/should 指摘対応: ReportEntry 公開フィールド表の casing を snake_case に統一（`candidate_summary` / `target_id`、enum 値を lower_snake_case に）、§1 品質特性表の GitHub Actions ランナー仕様に GitHub Docs 出典 URL を追加 |
 | — | 2026-04-10 | レビュー差し戻し対応: §4.1 ValuesService 責務に降格提案通知（`demotion_candidate`）の経路を追記（`PromotionState.shouldSuggestDemotion()` 経由）、§15 REQ-FUNC-009 行に降格提案通知を追記、GitHub Actions 出典 URL を GitHub-hosted runners reference に修正 |
 | — | 2026-04-10 | must/should 指摘対応（再レビュー）: §7.7 に Knowledge/Values 削除成功レスポンス契約を追加、§15 REQ-FUNC-023/024 に §7.7 レスポンス契約のトレース追加、§5.2 ReportEntry の target_id を全 7 outcome について null/非 null を明記、§11.1 に `stats.py` を変更対象モジュールとして追加 |
+| — | 2026-04-12 | F-1 対応: Knowledge API の正式名を `origin` に統一し、legacy `source_type` は add 系 batch entry の互換 alias として扱う設計に更新。`origin`（エントリ全体の出自分類）と `sources[].type`（個別参照の種別）の違いを文書化 |
 
 ---
 
@@ -493,10 +494,10 @@ title: Rust の所有権ルール
 domain: rust
 tags: [ownership, borrow-checker, memory-safety]
 accuracy: verified
-source_type: memory_distillation
+origin: memory_distillation
 user_understanding: familiar
 sources:
-  - type: memory_distillation
+  - type: memory_note
     ref: memory/2026-03-15/1430_rust-ownership-deep-dive.md
     summary: セッション中に所有権ルールの詳細を調査
 related: [k-d4e5f6]
@@ -510,6 +511,8 @@ Rust の所有権ルール:
 3. 参照は可変参照1つ、または不変参照複数のいずれか
 ```
 
+**補足:** `origin` は Knowledge/Values エントリ全体の主要な出自分類（`memory_distillation` / `autonomous_research` / `user_taught`）であり、`sources[].type` は個別参照の種別（`memory_note` / `web` / `user_direct` / `document` / `code` / `other`）を表す。legacy `source_type` は add 系 batch entry の読み取り互換専用であり、新規 API 呼び出しでは `origin` を正式名とする。
+
 ### 7.3 Knowledge インデックスエントリ形式（_knowledge.jsonl）
 
 ```json
@@ -520,7 +523,7 @@ Rust の所有権ルール:
   "domain": "rust",
   "tags": ["ownership", "borrow-checker", "memory-safety"],
   "accuracy": "verified",
-  "source_type": "memory_distillation",
+  "origin": "memory_distillation",
   "user_understanding": "familiar",
   "content_preview": "Rust の所有権ルール: 1. 各値は一つのオーナーを持つ...",
   "related": ["k-d4e5f6"],
@@ -539,6 +542,7 @@ Rust の所有権ルール:
   "category": "coding-style",
   "confidence": 0.92,
   "evidence_count": 8,
+  "origin": "user_taught",
   "promoted": true,
   "promoted_at": "2026-04-05T14:00:00",
   "promoted_confidence": 0.85,
@@ -1020,11 +1024,11 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | REQ-FUNC-019（記憶管理セクション拡張） | AGENTS.md テキスト | 手動編集（設計成果物として AGENTS.md に Memory/Knowledge/Values の3層構造を記載） |
 | REQ-FUNC-020（セッション開始手順更新） | AGENTS.md テキスト → `memory_values_search` | エージェントが想起ステップで `memory_values_search` を MCP ツールとして呼び出す |
 | REQ-FUNC-021（セッション終了手順更新） | AGENTS.md テキスト → `memory_state_show` + `memory_stats` → 蒸留推奨判断 | エージェントが振り返りステップで `memory_state_show`（最終評価日時: `last_knowledge_evaluated_at` / `last_values_evaluated_at`）と `memory_stats`（前回評価以降のノート蓄積数）を呼び出し、REQ-FUNC-026 の条件を評価する。条件充足時は蒸留の実行を推奨する（エージェントの判断で `memory_distill_*` を呼び出してよいが、MCP サーバー側の自動実行ではない） |
-| REQ-FUNC-014（リサーチ結果の Knowledge 登録） | AGENTS.md ワークフロー → `memory_knowledge_add` | エージェントが調査完了後、ファクトチェックを実施し `memory_knowledge_add`（`source_type: autonomous_research`）で登録する。`accuracy` はファクトチェック結果に応じて設定（複数ソース → `verified` / 単一 → `likely` / 未確認 → `uncertain`）。`sources[].type` は各引用元の出自を記録 |
-| REQ-FUNC-027（ユーザー教示の Knowledge 化） | AGENTS.md ワークフロー → `memory_knowledge_add` | エージェントがユーザー教示を検出後、Web 検索等でファクトチェックを実施し `memory_knowledge_add`（`source_type: user_taught`）で登録する。`sources[]` にはユーザー教示 Source（`type: user_taught`）とファクトチェック結果 Source（`type: autonomous_research`）を含める |
+| REQ-FUNC-014（リサーチ結果の Knowledge 登録） | AGENTS.md ワークフロー → `memory_knowledge_add` | エージェントが調査完了後、ファクトチェックを実施し `memory_knowledge_add`（`origin: autonomous_research`）で登録する。`accuracy` はファクトチェック結果に応じて設定（複数ソース → `verified` / 単一 → `likely` / 未確認 → `uncertain`）。`sources[].type` には `web` / `document` / `code` / `other` など、各引用元の種別を記録する |
+| REQ-FUNC-027（ユーザー教示の Knowledge 化） | AGENTS.md ワークフロー → `memory_knowledge_add` | エージェントがユーザー教示を検出後、Web 検索等でファクトチェックを実施し `memory_knowledge_add`（`origin: user_taught`）で登録する。`sources[]` にはユーザー教示 Source（`type: user_direct`）とファクトチェック結果 Source（`type: web` / `document` / `code` / `other`）を含める |
 | REQ-FUNC-029（retrospective 拡張） | retrospective スキル → `memory_state_show` + `memory_stats` → `memory_distill_*` | retrospective スキルが `memory_state_show`（最終評価日時）と `memory_stats`（前回評価以降のノート蓄積数）を取得し、REQ-FUNC-026 の条件を評価する。条件充足時に蒸留実行を提案し、ユーザー承認後に `memory_distill_*` を呼び出す |
 
-**補足**: REQ-FUNC-014/020/021/027/029 はいずれもエージェント（または retrospective スキル）が MCP ツールの公開 API を呼び出す形で実装される。REQ-FUNC-026 のトリガー条件評価はエージェント/スキル側の責務であり、判定データは以下の公開ツールレスポンスから取得する: (1) `memory_state_show` — `_state.md` フロントマターの最終評価日時（`last_knowledge_evaluated_at` / `last_values_evaluated_at`）、(2) `memory_stats` — 前回評価以降のノート蓄積数。`DistillationTrigger` は `DistillationService` の内部コンポーネントであり、REQ-FUNC-026 のトリガー条件（10 ノート以上 OR 168 時間以上経過）を正規定義するが、公開 API としては露出せず、`memory_distill_*` パイプライン内での条件評価も行わない（セクション 10.1 参照）。エージェント/スキル側が上記の公開ツールレスポンスに基づいて同じ条件を評価し、条件充足時に蒸留を推奨する（自動実行ではない）。REQ-FUNC-014/027 はエージェントワークフロー（AGENTS.md に定義）として、調査結果やユーザー教示を `memory_knowledge_add` で登録する経路であり、`source_type` / `accuracy` / `sources[].type` の設定はエージェント側の責務である。
+**補足**: REQ-FUNC-014/020/021/027/029 はいずれもエージェント（または retrospective スキル）が MCP ツールの公開 API を呼び出す形で実装される。REQ-FUNC-026 のトリガー条件評価はエージェント/スキル側の責務であり、判定データは以下の公開ツールレスポンスから取得する: (1) `memory_state_show` — `_state.md` フロントマターの最終評価日時（`last_knowledge_evaluated_at` / `last_values_evaluated_at`）、(2) `memory_stats` — 前回評価以降のノート蓄積数。`DistillationTrigger` は `DistillationService` の内部コンポーネントであり、REQ-FUNC-026 のトリガー条件（10 ノート以上 OR 168 時間以上経過）を正規定義するが、公開 API としては露出せず、`memory_distill_*` パイプライン内での条件評価も行わない（セクション 10.1 参照）。エージェント/スキル側が上記の公開ツールレスポンスに基づいて同じ条件を評価し、条件充足時に蒸留を推奨する（自動実行ではない）。REQ-FUNC-014/027 はエージェントワークフロー（AGENTS.md に定義）として、調査結果やユーザー教示を `memory_knowledge_add` で登録する経路であり、`origin` / `accuracy` / `sources[].type` の設定はエージェント側の責務である。
 
 ### 13.1 テスト戦略
 
@@ -1038,7 +1042,7 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | **Phase 4** | `memory_health_check` 拡張 | orphan 検出（双方向）、promoted 同期チェック、`fix=true` 修復 | マーカー欠落、片方向リンク修復 |
 | **Phase 5** | 蒸留パイプライン（collect / extract / integrate） | 正常蒸留フロー、`dry_run=true` の非永続化、日付フィルタ、`_state.md` 入力 | extract エラー時のフォールバック、空ノート集合 |
 | **Phase 6** | 昇格フロー（`promote`）、AGENTS.md 連携 | 昇格条件充足→AGENTS.md 書き込み、`confirm` ガードレール | 条件未充足、再昇格拒否、マーカー欠落 |
-| **Phase 7** | AGENTS.md セクション改修、削除（Knowledge/Values）、トリガー判定、教示、同期、retrospective | AGENTS.md セクション反映確認、promoted エントリ削除→AGENTS.md 除去、トリガー条件評価、教示→Knowledge 登録（`source_type: user_taught`）、同期チェック・修復、retrospective→蒸留推奨判断 | `confirm` 未指定での削除拒否（プレビュー返却）、部分失敗検出 |
+| **Phase 7** | AGENTS.md セクション改修、削除（Knowledge/Values）、トリガー判定、教示、同期、retrospective | AGENTS.md セクション反映確認、promoted エントリ削除→AGENTS.md 除去、トリガー条件評価、教示→Knowledge 登録（`origin: user_taught`）、同期チェック・修復、retrospective→蒸留推奨判断 | `confirm` 未指定での削除拒否（プレビュー返却）、部分失敗検出 |
 
 テストは既存テストスイート（270+ テストケース）と同じ `pytest` フレームワークで作成し、各 Phase 完了時に CI でリグレッションを確認する。
 
@@ -1076,7 +1080,7 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | **REQ-FUNC-011** | **Values 蒸留** | **§5.2 蒸留フロー（Values 蒸留の DistillationReport 補足）、§10.1（collect ステップ 3: _state.md 入力、extract: category 限定）** |
 | REQ-FUNC-012 | Knowledge 統合 | §4.1（`KnowledgeIntegrator`）、§5.2 蒸留フロー（integrate ループ） |
 | REQ-FUNC-013 | Values 統合 | §4.1（`ValuesIntegrator`）、§5.2 蒸留フロー（補足: Values 蒸留の DistillationReport） |
-| REQ-FUNC-014 | リサーチ結果の Knowledge 登録 | §13 Phase 7（AGENTS.md ワークフロー定義。追加ツール不要、`memory_knowledge_add` を `source_type: autonomous_research` で使用） |
+| REQ-FUNC-014 | リサーチ結果の Knowledge 登録 | §13 Phase 7（AGENTS.md ワークフロー定義。追加ツール不要、`memory_knowledge_add` を `origin: autonomous_research` で使用） |
 | REQ-FUNC-015 | 昇格条件 | §4.1（`PromotionManager`）、§5.3 昇格フロー |
 | REQ-FUNC-016 | AGENTS.md 反映 | §5.3 昇格フロー、§9 AGENTS.md 連携設計 |
 | REQ-FUNC-017 | Knowledge 専用検索 | REQ-FUNC-005 の参照 alias。対応設計は REQ-FUNC-005 と同一 |
@@ -1089,7 +1093,7 @@ Phase 7 で実装する AGENTS.md セクション改修（REQ-FUNC-019-021）と
 | REQ-FUNC-024 | Values 削除 | §4.1（`ValuesService`、`PromotionService.onDelete`）、§5.6 promoted Values 削除プレビュー、§7.7 削除成功レスポンス契約、§9.8 promoted エントリ削除の操作順序 |
 | REQ-FUNC-025 | Values 一括参照 | §5.4 Values 一括参照フロー |
 | REQ-FUNC-026 | 蒸留トリガー判定 | §4.1（`DistillationTrigger`）、§13 Phase 7（AGENTS.md / retrospective 連携設計: トリガー条件評価の責務分担） |
-| REQ-FUNC-027 | ユーザー教示の Knowledge 化 | §13 Phase 7（AGENTS.md ワークフロー → `memory_knowledge_add`（`source_type: user_taught`）） |
+| REQ-FUNC-027 | ユーザー教示の Knowledge 化 | §13 Phase 7（AGENTS.md ワークフロー → `memory_knowledge_add`（`origin: user_taught`）） |
 | REQ-FUNC-028 | 昇格 Values の同期 | §5.3 昇格フロー部分失敗（検出と復旧）、§9.6 書き込み整合性、§11.1（`health.py` 拡張: promoted 同期チェック） |
 | REQ-FUNC-029 | retrospective スキル拡張 | §13 Phase 7（retrospective 連携設計: `memory_state_show` + `memory_stats` → 蒸留推奨判断） |
 | REQ-FUNC-034 | Values 降格・撤回 | §4.1（`PromotionService`、`ValuesEntry.demote()`）、§5.5 Values 降格フロー |
