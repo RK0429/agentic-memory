@@ -20,7 +20,7 @@ def test_values_repository_save_load_delete_roundtrip(tmp_memory_dir: Path) -> N
             )
         ],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.9,
     )
@@ -45,3 +45,40 @@ def test_values_repository_save_load_delete_roundtrip(tmp_memory_dir: Path) -> N
     assert not path.exists()
     assert repository.find_by_id(entry.id) is None
     assert repository.list_all() == []
+
+
+def test_values_repository_loads_legacy_source_type_frontmatter(
+    tmp_memory_dir: Path,
+) -> None:
+    repository = ValuesRepository(tmp_memory_dir)
+    path = tmp_memory_dir / "values" / "v-11111111-1111-1111-1111-111111111111.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                'id: "v-11111111-1111-1111-1111-111111111111"',
+                'category: "workflow"',
+                "confidence: 0.9",
+                "evidence: []",
+                "total_evidence_count: 5",
+                'source_type: "user_taught"',
+                "promoted: false",
+                "promoted_at: null",
+                "promoted_confidence: null",
+                "demoted_at: null",
+                "demotion_reason: null",
+                'created_at: "2026-04-10T09:00:00"',
+                'updated_at: "2026-04-10T09:00:00"',
+                "---",
+                "Legacy description",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = repository.load("v-11111111-1111-1111-1111-111111111111")
+
+    assert loaded.origin == SourceType.USER_TAUGHT
+    assert loaded.to_dict()["origin"] == "user_taught"

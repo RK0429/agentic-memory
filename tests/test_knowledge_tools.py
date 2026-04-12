@@ -355,7 +355,7 @@ def test_memory_knowledge_add_validates_schema_enum_defaults_and_batch_limits(
                     "title": "Rust ownership 2",
                     "content": "Ownership summary 2",
                     "domain": "rust",
-                    "source_type": "invalid_source_type",
+                    "origin": "invalid_source_type",
                 }
             ],
         )
@@ -363,6 +363,7 @@ def test_memory_knowledge_add_validates_schema_enum_defaults_and_batch_limits(
     assert invalid_source_type["ok"] is False
     assert invalid_source_type["error_type"] == "validation_error"
     assert "is not a valid SourceType" in invalid_source_type["message"]
+    assert "origin" in invalid_source_type["hint"]
 
     created = _single_result(
         _knowledge_add_payload(
@@ -376,7 +377,7 @@ def test_memory_knowledge_add_validates_schema_enum_defaults_and_batch_limits(
             ],
         )
     )
-    assert str(repository.load(created["id"]).source_type) == "user_taught"
+    assert str(repository.load(created["id"]).origin) == "user_taught"
 
     fifty_entries = [
         {"title": f"Topic {index}", "content": f"Content {index}", "domain": "batch"}
@@ -515,9 +516,30 @@ def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
     ]
     assert entry["tags"] == ["architecture"]
     assert entry["related"] == []
-    assert "source_type" in entry
+    assert entry["origin"] == "user_taught"
     assert "created_at" in entry
     assert "updated_at" in entry
+
+
+def test_memory_knowledge_search_domain_only_returns_null_score(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {"title": "Rust ownership", "content": "Ownership summary", "domain": "rust"},
+            {"title": "Rust lifetimes", "content": "Lifetime summary", "domain": "rust"},
+            {"title": "Python generators", "content": "Yield summary", "domain": "python"},
+        ],
+    )
+
+    payload = json.loads(memory_knowledge_search(domain="rust", memory_dir=str(tmp_memory_dir)))
+
+    assert payload["ok"] is True
+    assert [entry["score"] for entry in payload["entries"]] == [None, None]
 
 
 def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
@@ -611,6 +633,25 @@ def test_memory_knowledge_update_validates_missing_fields(
         "At least one update field is required "
         "(content, accuracy, sources, user_understanding, related, tags)"
     )
+
+
+def test_memory_knowledge_update_missing_id_takes_precedence_over_missing_fields(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = _single_result(
+        _knowledge_update_payload(
+            tmp_memory_dir,
+            [{"id": "k-11111111-1111-1111-1111-111111111111"}],
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["id"] == "k-11111111-1111-1111-1111-111111111111"
+    assert payload["error_type"] == "not_found"
+    assert payload["message"] == "Knowledge entry not found: k-11111111-1111-1111-1111-111111111111"
 
 
 def test_memory_knowledge_delete_preview_and_bulk_delete_preserve_backlink_regression(

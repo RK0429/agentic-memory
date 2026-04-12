@@ -33,7 +33,7 @@ def _seed_entry(
         confidence=confidence,
         evidence=[],
         total_evidence_count=total_evidence_count,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=promoted,
         promoted_confidence=promoted_confidence,
     )
@@ -47,14 +47,14 @@ def test_promotion_manager_checks_candidate_and_demotion() -> None:
         category="workflow",
         confidence=0.8,
         total_evidence_count=5,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     promoted = ValuesEntry(
         description="Demotable",
         category="workflow",
         confidence=0.65,
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.9,
     )

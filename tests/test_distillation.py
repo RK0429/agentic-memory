@@ -110,14 +110,14 @@ def test_prepare_knowledge_filters_by_domain(tmp_memory_dir: Path) -> None:
         title="Python decorators",
         content="Decorators wrap functions",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     KnowledgeService().add(
         tmp_memory_dir,
         title="Rust ownership",
         content="Ownership manages memory",
         domain="rust",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
 
     preparer = DistillationPreparer()

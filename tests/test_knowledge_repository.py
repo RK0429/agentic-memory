@@ -27,7 +27,7 @@ def test_knowledge_repository_save_load_delete_roundtrip(tmp_memory_dir: Path) -
                 summary="Rust note",
             )
         ],
-        source_type=SourceType.MEMORY_DISTILLATION,
+        origin=SourceType.MEMORY_DISTILLATION,
     )
 
     path = repository.save(entry)
@@ -48,3 +48,37 @@ def test_knowledge_repository_save_load_delete_roundtrip(tmp_memory_dir: Path) -
     assert not path.exists()
     assert repository.find_by_id(entry.id) is None
     assert repository.list_all() == []
+
+
+def test_knowledge_repository_loads_legacy_source_type_frontmatter(
+    tmp_memory_dir: Path,
+) -> None:
+    repository = KnowledgeRepository(tmp_memory_dir)
+    path = tmp_memory_dir / "knowledge" / "k-11111111-1111-1111-1111-111111111111.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                'id: "k-11111111-1111-1111-1111-111111111111"',
+                'title: "Legacy knowledge"',
+                'domain: "rust"',
+                'accuracy: "uncertain"',
+                "sources: []",
+                'source_type: "user_taught"',
+                'user_understanding: "unknown"',
+                "related: []",
+                'created_at: "2026-04-10T09:00:00"',
+                'updated_at: "2026-04-10T09:00:00"',
+                "---",
+                "Legacy body",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = repository.load("k-11111111-1111-1111-1111-111111111111")
+
+    assert loaded.origin == SourceType.USER_TAUGHT
+    assert loaded.to_dict()["origin"] == "user_taught"

@@ -34,7 +34,7 @@ def test_knowledge_entry_roundtrip_serialization() -> None:
                 summary="Ownership notes",
             )
         ],
-        source_type=SourceType.AUTONOMOUS_RESEARCH,
+        origin=SourceType.AUTONOMOUS_RESEARCH,
         user_understanding=UserUnderstanding.FAMILIAR,
         related=[KnowledgeId.generate()],
     )
@@ -44,7 +44,7 @@ def test_knowledge_entry_roundtrip_serialization() -> None:
 
     assert payload["accuracy"] == "verified"
     assert payload["sources"][0]["type"] == "memory_note"
-    assert payload["source_type"] == "autonomous_research"
+    assert payload["origin"] == "autonomous_research"
     assert payload["user_understanding"] == "familiar"
     assert restored.id == entry.id
     assert restored.domain == "rust"
@@ -60,7 +60,7 @@ def test_knowledge_entry_rejects_invalid_accuracy() -> None:
             content="Accuracy should fail.",
             domain="python",
             accuracy="wrong",
-            source_type=SourceType.USER_TAUGHT,
+            origin=SourceType.USER_TAUGHT,
         )
 
 
@@ -80,7 +80,7 @@ def test_knowledge_entry_add_sources_merges_without_replacing_existing() -> None
         content="content",
         domain="rust",
         sources=[original],
-        source_type=SourceType.MEMORY_DISTILLATION,
+        origin=SourceType.MEMORY_DISTILLATION,
     )
 
     entry.add_sources([extra, original])
@@ -114,7 +114,7 @@ def test_knowledge_entry_roundtrip_with_new_reference_type() -> None:
         content="Test content",
         domain="test",
         sources=[Source(type=ReferenceType.DOCUMENT, ref="doc.pdf", summary="A doc")],
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
 
     payload = entry.to_dict()
@@ -143,6 +143,7 @@ def test_knowledge_entry_loads_legacy_source_in_sources() -> None:
     )
 
     assert entry.sources[0].type == ReferenceType.MEMORY_NOTE
+    assert entry.origin == SourceType.USER_TAUGHT
     assert entry.to_dict()["sources"][0]["type"] == "memory_note"
 
 

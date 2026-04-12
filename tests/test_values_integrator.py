@@ -23,7 +23,7 @@ def _entry(description: str, category: str) -> ValuesEntry:
         description=description,
         category=category,
         confidence=0.6,
-        source_type=SourceType.MEMORY_DISTILLATION,
+        origin=SourceType.MEMORY_DISTILLATION,
     )
 
 

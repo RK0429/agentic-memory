@@ -271,7 +271,7 @@ def _validation_error_payload(message: str, *, default_hint: str) -> str:
                 'Valid source reference type values: "memory_note", "web", '
                 '"user_direct", "document", "code", "other".'
                 if "is not a valid ReferenceType" in text
-                else 'Valid `source_type` values: "memory_distillation", '
+                else 'Valid `origin` values: "memory_distillation", '
                 '"autonomous_research", "user_taught".'
             ),
         )
@@ -428,7 +428,7 @@ def _knowledge_content_snippet(content: str, limit: int = 200) -> str:
 def _knowledge_entry_payload(
     entry: KnowledgeEntry,
     *,
-    score: float,
+    score: float | None,
     include_full_content: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -438,7 +438,7 @@ def _knowledge_entry_payload(
         "accuracy": str(entry.accuracy),
         "user_understanding": str(entry.user_understanding),
         "content_snippet": _knowledge_content_snippet(entry.content),
-        "score": round(score, 6),
+        "score": round(score, 6) if score is not None else None,
     }
     if include_full_content:
         entry_dict = entry.to_dict()
@@ -448,7 +448,7 @@ def _knowledge_entry_payload(
                 "sources": entry_dict["sources"],
                 "tags": entry_dict["tags"],
                 "related": entry_dict["related"],
-                "source_type": entry_dict["source_type"],
+                "origin": entry_dict["origin"],
                 "created_at": entry_dict["created_at"],
                 "updated_at": entry_dict["updated_at"],
             }
@@ -594,10 +594,13 @@ def _filter_notes_by_since(notes: list[Path], since: str | None) -> list[Path]:
     return filtered
 
 
+_SCORE_OMITTED = object()
+
+
 def _values_entry_payload(
     entry: ValuesEntry,
     *,
-    score: float | None = None,
+    score: float | None | object = _SCORE_OMITTED,
     include_full_content: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -608,14 +611,14 @@ def _values_entry_payload(
         "evidence_count": entry.total_evidence_count,
         "promoted": entry.promoted,
     }
-    if score is not None:
+    if score is not _SCORE_OMITTED:
         payload["score"] = score
     if include_full_content:
         entry_dict = entry.to_dict()
         payload.update(
             {
                 "evidence": entry_dict["evidence"],
-                "source_type": entry_dict["source_type"],
+                "origin": entry_dict["origin"],
                 "created_at": entry_dict["created_at"],
                 "updated_at": entry_dict["updated_at"],
             }
@@ -1110,7 +1113,7 @@ def memory_values_search(
     CJK query expansion is enabled by default; set `no_cjk_expand=true` to suppress
     n-gram expansion for Japanese/Chinese/Korean search terms.
     Results include score, confidence, evidence count, and promotion state.
-    Set `include_full_content=true` to also return evidence and timestamps.
+    Set `include_full_content=true` to also return evidence, origin, and timestamps.
     """
     resolved = _resolve_dir(memory_dir)
     try:
@@ -1369,7 +1372,7 @@ def memory_distill_commit(
     """Commit distillation candidates extracted by the calling agent.
 
     Validates, deduplicates, and persists knowledge or values entries.
-    `source_type` is automatically set to `memory_distillation`.
+    `origin` is automatically set to `memory_distillation`.
 
     `type` selects knowledge or values.
     `candidates` is an array matching the schema from `memory_distill_prepare`.
@@ -1461,7 +1464,7 @@ def _commit_knowledge(
                     tags=candidate.get("tags") or [],
                     accuracy=accuracy,
                     sources=coerced_sources,
-                    source_type=SourceType.MEMORY_DISTILLATION,
+                    origin=SourceType.MEMORY_DISTILLATION,
                     user_understanding=user_understanding,
                     related=[str(r) for r in related_ids],
                 )
@@ -1485,7 +1488,7 @@ def _commit_knowledge(
                 tags=candidate.get("tags") or [],
                 accuracy=accuracy,
                 sources=sources_raw or None,
-                source_type=SourceType.MEMORY_DISTILLATION,
+                origin=SourceType.MEMORY_DISTILLATION,
                 user_understanding=user_understanding,
                 related=related_raw,
             )
@@ -1593,7 +1596,7 @@ def _commit_values(
                     confidence=confidence,
                     evidence=evidence_items[:10],
                     total_evidence_count=len(evidence_items),
-                    source_type=SourceType.MEMORY_DISTILLATION,
+                    origin=SourceType.MEMORY_DISTILLATION,
                 )
             except ValueError as exc:
                 exc_msg = str(exc)
@@ -1610,7 +1613,7 @@ def _commit_values(
                 category=category_raw,
                 confidence=confidence,
                 evidence=evidence_items or None,
-                source_type=SourceType.MEMORY_DISTILLATION,
+                origin=SourceType.MEMORY_DISTILLATION,
             )
         except ValueError as exc:
             exc_msg = str(exc)
@@ -2551,7 +2554,7 @@ def _memory_knowledge_add_single(
     tags: list[str] | None = None,
     accuracy: Literal["verified", "likely", "uncertain"] | None = None,
     sources: list[dict[str, Any]] | None = None,
-    source_type: Literal["memory_distillation", "autonomous_research", "user_taught"] | None = None,
+    origin: Literal["memory_distillation", "autonomous_research", "user_taught"] | None = None,
     user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
     | None = None,
     related: list[str] | None = None,
@@ -2561,13 +2564,13 @@ def _memory_knowledge_add_single(
 
     Registers a knowledge record under `knowledge/{id}.md` and updates `_knowledge.jsonl`.
     `title`, `content`, and `domain` are required. Optional metadata includes `tags`,
-    `accuracy`, `sources`, `source_type`, `user_understanding`, and `related`.
+    `accuracy`, `sources`, `origin`, `user_understanding`, and `related`.
     When omitted, `accuracy` defaults to `"uncertain"` and
     `user_understanding` defaults to `"unknown"`.
     `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     `sources` accepts a list of source objects with shape
     `{type: "memory_note"|"web"|"user_direct"|"document"|"code"|"other", ref: str, summary: str}`.
-    `source_type` accepts `"memory_distillation"`, `"autonomous_research"`, or
+    `origin` accepts `"memory_distillation"`, `"autonomous_research"`, or
     `"user_taught"` (default: `"user_taught"`).
     Secret detection blocks the call with `error_type="validation_error"`.
     Returns `{ok: true, id, path}`. Duplicate content (`title` + `domain` + `content`)
@@ -2588,7 +2591,7 @@ def _memory_knowledge_add_single(
             tags=tags,
             accuracy=accuracy or "uncertain",
             sources=typed_sources,
-            source_type=source_type or "user_taught",
+            origin=origin or "user_taught",
             user_understanding=user_understanding or "unknown",
             related=related,
         )
@@ -2632,7 +2635,7 @@ def memory_knowledge_add(
     """Create one or more Knowledge entries.
 
     `entries` must be a non-empty list. Each item requires `title`, `content`, and
-    `domain`; optional metadata includes `tags`, `accuracy`, `sources`, `source_type`,
+    `domain`; optional metadata includes `tags`, `accuracy`, `sources`, `origin`,
     `user_understanding`, and `related`. When omitted, `accuracy` defaults to
     `"uncertain"` and `user_understanding` defaults to `"unknown"`.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
@@ -2705,9 +2708,9 @@ def memory_knowledge_add(
                         entry.get("accuracy"),
                     ),
                     sources=cast(list[dict[str, Any]] | None, entry.get("sources")),
-                    source_type=cast(
+                    origin=cast(
                         Literal["memory_distillation", "autonomous_research", "user_taught"] | None,
-                        entry.get("source_type"),
+                        entry.get("origin"),
                     ),
                     user_understanding=cast(
                         Literal["unknown", "novice", "familiar", "proficient", "expert"] | None,
@@ -2742,7 +2745,7 @@ def memory_knowledge_search(
     `user_understanding` filters are applied to the result set. CJK query expansion is
     enabled by default; set `no_cjk_expand=true` to suppress n-gram expansion for
     Japanese/Chinese/Korean search terms. Set `include_full_content=true` to also
-    return the full content and metadata fields.
+    return the full content and metadata fields, including `origin`.
     Returns `{ok: true, entries: [...]}` with each entry
     containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
     `content_snippet`, and `score`.

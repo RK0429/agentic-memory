@@ -25,7 +25,7 @@ def test_knowledge_service_add_creates_entry_and_secret_warning(
         title="Rust ownership",
         content='api_key="AbCdEf1234567890"',
         domain="rust",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
 
     stored = KnowledgeRepository(tmp_memory_dir).load(entry.id)
@@ -134,6 +134,7 @@ def test_knowledge_service_search_supports_query_domain_filters_and_sorting(
         domain="rust",
         top=5,
     )
+    assert [score for score, _ in domain_only_results] == [None, None]
     assert [str(entry.id) for _, entry in domain_only_results] == [
         str(rust_new.id),
         str(rust_old.id),

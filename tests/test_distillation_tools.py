@@ -145,7 +145,7 @@ def test_commit_knowledge_creates_entry(
 
     entries = KnowledgeRepository(tmp_memory_dir).list_all()
     assert len(entries) == 1
-    assert entries[0].source_type.value == "memory_distillation"
+    assert entries[0].origin.value == "memory_distillation"
 
     state_payload = json.loads(memory_state_show(memory_dir=str(tmp_memory_dir)))
     assert state_payload["frontmatter"]["last_knowledge_evaluated_at"] is not None
@@ -163,7 +163,7 @@ def test_commit_knowledge_skips_duplicate(
         title="Rust ownership",
         content="Ownership explains moves and borrows.",
         domain="rust",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
 
     payload = json.loads(
@@ -300,7 +300,7 @@ def test_commit_values_creates_entry(
 
     entries = ValuesRepository(tmp_memory_dir).list_all()
     assert len(entries) == 1
-    assert entries[0].source_type.value == "memory_distillation"
+    assert entries[0].origin.value == "memory_distillation"
     assert entries[0].confidence == 0.5
     assert len(entries[0].evidence) == 1
 
@@ -518,7 +518,7 @@ def test_commit_knowledge_dry_run_uses_service_validation(
         title="Existing knowledge",
         content="Already known content.",
         domain="test",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
 
     payload = json.loads(
@@ -614,7 +614,7 @@ def test_commit_knowledge_dry_run_does_not_mutate_related_links(
         title="Existing topic",
         content="Existing content for linking test.",
         domain="test",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     existing_id = str(existing.id)
     assert existing.related == []

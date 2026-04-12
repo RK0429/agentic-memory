@@ -38,7 +38,7 @@ def _seed_entry(
         confidence=confidence,
         evidence=[_evidence(index) for index in range(1, min(evidence_count, 10) + 1)],
         total_evidence_count=evidence_count,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=promoted,
         promoted_confidence=promoted_confidence,
         created_at=updated_at,
@@ -64,14 +64,14 @@ def test_add_rejects_strict_duplicate_after_normalization(tmp_memory_dir: Path) 
         )
 
 
-def test_add_defaults_to_user_taught_source_type(tmp_memory_dir: Path) -> None:
+def test_add_defaults_to_user_taught_origin(tmp_memory_dir: Path) -> None:
     entry, _warnings = ValuesService().add(
         tmp_memory_dir,
         description="Prefer small, focused changes.",
         category="workflow",
     )
 
-    assert entry.source_type is SourceType.USER_TAUGHT
+    assert entry.origin is SourceType.USER_TAUGHT
 
 
 def test_add_includes_secret_warning_on_suspicious_description(tmp_memory_dir: Path) -> None:
@@ -256,9 +256,9 @@ def test_search_with_category_only_sorts_by_confidence_then_updated_at(
     results = service.search(tmp_memory_dir, category="workflow", top=3)
 
     assert [(score, entry.id) for score, entry in results] == [
-        (0.0, highest.id),
-        (0.0, newer.id),
-        (0.0, older.id),
+        (None, highest.id),
+        (None, newer.id),
+        (None, older.id),
     ]
 
 

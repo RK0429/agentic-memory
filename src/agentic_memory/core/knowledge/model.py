@@ -168,7 +168,7 @@ class KnowledgeEntry:
     title: str
     content: str
     domain: Domain | str
-    source_type: SourceType | str
+    origin: SourceType | str
     id: KnowledgeId | str = field(default_factory=KnowledgeId.generate)
     tags: list[str] = field(default_factory=list)
     accuracy: Accuracy | str = Accuracy.UNCERTAIN
@@ -195,7 +195,7 @@ class KnowledgeEntry:
             source if isinstance(source, Source) else Source.from_dict(source)
             for source in self.sources
         ]
-        self.source_type = SourceType(self.source_type)
+        self.origin = SourceType(self.origin)
         self.user_understanding = UserUnderstanding(self.user_understanding)
         self.related = [
             related if isinstance(related, KnowledgeId) else KnowledgeId(str(related))
@@ -216,7 +216,7 @@ class KnowledgeEntry:
 
     def to_dict(self) -> dict[str, Any]:
         accuracy = cast(Accuracy, self.accuracy)
-        source_type = cast(SourceType, self.source_type)
+        origin = cast(SourceType, self.origin)
         user_understanding = cast(UserUnderstanding, self.user_understanding)
         created_at = cast(dt.datetime, self.created_at)
         updated_at = cast(dt.datetime, self.updated_at)
@@ -228,7 +228,7 @@ class KnowledgeEntry:
             "tags": list(self.tags),
             "accuracy": accuracy.value,
             "sources": [source.to_dict() for source in self.sources],
-            "source_type": source_type.value,
+            "origin": origin.value,
             "user_understanding": user_understanding.value,
             "related": [str(related) for related in self.related],
             "created_at": created_at.isoformat(timespec="seconds"),
@@ -245,7 +245,7 @@ class KnowledgeEntry:
             tags=list(payload.get("tags") or []),
             accuracy=payload.get("accuracy", Accuracy.UNCERTAIN.value),
             sources=[Source.from_dict(item) for item in list(payload.get("sources") or [])],
-            source_type=payload["source_type"],
+            origin=payload.get("origin", payload.get("source_type", SourceType.USER_TAUGHT.value)),
             user_understanding=payload.get("user_understanding", UserUnderstanding.UNKNOWN.value),
             related=list(payload.get("related") or []),
             created_at=payload.get("created_at", _now()),

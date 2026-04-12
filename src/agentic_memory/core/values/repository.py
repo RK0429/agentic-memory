@@ -98,7 +98,7 @@ class ValuesRepository:
 
     def _build_index_row(self, entry: ValuesEntry) -> dict[str, Any]:
         serialized = entry.to_dict()
-        source_type = cast(str, serialized["source_type"])
+        origin = cast(str, serialized["origin"])
         return {
             "id": str(entry.id),
             "path": str(self._entry_path(entry.id).relative_to(self.memory_dir)),
@@ -106,7 +106,7 @@ class ValuesRepository:
             "category": str(entry.category),
             "confidence": entry.confidence,
             "evidence_count": entry.total_evidence_count,
-            "source_type": source_type,
+            "origin": origin,
             "promoted": entry.promoted,
             "promoted_at": serialized["promoted_at"],
             "promoted_confidence": serialized["promoted_confidence"],
@@ -146,6 +146,8 @@ class ValuesRepository:
             if not separator:
                 raise ValueError(f"Invalid frontmatter line: {line!r}")
             payload[key.strip()] = json.loads(value.strip())
+        if "origin" not in payload and "source_type" in payload:
+            payload["origin"] = payload["source_type"]
         body = "\n".join(lines[end_index + 1 :]).rstrip("\n")
         return payload, body
 

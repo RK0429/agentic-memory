@@ -63,7 +63,7 @@ class ValuesService:
         category: str,
         confidence: float = 0.3,
         evidence: Iterable[Evidence | dict[str, Any]] | None = None,
-        source_type: SourceType | str = SourceType.USER_TAUGHT,
+        origin: SourceType | str = SourceType.USER_TAUGHT,
     ) -> tuple[ValuesEntry, list[str]]:
         repository = self._repository(memory_dir)
         normalized_description = self._normalize_description(description)
@@ -83,7 +83,7 @@ class ValuesService:
             confidence=confidence,
             evidence=evidence_items,
             total_evidence_count=len(evidence_items),
-            source_type=source_type,
+            origin=origin,
         )
         warnings = self._similarity_warnings(
             existing_entries,
@@ -102,7 +102,7 @@ class ValuesService:
         min_confidence: float = 0.0,
         top: int = 5,
         no_cjk_expand: bool = False,
-    ) -> list[tuple[float, ValuesEntry]]:
+    ) -> list[tuple[float | None, ValuesEntry]]:
         if top <= 0:
             raise ValueError("top must be greater than 0")
 
@@ -119,7 +119,7 @@ class ValuesService:
         ]
         if not query_text:
             ordered = self._sort_by_confidence(filtered_entries)
-            return [(0.0, entry) for entry in ordered[:top]]
+            return [(None, entry) for entry in ordered[:top]]
 
         qterms = parse_query(query_text)
         qterms = expand_terms(qterms, config={}, enable=True, no_cjk_expand=no_cjk_expand)
@@ -129,7 +129,7 @@ class ValuesService:
         documents = [self._score_document(entry) for entry in filtered_entries]
         idf_cache = build_idf_cache(qterms, documents)
         avg_field_lengths = self._compute_avg_field_lengths(documents)
-        scored: list[tuple[float, ValuesEntry]] = []
+        scored: list[tuple[float | None, ValuesEntry]] = []
         for entry, document in zip(filtered_entries, documents, strict=False):
             score, _ = score_generic_entry(
                 document,
@@ -157,15 +157,15 @@ class ValuesService:
         add_evidence: Sequence[Evidence | dict[str, Any]] | None = None,
         description: str | None = None,
     ) -> tuple[ValuesEntry, dict[str, bool | list[str]]]:
-        if confidence is None and add_evidence is None and description is None:
-            raise ValueError(
-                "At least one update field is required (confidence, add_evidence, description)"
-            )
-
         repository = self._repository(memory_dir)
         entry = repository.find_by_id(id)
         if entry is None:
             raise FileNotFoundError(f"Values entry not found: {id}")
+
+        if confidence is None and add_evidence is None and description is None:
+            raise ValueError(
+                "At least one update field is required (confidence, add_evidence, description)"
+            )
 
         if description is not None:
             normalized_description = self._normalize_description(description)

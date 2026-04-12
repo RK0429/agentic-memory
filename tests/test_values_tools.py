@@ -38,7 +38,7 @@ def _seed_promoted_entry(memory_dir: Path, *, description: str) -> ValuesEntry:
         confidence=0.9,
         evidence=[Evidence.from_dict(_evidence(index)) for index in range(1, 7)],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.9,
         created_at="2026-04-10T09:00:00",
@@ -552,7 +552,7 @@ def test_memory_values_search_and_list_behaviors(tmp_memory_dir: Path, monkeypat
     assert list_payload["entries"][0]["id"] == str(promoted_entry.id)
 
 
-def test_memory_values_search_category_only_returns_zero_score(
+def test_memory_values_search_category_only_returns_null_score(
     tmp_memory_dir: Path,
     monkeypatch,
 ) -> None:
@@ -582,7 +582,7 @@ def test_memory_values_search_category_only_returns_zero_score(
     payload = json.loads(memory_values_search(category="review", memory_dir=str(tmp_memory_dir)))
 
     assert payload["ok"] is True
-    assert [entry["score"] for entry in payload["entries"]] == [0.0, 0.0]
+    assert [entry["score"] for entry in payload["entries"]] == [None, None]
     assert [entry["confidence"] for entry in payload["entries"]] == [0.9, 0.6]
 
 
@@ -637,7 +637,7 @@ def test_memory_values_search_supports_cjk_full_content_and_toggle(
     )
     entry = full_payload["entries"][0]
     assert entry["evidence"] == [_evidence(1)]
-    assert "source_type" in entry
+    assert entry["origin"] == "user_taught"
     assert "created_at" in entry
     assert "updated_at" in entry
 
@@ -671,6 +671,25 @@ def test_memory_values_update_validates_missing_fields_and_add_evidence_shape(
     assert invalid_shape["ok"] is False
     assert invalid_shape["error_type"] == "validation_error"
     assert invalid_shape["message"] == "`add_evidence` must be a list of evidence objects."
+
+
+def test_memory_values_update_missing_id_takes_precedence_over_missing_fields(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = _single_result(
+        _values_update_payload(
+            tmp_memory_dir,
+            [{"id": "v-11111111-1111-1111-1111-111111111111"}],
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["id"] == "v-11111111-1111-1111-1111-111111111111"
+    assert payload["error_type"] == "not_found"
+    assert payload["message"] == "Values entry not found: v-11111111-1111-1111-1111-111111111111"
 
 
 def test_memory_values_update_isolates_missing_id_and_emits_notifications(

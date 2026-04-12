@@ -21,7 +21,7 @@ def _promoted_entry(description: str, *, promoted: bool = True) -> ValuesEntry:
         confidence=0.9,
         evidence=[],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=promoted,
         promoted_confidence=0.9,
     )

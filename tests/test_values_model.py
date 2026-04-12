@@ -32,7 +32,7 @@ def test_values_entry_roundtrip_serialization() -> None:
         confidence=0.85,
         evidence=[_evidence(1), _evidence(2)],
         total_evidence_count=7,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.85,
     )
@@ -40,7 +40,7 @@ def test_values_entry_roundtrip_serialization() -> None:
     payload = entry.to_dict()
     restored = ValuesEntry.from_dict(payload)
 
-    assert payload["source_type"] == "user_taught"
+    assert payload["origin"] == "user_taught"
     assert payload["total_evidence_count"] == 7
     assert payload["promoted_confidence"] == 0.85
     assert restored.id == entry.id
@@ -55,7 +55,7 @@ def test_values_entry_rejects_out_of_range_confidence() -> None:
             description="bad confidence",
             category="workflow",
             confidence=1.1,
-            source_type=SourceType.MEMORY_DISTILLATION,
+            origin=SourceType.MEMORY_DISTILLATION,
         )
 
 
@@ -65,7 +65,7 @@ def test_values_entry_keeps_evidence_newest_first_with_limit() -> None:
         category="workflow",
         confidence=0.5,
         evidence=[_evidence(index) for index in range(1, 12)],
-        source_type=SourceType.MEMORY_DISTILLATION,
+        origin=SourceType.MEMORY_DISTILLATION,
     )
 
     assert len(entry.evidence) == 10
@@ -108,7 +108,7 @@ def test_values_entry_add_evidence_reorders_by_date_and_keeps_top_ten() -> None:
         category="workflow",
         confidence=0.5,
         evidence=[_evidence(index) for index in (5, 1, 4, 2, 3)],
-        source_type=SourceType.MEMORY_DISTILLATION,
+        origin=SourceType.MEMORY_DISTILLATION,
     )
 
     for index in (8, 6, 12, 7, 10, 9, 11):
@@ -142,7 +142,7 @@ def test_promotion_state_reports_eligibility_and_promoted_confidence() -> None:
         confidence=0.8,
         evidence=[_evidence(index) for index in range(1, 6)],
         total_evidence_count=5,
-        source_type=SourceType.AUTONOMOUS_RESEARCH,
+        origin=SourceType.AUTONOMOUS_RESEARCH,
         promoted_confidence=0.9,
     )
 
@@ -153,3 +153,16 @@ def test_promotion_state_reports_eligibility_and_promoted_confidence() -> None:
         promoted_confidence=0.9,
     )
     assert entry.promotion_state.eligible is True
+
+
+def test_values_entry_from_dict_accepts_legacy_source_type() -> None:
+    entry = ValuesEntry.from_dict(
+        {
+            "description": "Legacy values entry",
+            "category": "workflow",
+            "source_type": "autonomous_research",
+        }
+    )
+
+    assert entry.origin == SourceType.AUTONOMOUS_RESEARCH
+    assert entry.to_dict()["origin"] == "autonomous_research"

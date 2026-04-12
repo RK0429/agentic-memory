@@ -99,7 +99,7 @@ class KnowledgeRepository:
     def _build_index_row(self, entry: KnowledgeEntry) -> dict[str, Any]:
         serialized = entry.to_dict()
         accuracy = cast(str, serialized["accuracy"])
-        source_type = cast(str, serialized["source_type"])
+        origin = cast(str, serialized["origin"])
         user_understanding = cast(str, serialized["user_understanding"])
         return {
             "id": str(entry.id),
@@ -108,7 +108,7 @@ class KnowledgeRepository:
             "domain": str(entry.domain),
             "tags": list(entry.tags),
             "accuracy": accuracy,
-            "source_type": source_type,
+            "origin": origin,
             "user_understanding": user_understanding,
             "content_preview": self._content_preview(entry.content),
             "related": [str(related) for related in entry.related],
@@ -151,6 +151,8 @@ class KnowledgeRepository:
             if not separator:
                 raise ValueError(f"Invalid frontmatter line: {line!r}")
             payload[key.strip()] = json.loads(value.strip())
+        if "origin" not in payload and "source_type" in payload:
+            payload["origin"] = payload["source_type"]
         body = "\n".join(lines[end_index + 1 :]).rstrip("\n")
         return payload, body
 

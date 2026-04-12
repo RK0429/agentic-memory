@@ -56,7 +56,7 @@ def _seed_knowledge_entries(memory_dir: Path) -> None:
                 domain=f"domain-{index % 10}",
                 tags=[f"tag-{index % 5}", f"tag-{(index + 1) % 7}"],
                 accuracy="uncertain",
-                source_type=SourceType.USER_TAUGHT,
+                origin=SourceType.USER_TAUGHT,
             )
         )
 
@@ -69,7 +69,7 @@ def _seed_values_entries(memory_dir: Path) -> None:
                 description=f"Value preference about approach {index} with context.",
                 category=f"category-{index % 8}",
                 confidence=0.3 + (index % 7) * 0.1,
-                source_type=SourceType.USER_TAUGHT,
+                origin=SourceType.USER_TAUGHT,
             )
         )
 

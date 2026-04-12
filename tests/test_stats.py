@@ -38,7 +38,7 @@ def test_get_stats_collects_memory_metrics(sample_note_path: Path, tmp_memory_di
             title="Rust ownership",
             content="Ownership summary",
             domain="rust",
-            source_type=SourceType.USER_TAUGHT,
+            origin=SourceType.USER_TAUGHT,
         )
     )
     ValuesRepository(tmp_memory_dir).save(
@@ -48,7 +48,7 @@ def test_get_stats_collects_memory_metrics(sample_note_path: Path, tmp_memory_di
             confidence=0.9,
             evidence=[],
             total_evidence_count=6,
-            source_type=SourceType.USER_TAUGHT,
+            origin=SourceType.USER_TAUGHT,
             promoted=True,
             promoted_confidence=0.9,
         )
@@ -60,7 +60,7 @@ def test_get_stats_collects_memory_metrics(sample_note_path: Path, tmp_memory_di
             confidence=0.5,
             evidence=[],
             total_evidence_count=1,
-            source_type=SourceType.USER_TAUGHT,
+            origin=SourceType.USER_TAUGHT,
         )
     )
 

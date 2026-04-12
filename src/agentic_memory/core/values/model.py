@@ -119,7 +119,7 @@ class PromotionState:
 class ValuesEntry:
     description: str
     category: Category | str
-    source_type: SourceType | str
+    origin: SourceType | str
     id: ValuesId | str = field(default_factory=ValuesId.generate)
     confidence: float = 0.3
     evidence: list[Evidence] = field(default_factory=list)
@@ -142,7 +142,7 @@ class ValuesEntry:
             if isinstance(self.category, Category)
             else Category.normalize(self.category)
         )
-        self.source_type = SourceType(self.source_type)
+        self.origin = SourceType(self.origin)
         self.confidence = float(self.confidence)
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("ValuesEntry.confidence must be between 0.0 and 1.0")
@@ -179,7 +179,7 @@ class ValuesEntry:
         self.updated_at = _now()
 
     def to_dict(self) -> dict[str, Any]:
-        source_type = cast(SourceType, self.source_type)
+        origin = cast(SourceType, self.origin)
         created_at = cast(dt.datetime, self.created_at)
         updated_at = cast(dt.datetime, self.updated_at)
         promoted_at = cast(dt.datetime | None, self.promoted_at)
@@ -191,7 +191,7 @@ class ValuesEntry:
             "confidence": self.confidence,
             "evidence": [item.to_dict() for item in self.evidence],
             "total_evidence_count": self.total_evidence_count,
-            "source_type": source_type.value,
+            "origin": origin.value,
             "promoted": self.promoted,
             "promoted_at": promoted_at.isoformat(timespec="seconds") if promoted_at else None,
             "promoted_confidence": self.promoted_confidence,
@@ -212,7 +212,7 @@ class ValuesEntry:
             total_evidence_count=int(
                 payload.get("total_evidence_count", payload.get("evidence_count", 0))
             ),
-            source_type=payload["source_type"],
+            origin=payload.get("origin", payload.get("source_type", SourceType.USER_TAUGHT.value)),
             promoted=bool(payload.get("promoted", False)),
             promoted_at=payload.get("promoted_at"),
             promoted_confidence=payload.get("promoted_confidence"),

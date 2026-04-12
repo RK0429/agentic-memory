@@ -95,14 +95,14 @@ def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
         title="Target knowledge",
         content="shared target",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     knowledge_repository.save(target)
     broken = KnowledgeEntry(
         title="Broken knowledge",
         content="has broken links",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         related=[
             str(target.id),
             "k-00000000-0000-0000-0000-000000000001",
@@ -113,7 +113,7 @@ def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
         title="Orphan knowledge file",
         content="index row removed",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     knowledge_repository.save(orphan_knowledge)
 
@@ -145,7 +145,7 @@ def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
         confidence=0.9,
         evidence=[],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.9,
     )
@@ -156,7 +156,7 @@ def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
         confidence=0.85,
         evidence=[],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.85,
     )
@@ -167,7 +167,7 @@ def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
         confidence=0.4,
         evidence=[],
         total_evidence_count=1,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     values_repository.save(orphan_values)
 
@@ -189,7 +189,7 @@ def test_health_check_detects_kv_orphans_related_issues_and_promoted_sync(
             "category": "workflow",
             "confidence": 0.1,
             "evidence_count": 0,
-            "source_type": "user_taught",
+            "origin": "user_taught",
             "promoted": False,
             "promoted_at": None,
             "promoted_confidence": None,
@@ -266,14 +266,14 @@ def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
         title="Target knowledge",
         content="shared target",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     knowledge_repository.save(target)
     broken = KnowledgeEntry(
         title="Broken knowledge",
         content="has broken links",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         related=[
             str(target.id),
             "k-00000000-0000-0000-0000-000000000001",
@@ -284,7 +284,7 @@ def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
         title="Orphan knowledge file",
         content="index row removed",
         domain="python",
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     knowledge_repository.save(orphan_knowledge)
 
@@ -316,7 +316,7 @@ def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
         confidence=0.9,
         evidence=[],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.9,
     )
@@ -327,7 +327,7 @@ def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
         confidence=0.85,
         evidence=[],
         total_evidence_count=6,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
         promoted=True,
         promoted_confidence=0.85,
     )
@@ -338,7 +338,7 @@ def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
         confidence=0.4,
         evidence=[],
         total_evidence_count=1,
-        source_type=SourceType.USER_TAUGHT,
+        origin=SourceType.USER_TAUGHT,
     )
     values_repository.save(orphan_values)
 
@@ -360,7 +360,7 @@ def test_health_check_fix_repairs_kv_indexes_related_links_and_promoted_sync(
             "category": "workflow",
             "confidence": 0.1,
             "evidence_count": 0,
-            "source_type": "user_taught",
+            "origin": "user_taught",
             "promoted": False,
             "promoted_at": None,
             "promoted_confidence": None,

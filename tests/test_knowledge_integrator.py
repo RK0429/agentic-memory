@@ -24,7 +24,7 @@ def _entry(title: str, content: str, domain: str) -> KnowledgeEntry:
         title=title,
         content=content,
         domain=domain,
-        source_type=SourceType.MEMORY_DISTILLATION,
+        origin=SourceType.MEMORY_DISTILLATION,
     )
 
 

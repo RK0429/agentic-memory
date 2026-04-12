@@ -44,7 +44,7 @@ class KnowledgeService:
         tags: list[str] | None = None,
         accuracy: Accuracy | str = Accuracy.UNCERTAIN,
         sources: list[Source | dict[str, Any]] | None = None,
-        source_type: SourceType | str = SourceType.MEMORY_DISTILLATION,
+        origin: SourceType | str = SourceType.MEMORY_DISTILLATION,
         user_understanding: UserUnderstanding | str = UserUnderstanding.UNKNOWN,
         related: list[str] | None = None,
     ) -> KnowledgeEntry:
@@ -58,7 +58,7 @@ class KnowledgeService:
             tags=tags or [],
             accuracy=accuracy,
             sources=self._coerce_sources(sources),
-            source_type=source_type,
+            origin=origin,
             user_understanding=user_understanding,
             related=[str(related_id) for related_id in related_ids],
         )
@@ -77,7 +77,7 @@ class KnowledgeService:
         user_understanding: UserUnderstanding | str | None = None,
         top: int = 10,
         no_cjk_expand: bool = False,
-    ) -> list[tuple[float, KnowledgeEntry]]:
+    ) -> list[tuple[float | None, KnowledgeEntry]]:
         normalized_query = (query or "").strip()
         normalized_domain = self._normalize_domain(domain)
         if not normalized_query and normalized_domain is None:
@@ -106,14 +106,14 @@ class KnowledgeService:
                     user_understanding=understanding_filter,
                 )
             ]
-            return [(0.0, entry) for entry in filtered_entries[:top]]
+            return [(None, entry) for entry in filtered_entries[:top]]
 
         qterms = parse_query(normalized_query)
         qterms = expand_terms(qterms, config={}, enable=True, no_cjk_expand=no_cjk_expand)
         docs = [self._field_texts(entry) for entry in entries]
         idf_cache = build_idf_cache(qterms, docs)
         avg_field_lengths = self._average_field_lengths(docs)
-        scored: list[tuple[float, KnowledgeEntry]] = []
+        scored: list[tuple[float | None, KnowledgeEntry]] = []
         for entry, doc in zip(entries, docs, strict=False):
             score, _ = score_generic_entry(
                 doc,
@@ -152,6 +152,11 @@ class KnowledgeService:
         related: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> KnowledgeEntry:
+        repository = self._repository(memory_dir)
+        existing = repository.find_by_id(id)
+        if existing is None:
+            raise FileNotFoundError(f"Knowledge entry not found: {id}")
+
         if all(
             value is None
             for value in (content, accuracy, sources, user_understanding, related, tags)
@@ -160,11 +165,6 @@ class KnowledgeService:
                 "At least one update field is required "
                 "(content, accuracy, sources, user_understanding, related, tags)"
             )
-
-        repository = self._repository(memory_dir)
-        existing = repository.find_by_id(id)
-        if existing is None:
-            raise FileNotFoundError(f"Knowledge entry not found: {id}")
         related_ids = self._normalize_related(related)
         related_entries = self._load_related_entries(
             repository,
