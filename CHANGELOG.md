@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-04-12
+
+### BREAKING CHANGES
+
+- MCP ツール (`memory_knowledge_add`, `memory_values_add`) のエントリレベル出自パラメータを `source_type` から `origin` にリネームした。有効値（`memory_distillation` / `autonomous_research` / `user_taught`）は変更なし。後方互換として `source_type` キーでの入力も引き続き受け付けるが、`origin` が優先される
+
+### Changed
+
+- `memory_knowledge_add` / `memory_values_add` のツール説明文で `origin`（エントリレベル出自）と `sources[].type`（個別参照の種別）の違いを明確に区別する記述に更新した
+- `memory_values_add` で `origin` パラメータが明示的に公開され、`memory_knowledge_add` との対称性が確保された
+
 ## [0.19.0] - 2026-04-12
 
 ### BREAKING CHANGES
@@ -754,7 +765,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/RK0429/agentic-memory/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/RK0429/agentic-memory/compare/v0.18.4...v0.19.0
 [0.18.4]: https://github.com/RK0429/agentic-memory/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/RK0429/agentic-memory/compare/v0.18.2...v0.18.3
