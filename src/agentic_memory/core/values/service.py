@@ -119,7 +119,7 @@ class ValuesService:
         ]
         if not query_text:
             ordered = self._sort_by_confidence(filtered_entries)
-            return [(entry.confidence, entry) for entry in ordered[:top]]
+            return [(0.0, entry) for entry in ordered[:top]]
 
         qterms = parse_query(query_text)
         qterms = expand_terms(qterms, config={}, enable=True, no_cjk_expand=no_cjk_expand)

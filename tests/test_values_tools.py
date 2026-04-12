@@ -429,6 +429,40 @@ def test_memory_values_search_and_list_behaviors(tmp_memory_dir: Path, monkeypat
     assert list_payload["entries"][0]["id"] == str(promoted_entry.id)
 
 
+def test_memory_values_search_category_only_returns_zero_score(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    _values_add_payload(
+        tmp_memory_dir,
+        [
+            {
+                "description": "Prefer review checklists for releases",
+                "category": "review",
+                "confidence": 0.9,
+            },
+            {
+                "description": "Prefer architecture docs before refactors",
+                "category": "review",
+                "confidence": 0.6,
+            },
+            {
+                "description": "Automate deploy announcements",
+                "category": "workflow",
+                "confidence": 0.95,
+            },
+        ],
+    )
+
+    payload = json.loads(memory_values_search(category="review", memory_dir=str(tmp_memory_dir)))
+
+    assert payload["ok"] is True
+    assert [entry["score"] for entry in payload["entries"]] == [0.0, 0.0]
+    assert [entry["confidence"] for entry in payload["entries"]] == [0.9, 0.6]
+
+
 def test_memory_values_search_supports_cjk_full_content_and_toggle(
     tmp_memory_dir: Path,
     monkeypatch,

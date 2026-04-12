@@ -256,9 +256,9 @@ def test_search_with_category_only_sorts_by_confidence_then_updated_at(
     results = service.search(tmp_memory_dir, category="workflow", top=3)
 
     assert [(score, entry.id) for score, entry in results] == [
-        (0.9, highest.id),
-        (0.7, newer.id),
-        (0.7, older.id),
+        (0.0, highest.id),
+        (0.0, newer.id),
+        (0.0, older.id),
     ]
 
 
