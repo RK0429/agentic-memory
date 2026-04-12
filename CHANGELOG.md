@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-04-12
+
+### Added
+
+- AI サービス API キー（Anthropic `sk-ant-api03-` / `sk-ant-`、Stripe `sk_live_` / `sk_test_`、OpenAI `sk-proj-`）の secret 検出パターン `ai_service_api_key` を追加した。高エントロピー検出の全小文字/全大文字除外ルールではカバーできないベア文字列のキーを検出する
+
+### Changed
+
+- `memory_values_add` のツール説明文に `confidence`（デフォルト: `0.3`）と `origin`（デフォルト: `"user_taught"`）の省略時デフォルト値を追記した
+
 ## [0.20.1] - 2026-04-12
 
 ### Fixed
@@ -771,7 +781,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/RK0429/agentic-memory/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/RK0429/agentic-memory/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/RK0429/agentic-memory/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/RK0429/agentic-memory/compare/v0.18.4...v0.19.0
