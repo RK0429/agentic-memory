@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-04-13
+
+### Changed
+
+- `memory_distill_prepare` の docstring を明確化した。`domain`/`category` パラメータは `existing_items` のフィルタにのみ作用し、`notes` は選択期間内の全ノートを返すことを明記。大量ノート時は `date_from`/`date_to` で期間を絞る推奨を追加
+
 ## [0.23.0] - 2026-04-12
 
 ### Added
