@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-04-12
+
+### Added
+
+- `memory_knowledge_search` / `memory_values_search` にオプショナルな `min_score` パラメータを追加した。BM25+ スコアが閾値未満の低関連度結果を除外できる。デフォルト `None`（従来と同じ動作）
+
+### Changed
+
+- `memory_knowledge_add` のツール説明文に `sources` の必須フィールド `{type, ref, summary}` を明記した
+- `memory_values_add` のツール説明文に `evidence` の必須フィールド `{ref, summary, date}` を明記した
+- `memory_knowledge_update` のツール説明文に `title` と `domain` が作成後に変更できない immutable フィールドである旨を追記した
+
 ## [0.21.0] - 2026-04-12
 
 ### Added
@@ -781,7 +793,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/RK0429/agentic-memory/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/RK0429/agentic-memory/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/RK0429/agentic-memory/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/RK0429/agentic-memory/compare/v0.19.0...v0.20.0
