@@ -93,6 +93,7 @@ def test_memory_knowledge_tools_add_search_update_flow(
         memory_knowledge_search(query="ownership", memory_dir=str(tmp_memory_dir))
     )
     assert search_payload["ok"] is True
+    assert search_payload["score_type"] == "bm25"
     assert search_payload["entries"][0]["id"] == base["id"]
     assert "Ownership explains moves" in search_payload["entries"][0]["content_snippet"]
     assert search_payload["entries"][0]["score"] > 0
@@ -105,7 +106,7 @@ def test_memory_knowledge_tools_add_search_update_flow(
                 "accuracy": "verified",
                 "user_understanding": "familiar",
                 "related": [related["id"]],
-                "sources": [
+                "add_sources": [
                     {
                         "type": "web",
                         "ref": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
@@ -480,6 +481,7 @@ def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
         memory_knowledge_search(query="原則", memory_dir=str(tmp_memory_dir))
     )
     assert exact_payload["ok"] is True
+    assert exact_payload["score_type"] == "bm25"
     assert exact_payload["entries"][0]["id"] == created["id"]
     assert "content" not in exact_payload["entries"][0]
 
@@ -487,6 +489,7 @@ def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
         memory_knowledge_search(query="原則詳細論", memory_dir=str(tmp_memory_dir))
     )
     assert expanded_payload["ok"] is True
+    assert expanded_payload["score_type"] == "bm25"
     assert expanded_payload["entries"][0]["id"] == created["id"]
 
     disabled_payload = json.loads(
@@ -496,7 +499,7 @@ def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
             memory_dir=str(tmp_memory_dir),
         )
     )
-    assert disabled_payload == {"entries": [], "ok": True}
+    assert disabled_payload == {"entries": [], "ok": True, "score_type": "bm25"}
 
     full_payload = json.loads(
         memory_knowledge_search(
@@ -505,6 +508,7 @@ def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
             memory_dir=str(tmp_memory_dir),
         )
     )
+    assert full_payload["score_type"] == "bm25"
     entry = full_payload["entries"][0]
     assert entry["content"] == "KISS 原則と YAGNI 原則を優先する。"
     assert entry["sources"] == [
@@ -539,6 +543,7 @@ def test_memory_knowledge_search_domain_only_returns_null_score(
     payload = json.loads(memory_knowledge_search(domain="rust", memory_dir=str(tmp_memory_dir)))
 
     assert payload["ok"] is True
+    assert payload["score_type"] == "chronological"
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
 
 
@@ -565,6 +570,7 @@ def test_memory_knowledge_search_domain_only_ignores_min_score(
     )
 
     assert payload["ok"] is True
+    assert payload["score_type"] == "chronological"
     assert len(payload["entries"]) == 2
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
 
@@ -631,11 +637,13 @@ def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
     add_doc = server_module.memory_knowledge_add.__doc__ or ""
     search_doc = server_module.memory_knowledge_search.__doc__ or ""
     update_doc = server_module.memory_knowledge_update.__doc__ or ""
+    delete_doc = server_module.memory_knowledge_delete.__doc__ or ""
 
     assert "`origin` is the entry-level provenance classification" in add_doc
     assert "Each source object requires `type`, `ref`, and `summary` fields." in add_doc
     assert "`sources[].type` is the per-reference kind" in add_doc
     assert "`source_type` as an" in add_doc
+    assert "partial commit" in add_doc
     for value in (
         '"memory_distillation"',
         '"autonomous_research"',
@@ -653,7 +661,11 @@ def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
         assert value in add_doc
     assert "Optional `min_score`" in search_doc
     assert "BM25+ score threshold" in search_doc
+    assert "score_type" in search_doc
     assert "Immutable fields (`title`, `domain`) cannot be changed after creation." in update_doc
+    assert "`add_sources` and `related` remain append/merge operations" in update_doc
+    assert "partial commit" in update_doc
+    assert "partial commit" in delete_doc
 
 
 def test_memory_knowledge_add_accepts_legacy_source_type_alias_and_origin_precedence(
@@ -769,7 +781,7 @@ def test_memory_knowledge_update_validates_missing_fields(
     assert payload["error_type"] == "validation_error"
     assert payload["message"] == (
         "At least one update field is required "
-        "(content, accuracy, sources, user_understanding, related, tags)"
+        "(content, accuracy, add_sources, user_understanding, related, tags)"
     )
 
 
@@ -794,7 +806,7 @@ def test_memory_knowledge_update_rejects_unknown_fields(
     assert unknown_only["error_type"] == "validation_error"
     assert unknown_only["message"] == (
         "Unknown update fields: unexpected. "
-        "Allowed update fields are: content, accuracy, sources, user_understanding, "
+        "Allowed update fields are: content, accuracy, add_sources, user_understanding, "
         "related, tags"
     )
 
@@ -809,9 +821,24 @@ def test_memory_knowledge_update_rejects_unknown_fields(
     assert mixed_fields["error_type"] == "validation_error"
     assert mixed_fields["message"] == (
         "Unknown update fields: unexpected. "
-        "Allowed update fields are: content, accuracy, sources, user_understanding, "
+        "Allowed update fields are: content, accuracy, add_sources, user_understanding, "
         "related, tags"
     )
+
+
+def test_memory_knowledge_search_empty_query_and_domain_reports_specific_error(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_knowledge_search(query="", domain="", memory_dir=str(tmp_memory_dir))
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"] == "At least one of query or domain is required (both were empty)"
 
 
 def test_memory_knowledge_update_missing_id_takes_precedence_over_missing_fields(
@@ -874,6 +901,7 @@ def test_memory_knowledge_delete_preview_and_bulk_delete_preserve_backlink_regre
                 "title": "Rust ownership",
                 "preview": True,
                 "would_delete": True,
+                "had_related": True,
             }
         ],
     }
@@ -898,6 +926,7 @@ def test_memory_knowledge_delete_preview_and_bulk_delete_preserve_backlink_regre
         "deleted_id": base["id"],
         "title": "Rust ownership",
         "deleted": True,
+        "had_related": True,
         "reason": "cleanup duplicate knowledge",
     }
     assert payload["results"][1]["ok"] is False

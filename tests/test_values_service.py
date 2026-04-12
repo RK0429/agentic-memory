@@ -227,7 +227,7 @@ def test_search_with_query_applies_filters_and_scores(tmp_memory_dir: Path) -> N
     assert results[0][0] > 0
 
 
-def test_search_with_category_only_sorts_by_confidence_then_updated_at(
+def test_search_with_category_only_sorts_by_updated_at_desc(
     tmp_memory_dir: Path,
 ) -> None:
     service = ValuesService()
@@ -256,9 +256,9 @@ def test_search_with_category_only_sorts_by_confidence_then_updated_at(
     results = service.search(tmp_memory_dir, category="workflow", top=3)
 
     assert [(score, entry.id) for score, entry in results] == [
-        (None, highest.id),
         (None, newer.id),
         (None, older.id),
+        (None, highest.id),
     ]
 
 

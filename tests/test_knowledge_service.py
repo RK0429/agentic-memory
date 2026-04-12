@@ -177,7 +177,7 @@ def test_knowledge_service_update_merges_sources_and_related_bidirectionally(
     updated = service.update(
         memory_dir=tmp_memory_dir,
         id=str(first.id),
-        sources=[
+        add_sources=[
             {
                 "type": "autonomous_research",
                 "ref": "https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html",
@@ -217,7 +217,7 @@ def test_knowledge_service_update_rejects_duplicate_content_and_missing_fields(
         ValueError,
         match=(
             r"At least one update field is required "
-            r"\(content, accuracy, sources, user_understanding, related, tags\)"
+            r"\(content, accuracy, add_sources, user_understanding, related, tags\)"
         ),
     ):
         service.update(memory_dir=tmp_memory_dir, id=str(first.id))
@@ -260,6 +260,7 @@ def test_knowledge_service_delete_preview_does_not_remove_entry_or_backlinks(
         "title": "Rust ownership",
         "preview": True,
         "would_delete": True,
+        "had_related": True,
         "reason": "cleanup duplicate knowledge",
     }
     assert repository.find_by_id(first.id) is not None
@@ -296,6 +297,7 @@ def test_knowledge_service_delete_returns_metadata_and_removes_backlinks(
         "deleted_id": str(first.id),
         "title": "Rust ownership",
         "deleted": True,
+        "had_related": True,
         "reason": "cleanup duplicate knowledge",
     }
     assert repository.find_by_id(first.id) is None

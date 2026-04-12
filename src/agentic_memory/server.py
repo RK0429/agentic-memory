@@ -1075,6 +1075,8 @@ def memory_values_add(
     The newest 10 evidence objects are stored.
     `evidence[].date` must use ISO 8601 date format (`YYYY-MM-DD`).
     Secret detection rejects only the affected item with `validation_error`.
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     per-item `ok`, and either `{id, path, category}` plus optional warnings/notifications,
     or `{error_type, message, hint}`.
@@ -1145,9 +1147,12 @@ def memory_values_search(
 ) -> str:
     """Search Values entries by query and/or category.
 
-    At least one of `query` or `category` is required.
-    `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
-    Optional `min_score` filters results below the given BM25+ score threshold.
+    At least one of `query` or `category` is required. Query searches use BM25+ scoring
+    and return top-level `score_type: "bm25"`. Category-only searches return the
+    filtered entries in `updated_at` descending order with `score_type: "chronological"`
+    and `score: null` for each entry. `category` is normalized to kebab-case
+    (e.g. `"coding_style"` → `"coding-style"`). Optional `min_score` filters results
+    below the given BM25+ score threshold.
     CJK query expansion is enabled by default; set `no_cjk_expand=true` to suppress
     n-gram expansion for Japanese/Chinese/Korean search terms.
     Results include score, confidence, evidence count, and promotion state.
@@ -1179,7 +1184,8 @@ def memory_values_search(
                     include_full_content=include_full_content,
                 )
                 for score, entry in results
-            ]
+            ],
+            "score_type": "bm25" if (query or "").strip() else "chronological",
         }
     )
 
@@ -1277,6 +1283,8 @@ def memory_values_update(
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
     `add_evidence` still accepts a list of evidence objects with shape
     `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     `id`, per-item `ok`, and either update notifications or `{error_type, message, hint}`.
     """
@@ -1740,6 +1748,8 @@ def memory_values_promote(
     `confirm=false` returns per-item previews without side effects, and `confirm=true`
     performs the promotion. Each call validates batch size against
     `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     `id`, per-item `ok`, and either promotion metadata / `would_promote`, or
     `{error_type, message, hint}`.
@@ -1807,6 +1817,8 @@ def memory_values_demote(
     `confirm=false` returns per-item previews without side effects, and `confirm=true`
     performs the demotion. Each call validates batch size against
     `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     `id`, per-item `ok`, and either demotion metadata / `would_demote`, or
     `{error_type, message, hint}`.
@@ -1887,6 +1899,8 @@ def memory_values_delete(
     the batch. `confirm=false` returns per-item previews without deleting anything, and
     `confirm=true` performs deletion plus AGENTS.md cleanup for promoted entries.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     `id`, per-item `ok`, and either deletion metadata / `would_delete`, or
     `{error_type, message, hint}`.
@@ -2707,6 +2721,8 @@ def memory_knowledge_add(
     For backward compatibility, each batch item may also pass `source_type` as an
     alias of `origin`; if both are present, `origin` takes precedence.
     Secret detection rejects only the affected item with `validation_error`.
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Top-level `ok` indicates the
     batch was processed, not that every item succeeded. Each result includes `index`,
     per-item `ok`, and either `{id, path, domain}` or `{error_type, message, hint}`.
@@ -2800,17 +2816,18 @@ def memory_knowledge_search(
     """Search Knowledge entries by text query and/or domain.
 
     At least one of `query` or `domain` is required. Query searches use BM25+ scoring
-    over title/content/domain/tags. Domain-only searches return the filtered entries in
-    `updated_at` descending order. The `domain` filter is normalized to kebab-case
-    (e.g. `"coding_style"` → `"coding-style"`). Optional `accuracy` and
-    `user_understanding` filters are applied to the result set. Optional `min_score`
-    filters results below the given BM25+ score threshold. CJK query expansion is
-    enabled by default; set `no_cjk_expand=true` to suppress n-gram expansion for
-    Japanese/Chinese/Korean search terms. Set `include_full_content=true` to also
-    return the full content and metadata fields, including `origin`.
-    Returns `{ok: true, entries: [...]}` with each entry
-    containing `id`, `title`, `domain`, `accuracy`, `user_understanding`,
-    `content_snippet`, and `score`.
+    over title/content/domain/tags and return top-level `score_type: "bm25"`.
+    Domain-only searches return the filtered entries in `updated_at` descending order
+    with `score_type: "chronological"` and `score: null` for each entry. The
+    `domain` filter is normalized to kebab-case (e.g. `"coding_style"` →
+    `"coding-style"`). Optional `accuracy` and `user_understanding` filters are
+    applied to the result set. Optional `min_score` filters results below the given
+    BM25+ score threshold. CJK query expansion is enabled by default; set
+    `no_cjk_expand=true` to suppress n-gram expansion for Japanese/Chinese/Korean
+    search terms. Set `include_full_content=true` to also return the full content and
+    metadata fields, including `origin`. Returns `{ok: true, entries: [...],
+    score_type}` with each entry containing `id`, `title`, `domain`, `accuracy`,
+    `user_understanding`, `content_snippet`, and `score`.
     """
     resolved = _resolve_dir(memory_dir)
     service = KnowledgeService()
@@ -2839,7 +2856,8 @@ def memory_knowledge_search(
                 include_full_content=include_full_content,
             )
             for score, entry in results
-        ]
+        ],
+        "score_type": "bm25" if (query or "").strip() else "chronological",
     }
     return _success_payload(payload)
 
@@ -2848,7 +2866,7 @@ def _memory_knowledge_update_single(
     id: str,
     content: str | None = None,
     accuracy: Literal["verified", "likely", "uncertain"] | None = None,
-    sources: list[dict[str, Any]] | None = None,
+    add_sources: list[dict[str, Any]] | None = None,
     user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
     | None = None,
     related: list[str] | None = None,
@@ -2858,20 +2876,20 @@ def _memory_knowledge_update_single(
     """Update selected fields on an existing Knowledge entry.
 
     `id` identifies the knowledge entry. At least one of `content`, `accuracy`,
-    `sources`, `user_understanding`, `related`, or `tags` must be provided.
-    `sources` and `related` are appended/merged instead of replaced, and `related`
+    `add_sources`, `user_understanding`, `related`, or `tags` must be provided.
+    `add_sources` and `related` are appended/merged instead of replaced, and `related`
     links are maintained bidirectionally. Returns `{ok: true, id, updated_fields}` on
     success and includes `warnings` when updated content may contain secrets.
     """
     resolved = _resolve_dir(memory_dir)
     service = KnowledgeService()
-    typed_sources: list[Source | dict[str, Any]] | None = cast(Any, sources)
+    typed_add_sources: list[Source | dict[str, Any]] | None = cast(Any, add_sources)
     updated_fields = [
         name
         for name, value in [
             ("content", content),
             ("accuracy", accuracy),
-            ("sources", sources),
+            ("sources", add_sources),
             ("user_understanding", user_understanding),
             ("related", related),
             ("tags", tags),
@@ -2884,7 +2902,7 @@ def _memory_knowledge_update_single(
             id=id,
             content=content,
             accuracy=accuracy,
-            sources=typed_sources,
+            add_sources=typed_add_sources,
             user_understanding=user_understanding,
             related=related,
             tags=tags,
@@ -2904,8 +2922,12 @@ def _memory_knowledge_update_single(
     except (KeyError, TypeError):
         return _error_payload(
             error_type="validation_error",
-            message="Invalid `sources` entry: required fields are missing or malformed.",
-            hint=_required_schema_hint("sources", ("type", "ref", "summary"), sources),
+            message="Invalid `add_sources` entry: required fields are missing or malformed.",
+            hint=_required_schema_hint(
+                "add_sources",
+                ("type", "ref", "summary"),
+                add_sources,
+            ),
         )
     except ValueError as exc:
         return _validation_error_payload(
@@ -2926,11 +2948,14 @@ def memory_knowledge_update(
     """Update selected fields on one or more Knowledge entries.
 
     `updates` must be a non-empty list. Each item requires `id` and may include
-    `content`, `accuracy`, `sources`, `user_understanding`, `related`, and/or `tags`.
+    `content`, `accuracy`, `add_sources`, `user_understanding`, `related`, and/or `tags`.
     Immutable fields (`title`, `domain`) cannot be changed after creation.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
-    `sources` and `related` remain append/merge operations, and related links stay
-    bidirectional. Returns `{ok, success_count, error_count, results}` with per-item
+    `add_sources` and `related` remain append/merge operations, and related links stay
+    bidirectional.
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
+    Returns `{ok, success_count, error_count, results}` with per-item
     `index`, `id`, `ok`, and either update metadata or `{error_type, message, hint}`.
     """
     validation_error = _validate_batch_input(updates, field_name="updates")
@@ -2963,7 +2988,7 @@ def memory_knowledge_update(
         allowed_fields = (
             "content",
             "accuracy",
-            "sources",
+            "add_sources",
             "user_understanding",
             "related",
             "tags",
@@ -2976,12 +3001,12 @@ def memory_knowledge_update(
                     item_id=item_id,
                     message=(
                         f"Unknown update fields: {', '.join(unknown_fields)}. "
-                        "Allowed update fields are: content, accuracy, sources, "
+                        "Allowed update fields are: content, accuracy, add_sources, "
                         "user_understanding, related, tags"
                     ),
                     hint=(
                         "Remove unsupported keys and retry with only: content, accuracy, "
-                        "sources, user_understanding, related, tags."
+                        "add_sources, user_understanding, related, tags."
                     ),
                 )
             )
@@ -2997,7 +3022,7 @@ def memory_knowledge_update(
                         Literal["verified", "likely", "uncertain"] | None,
                         update.get("accuracy"),
                     ),
-                    sources=cast(list[dict[str, Any]] | None, update.get("sources")),
+                    add_sources=cast(list[dict[str, Any]] | None, update.get("add_sources")),
                     user_understanding=cast(
                         Literal["unknown", "novice", "familiar", "proficient", "expert"] | None,
                         update.get("user_understanding"),
@@ -3059,6 +3084,8 @@ def memory_knowledge_delete(
     the batch. `confirm=false` returns per-item previews without deleting anything, and
     `confirm=true` performs deletion plus related back-link cleanup.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
+    Batch items are processed independently; a failure in one item does not
+    roll back other items (partial commit).
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
     `id`, per-item `ok`, and either deletion metadata / `would_delete`, or
     `{error_type, message, hint}`.

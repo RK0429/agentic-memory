@@ -108,6 +108,8 @@ class ValuesService:
             raise ValueError("top must be greater than 0")
 
         query_text = (query or "").strip()
+        if category is not None and not str(category).strip() and not query_text:
+            raise ValueError("At least one of query or category is required (both were empty)")
         category_filter = Category.normalize(category) if category is not None else None
         if not query_text and category_filter is None:
             raise ValueError("At least one of 'query' or 'category' must be provided.")
@@ -119,7 +121,7 @@ class ValuesService:
             and (category_filter is None or entry.category == category_filter)
         ]
         if not query_text:
-            ordered = self._sort_by_confidence(filtered_entries)
+            ordered = sorted(filtered_entries, key=self._updated_at, reverse=True)
             return [(None, entry) for entry in ordered[:top]]
 
         qterms = parse_query(query_text)

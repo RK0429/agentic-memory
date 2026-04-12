@@ -80,6 +80,8 @@ class KnowledgeService:
         no_cjk_expand: bool = False,
     ) -> list[tuple[float | None, KnowledgeEntry]]:
         normalized_query = (query or "").strip()
+        if domain is not None and not str(domain).strip() and not normalized_query:
+            raise ValueError("At least one of query or domain is required (both were empty)")
         normalized_domain = self._normalize_domain(domain)
         if not normalized_query and normalized_domain is None:
             raise ValueError("At least one of 'query' or 'domain' must be provided.")
@@ -150,7 +152,7 @@ class KnowledgeService:
         id: str,
         content: str | None = None,
         accuracy: Accuracy | str | None = None,
-        sources: list[Source | dict[str, Any]] | None = None,
+        add_sources: list[Source | dict[str, Any]] | None = None,
         user_understanding: UserUnderstanding | str | None = None,
         related: list[str] | None = None,
         tags: list[str] | None = None,
@@ -162,11 +164,11 @@ class KnowledgeService:
 
         if all(
             value is None
-            for value in (content, accuracy, sources, user_understanding, related, tags)
+            for value in (content, accuracy, add_sources, user_understanding, related, tags)
         ):
             raise ValueError(
                 "At least one update field is required "
-                "(content, accuracy, sources, user_understanding, related, tags)"
+                "(content, accuracy, add_sources, user_understanding, related, tags)"
             )
         related_ids = self._normalize_related(related)
         related_entries = self._load_related_entries(
@@ -180,8 +182,8 @@ class KnowledgeService:
             payload["content"] = content
         if accuracy is not None:
             payload["accuracy"] = Accuracy(accuracy).value
-        if sources is not None:
-            payload["sources"] = self._merge_sources(payload["sources"], sources)
+        if add_sources is not None:
+            payload["sources"] = self._merge_sources(payload["sources"], add_sources)
         if user_understanding is not None:
             payload["user_understanding"] = UserUnderstanding(user_understanding).value
         if related is not None:
@@ -220,11 +222,13 @@ class KnowledgeService:
             raise FileNotFoundError(f"Knowledge entry not found: {id}")
 
         deleted_id = str(entry.id)
+        had_related = bool(entry.related)
         preview: dict[str, Any] = {
             "deleted_id": deleted_id,
             "title": entry.title,
             "preview": True,
             "would_delete": True,
+            "had_related": had_related,
         }
         if reason is not None:
             preview["reason"] = reason
@@ -246,6 +250,7 @@ class KnowledgeService:
             "deleted_id": deleted_id,
             "title": entry.title,
             "deleted": True,
+            "had_related": had_related,
         }
         if reason is not None:
             response["reason"] = reason

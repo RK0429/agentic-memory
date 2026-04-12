@@ -595,6 +595,7 @@ def test_memory_values_search_and_list_behaviors(tmp_memory_dir: Path, monkeypat
         )
     )
     assert search_payload["ok"] is True
+    assert search_payload["score_type"] == "bm25"
     assert search_payload["entries"][0]["description"] == "Add regression tests for bug fixes"
     assert search_payload["entries"][0]["score"] > 0
 
@@ -644,8 +645,9 @@ def test_memory_values_search_category_only_returns_null_score(
     payload = json.loads(memory_values_search(category="review", memory_dir=str(tmp_memory_dir)))
 
     assert payload["ok"] is True
+    assert payload["score_type"] == "chronological"
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
-    assert [entry["confidence"] for entry in payload["entries"]] == [0.9, 0.6]
+    assert sorted(entry["confidence"] for entry in payload["entries"]) == [0.6, 0.9]
 
 
 def test_memory_values_search_category_only_ignores_min_score(
@@ -679,9 +681,10 @@ def test_memory_values_search_category_only_ignores_min_score(
     )
 
     assert payload["ok"] is True
+    assert payload["score_type"] == "chronological"
     assert len(payload["entries"]) == 2
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
-    assert [entry["confidence"] for entry in payload["entries"]] == [0.9, 0.6]
+    assert sorted(entry["confidence"] for entry in payload["entries"]) == [0.6, 0.9]
 
 
 def test_memory_values_search_min_score_filters_lower_scored_matches(
@@ -766,6 +769,7 @@ def test_memory_values_search_supports_cjk_full_content_and_toggle(
         memory_values_search(query="レビュー", memory_dir=str(tmp_memory_dir))
     )
     assert exact_payload["ok"] is True
+    assert exact_payload["score_type"] == "bm25"
     assert exact_payload["entries"][0]["id"] == created["id"]
     assert "evidence" not in exact_payload["entries"][0]
 
@@ -773,6 +777,7 @@ def test_memory_values_search_supports_cjk_full_content_and_toggle(
         memory_values_search(query="レビュー観点集", memory_dir=str(tmp_memory_dir))
     )
     assert expanded_payload["ok"] is True
+    assert expanded_payload["score_type"] == "bm25"
     assert expanded_payload["entries"][0]["id"] == created["id"]
 
     disabled_payload = json.loads(
@@ -782,7 +787,7 @@ def test_memory_values_search_supports_cjk_full_content_and_toggle(
             memory_dir=str(tmp_memory_dir),
         )
     )
-    assert disabled_payload == {"entries": [], "ok": True}
+    assert disabled_payload == {"entries": [], "ok": True, "score_type": "bm25"}
 
     full_payload = json.loads(
         memory_values_search(
@@ -791,6 +796,7 @@ def test_memory_values_search_supports_cjk_full_content_and_toggle(
             memory_dir=str(tmp_memory_dir),
         )
     )
+    assert full_payload["score_type"] == "bm25"
     entry = full_payload["entries"][0]
     assert entry["evidence"] == [_evidence(1)]
     assert entry["origin"] == "user_taught"
@@ -947,6 +953,37 @@ def test_memory_values_update_isolates_missing_id_and_emits_notifications(
         "message": "Values entry not found: v-11111111-1111-1111-1111-111111111111",
         "hint": "Verify the values `id` exists before retrying.",
     }
+
+
+def test_memory_values_search_empty_query_and_category_reports_specific_error(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    payload = json.loads(
+        memory_values_search(query="", category="", memory_dir=str(tmp_memory_dir))
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"] == "At least one of query or category is required (both were empty)"
+
+
+def test_memory_values_docstrings_document_score_type_and_partial_commit() -> None:
+    add_doc = server_module.memory_values_add.__doc__ or ""
+    search_doc = server_module.memory_values_search.__doc__ or ""
+    update_doc = server_module.memory_values_update.__doc__ or ""
+    delete_doc = server_module.memory_values_delete.__doc__ or ""
+    promote_doc = server_module.memory_values_promote.__doc__ or ""
+    demote_doc = server_module.memory_values_demote.__doc__ or ""
+
+    assert "partial commit" in add_doc
+    assert "score_type" in search_doc
+    assert "partial commit" in update_doc
+    assert "partial commit" in delete_doc
+    assert "partial commit" in promote_doc
+    assert "partial commit" in demote_doc
 
 
 def test_memory_values_promote_bulk_preview_confirm_and_isolation(
