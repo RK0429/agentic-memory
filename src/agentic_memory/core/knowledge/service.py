@@ -76,6 +76,7 @@ class KnowledgeService:
         accuracy: Accuracy | str | None = None,
         user_understanding: UserUnderstanding | str | None = None,
         top: int = 10,
+        min_score: float | None = None,
         no_cjk_expand: bool = False,
     ) -> list[tuple[float | None, KnowledgeEntry]]:
         normalized_query = (query or "").strip()
@@ -126,6 +127,8 @@ class KnowledgeService:
                 avg_field_lengths=avg_field_lengths,
             )
             if score <= 0:
+                continue
+            if min_score is not None and score < min_score:
                 continue
             scored.append((score, entry))
 

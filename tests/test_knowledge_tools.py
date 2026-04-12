@@ -542,18 +542,79 @@ def test_memory_knowledge_search_domain_only_returns_null_score(
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
 
 
-def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
-    doc = server_module.memory_knowledge_add.__doc__ or ""
+def test_memory_knowledge_search_min_score_filters_lower_scored_matches(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
 
-    assert "`origin` is the entry-level provenance classification" in doc
-    assert "`sources[].type` is the per-reference kind" in doc
-    assert "`source_type` as an" in doc
+    strong = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Rust ownership and borrowing",
+                    "content": "Ownership borrowing ownership borrowing rules for Rust.",
+                    "domain": "rust",
+                }
+            ],
+        )
+    )
+    weaker = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Rust borrowing rules",
+                    "content": "Borrowing rules help avoid moving ownership.",
+                    "domain": "rust",
+                }
+            ],
+        )
+    )
+
+    baseline = json.loads(
+        memory_knowledge_search(
+            query="ownership borrowing rules",
+            top=10,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert baseline["ok"] is True
+    assert [entry["id"] for entry in baseline["entries"][:2]] == [strong["id"], weaker["id"]]
+    high_score = baseline["entries"][0]["score"]
+    low_score = baseline["entries"][1]["score"]
+    assert high_score > low_score > 0
+
+    payload = json.loads(
+        memory_knowledge_search(
+            query="ownership borrowing rules",
+            min_score=(high_score + low_score) / 2,
+            top=10,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert [entry["id"] for entry in payload["entries"]] == [strong["id"]]
+
+
+def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
+    add_doc = server_module.memory_knowledge_add.__doc__ or ""
+    search_doc = server_module.memory_knowledge_search.__doc__ or ""
+    update_doc = server_module.memory_knowledge_update.__doc__ or ""
+
+    assert "`origin` is the entry-level provenance classification" in add_doc
+    assert "Each source object requires `type`, `ref`, and `summary` fields." in add_doc
+    assert "`sources[].type` is the per-reference kind" in add_doc
+    assert "`source_type` as an" in add_doc
     for value in (
         '"memory_distillation"',
         '"autonomous_research"',
         '"user_taught"',
     ):
-        assert value in doc
+        assert value in add_doc
     for value in (
         '"memory_note"',
         '"web"',
@@ -562,7 +623,10 @@ def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
         '"code"',
         '"other"',
     ):
-        assert value in doc
+        assert value in add_doc
+    assert "Optional `min_score`" in search_doc
+    assert "BM25+ score threshold" in search_doc
+    assert "Immutable fields (`title`, `domain`) cannot be changed after creation." in update_doc
 
 
 def test_memory_knowledge_add_accepts_legacy_source_type_alias_and_origin_precedence(

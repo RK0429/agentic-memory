@@ -101,6 +101,7 @@ class ValuesService:
         category: str | None = None,
         min_confidence: float = 0.0,
         top: int = 5,
+        min_score: float | None = None,
         no_cjk_expand: bool = False,
     ) -> list[tuple[float | None, ValuesEntry]]:
         if top <= 0:
@@ -141,8 +142,11 @@ class ValuesService:
                 recency_boost_max=_SCORE_RECENCY_BOOST_MAX,
                 avg_field_lengths=avg_field_lengths,
             )
-            if score > 0:
-                scored.append((score, entry))
+            if score <= 0:
+                continue
+            if min_score is not None and score < min_score:
+                continue
+            scored.append((score, entry))
         scored.sort(
             key=lambda item: (item[0], item[1].confidence, self._updated_at(item[1])),
             reverse=True,

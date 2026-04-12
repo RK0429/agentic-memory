@@ -310,10 +310,14 @@ def test_memory_values_add_invalid_evidence_date_reports_iso_hint(
 
     public_doc = server_module.memory_values_add.__doc__ or ""
     private_doc = server_module._memory_values_add_single.__doc__ or ""
+    search_doc = server_module.memory_values_search.__doc__ or ""
     assert "YYYY-MM-DD" in public_doc
     assert "YYYY-MM-DD" in private_doc
     assert "`origin` is the entry-level provenance classification" in public_doc
     assert "`source_type` as an" in public_doc
+    assert "Each evidence object requires `ref`, `summary`, and `date` fields." in public_doc
+    assert "Optional `min_score`" in search_doc
+    assert "BM25+ score threshold" in search_doc
     for value in (
         '"memory_distillation"',
         '"autonomous_research"',
@@ -642,6 +646,64 @@ def test_memory_values_search_category_only_returns_null_score(
     assert payload["ok"] is True
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
     assert [entry["confidence"] for entry in payload["entries"]] == [0.9, 0.6]
+
+
+def test_memory_values_search_min_score_filters_lower_scored_matches(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    strong = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer regression tests with targeted regression coverage",
+                    "category": "review",
+                    "confidence": 0.9,
+                }
+            ],
+        )
+    )
+    weaker = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer regression checks before release",
+                    "category": "review",
+                    "confidence": 0.8,
+                }
+            ],
+        )
+    )
+
+    baseline = json.loads(
+        memory_values_search(
+            query="regression tests coverage",
+            top=10,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert baseline["ok"] is True
+    assert [entry["id"] for entry in baseline["entries"][:2]] == [strong["id"], weaker["id"]]
+    high_score = baseline["entries"][0]["score"]
+    low_score = baseline["entries"][1]["score"]
+    assert high_score > low_score > 0
+
+    payload = json.loads(
+        memory_values_search(
+            query="regression tests coverage",
+            min_score=(high_score + low_score) / 2,
+            top=10,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert [entry["id"] for entry in payload["entries"]] == [strong["id"]]
 
 
 def test_memory_values_search_supports_cjk_full_content_and_toggle(

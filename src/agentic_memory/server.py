@@ -1070,7 +1070,9 @@ def memory_values_add(
     `confidence >= PromotionManager.CONFIDENCE_THRESHOLD (0.8)` and
     `evidence_count >= PromotionManager.EVIDENCE_THRESHOLD (5)`.
     Each item's `evidence` accepts a list of evidence objects with shape
-    `{ref: str, summary: str, date: "YYYY-MM-DD"}`; the newest 10 are stored.
+    `{ref: str, summary: str, date: "YYYY-MM-DD"}`.
+    Each evidence object requires `ref`, `summary`, and `date` fields.
+    The newest 10 evidence objects are stored.
     `evidence[].date` must use ISO 8601 date format (`YYYY-MM-DD`).
     Secret detection rejects only the affected item with `validation_error`.
     Returns `{ok, success_count, error_count, results}`. Each result includes `index`,
@@ -1136,6 +1138,7 @@ def memory_values_search(
     category: str | None = None,
     min_confidence: float = 0.0,
     top: int = 5,
+    min_score: float | None = None,
     no_cjk_expand: bool = False,
     include_full_content: bool = False,
     memory_dir: str | None = None,
@@ -1144,6 +1147,7 @@ def memory_values_search(
 
     At least one of `query` or `category` is required.
     `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
+    Optional `min_score` filters results below the given BM25+ score threshold.
     CJK query expansion is enabled by default; set `no_cjk_expand=true` to suppress
     n-gram expansion for Japanese/Chinese/Korean search terms.
     Results include score, confidence, evidence count, and promotion state.
@@ -1157,6 +1161,7 @@ def memory_values_search(
             category=category,
             min_confidence=min_confidence,
             top=top,
+            min_score=min_score,
             no_cjk_expand=no_cjk_expand,
         )
     except ValueError as exc:
@@ -2696,6 +2701,7 @@ def memory_knowledge_add(
     Each item's `domain` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     `origin` is the entry-level provenance classification and accepts
     `"memory_distillation"`, `"autonomous_research"`, or `"user_taught"`.
+    Each source object requires `type`, `ref`, and `summary` fields.
     `sources[].type` is the per-reference kind and accepts
     `"memory_note"`, `"web"`, `"user_direct"`, `"document"`, `"code"`, or `"other"`.
     For backward compatibility, each batch item may also pass `source_type` as an
@@ -2786,6 +2792,7 @@ def memory_knowledge_search(
     user_understanding: Literal["unknown", "novice", "familiar", "proficient", "expert"]
     | None = None,
     top: int = 10,
+    min_score: float | None = None,
     no_cjk_expand: bool = False,
     include_full_content: bool = False,
     memory_dir: str | None = None,
@@ -2796,7 +2803,8 @@ def memory_knowledge_search(
     over title/content/domain/tags. Domain-only searches return the filtered entries in
     `updated_at` descending order. The `domain` filter is normalized to kebab-case
     (e.g. `"coding_style"` → `"coding-style"`). Optional `accuracy` and
-    `user_understanding` filters are applied to the result set. CJK query expansion is
+    `user_understanding` filters are applied to the result set. Optional `min_score`
+    filters results below the given BM25+ score threshold. CJK query expansion is
     enabled by default; set `no_cjk_expand=true` to suppress n-gram expansion for
     Japanese/Chinese/Korean search terms. Set `include_full_content=true` to also
     return the full content and metadata fields, including `origin`.
@@ -2814,6 +2822,7 @@ def memory_knowledge_search(
             accuracy=accuracy,
             user_understanding=user_understanding,
             top=top,
+            min_score=min_score,
             no_cjk_expand=no_cjk_expand,
         )
     except ValueError as exc:
@@ -2918,6 +2927,7 @@ def memory_knowledge_update(
 
     `updates` must be a non-empty list. Each item requires `id` and may include
     `content`, `accuracy`, `sources`, `user_understanding`, `related`, and/or `tags`.
+    Immutable fields (`title`, `domain`) cannot be changed after creation.
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
     `sources` and `related` remain append/merge operations, and related links stay
     bidirectional. Returns `{ok, success_count, error_count, results}` with per-item
