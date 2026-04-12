@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-04-12
+
+### Fixed
+
+- `memory_knowledge_add` の `accuracy` / `user_understanding` に無効値を渡した際の validation_error に、有効値を列挙した hint を追加した。`accuracy` は `"verified"` / `"likely"` / `"uncertain"`、`user_understanding` は `"unknown"` / `"novice"` / `"familiar"` / `"proficient"` / `"expert"` を hint に明示するようになり、recovery が容易になった。
+
 ## [0.18.3] - 2026-04-12
 
 ### Fixed
@@ -734,7 +740,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.3...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.4...HEAD
+[0.18.4]: https://github.com/RK0429/agentic-memory/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/RK0429/agentic-memory/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/RK0429/agentic-memory/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/RK0429/agentic-memory/compare/v0.18.0...v0.18.1
