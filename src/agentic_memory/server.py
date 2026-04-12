@@ -1396,7 +1396,9 @@ def memory_distill_prepare(
 
     `type` selects knowledge or values distillation.
     `date_from` / `date_to` accept `YYYY-MM-DD` (inclusive).
-    `domain` (knowledge) or `category` (values) narrows the scope.
+    `domain` (knowledge) or `category` (values) filters only `existing_items`;
+    `notes` always includes all notes in the selected date range.
+    If note volume is high, narrow `date_from` / `date_to` to reduce payload size.
     """
     resolved = _resolve_dir(memory_dir)
     try:

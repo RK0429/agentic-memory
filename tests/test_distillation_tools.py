@@ -111,6 +111,15 @@ def test_prepare_values_returns_decisions(
     assert "regression tests" in payload["decisions"]
 
 
+def test_prepare_docstring_describes_existing_item_filter_and_date_narrowing() -> None:
+    doc = memory_distill_prepare.__doc__
+
+    assert doc is not None
+    assert "`domain` (knowledge) or `category` (values) filters only `existing_items`" in doc
+    assert "`notes` always includes all notes in the selected date range" in doc
+    assert "If note volume is high, narrow `date_from` / `date_to` to reduce payload size." in doc
+
+
 # ---------------------------------------------------------------------------
 # memory_distill_commit — knowledge
 # ---------------------------------------------------------------------------
