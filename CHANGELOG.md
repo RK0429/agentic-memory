@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-04-12
+
+### BREAKING CHANGES
+
+- Knowledge / Values エントリの公開フィールド `source_type` を `origin` にリネームした。`SourceType` enum の値（`memory_distillation` / `autonomous_research` / `user_taught`）は変更なし。既存の永続化ファイルは `source_type` キーからの後方互換フォールバックで自動移行されるが、API 側のパラメータ名は `origin` に変更が必要
+
+### Changed
+
+- `memory_knowledge_search` / `memory_values_search` で query なし（domain / category のみ）の検索時、結果の `score` が `0.0` から `null` に変更され、スコアリングが行われていないことが明示されるようになった
+
+### Fixed
+
+- `memory_knowledge_update` / `memory_values_update` で存在しない ID を指定した場合、更新フィールドの有無にかかわらず `not_found` が優先的に返るようになった。従来は更新フィールド未指定時に `validation_error` が先に返っていた
+
 ## [0.18.4] - 2026-04-12
 
 ### Fixed
@@ -740,7 +754,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.4...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/RK0429/agentic-memory/compare/v0.18.4...v0.19.0
 [0.18.4]: https://github.com/RK0429/agentic-memory/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/RK0429/agentic-memory/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/RK0429/agentic-memory/compare/v0.18.1...v0.18.2
