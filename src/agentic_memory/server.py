@@ -1058,6 +1058,8 @@ def memory_values_add(
 
     `entries` must be a non-empty list. Each item requires `description` and `category`,
     and may also include `confidence`, `evidence`, and `origin`.
+    When omitted, `confidence` defaults to `0.3` and `origin` defaults to
+    `"user_taught"`.
     Each item's `category` is normalized to kebab-case (e.g. `"coding_style"` → `"coding-style"`).
     Each call validates batch size against `AGENTIC_MEMORY_MAX_BATCH_SIZE` (default 50).
     `origin` is the entry-level provenance classification and accepts

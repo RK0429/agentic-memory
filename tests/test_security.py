@@ -41,3 +41,34 @@ def test_secret_scan_policy_ignores_safe_text() -> None:
     text = "workflow: prefer small changes and focused reviews"
     assert SecretScanPolicy.scan(text) == []
     assert SecretScanPolicy.contains_secret(text) is False
+
+
+def test_secret_scan_detects_ai_service_api_keys() -> None:
+    anthropic_key = "sk-ant-" + "api03-" + "AbCdEfGh1234567890abcd"
+    anthropic_short_key = "sk-ant-" + "AbCdEfGh1234567890abcdef"
+    stripe_live_key = "sk_live_" + "AbCdEfGh1234567890abcdef"
+    stripe_test_key = "sk_test_" + "AbCdEfGh1234567890abcdef"
+    openai_key = "sk-proj-" + "AbCdEfGh1234567890abcdef"
+
+    text = f"""
+    anthropic = {anthropic_key}
+    anthropic_short = {anthropic_short_key}
+    stripe_live = {stripe_live_key}
+    stripe_test = {stripe_test_key}
+    openai = {openai_key}
+    """
+
+    matches = SecretScanPolicy.scan(text)
+    pattern_names = {match.pattern_name for match in matches}
+    ai_service_matches = {
+        match.matched_text for match in matches if match.pattern_name == "ai_service_api_key"
+    }
+
+    assert "ai_service_api_key" in pattern_names
+    assert ai_service_matches == {
+        anthropic_key,
+        anthropic_short_key,
+        stripe_live_key,
+        stripe_test_key,
+        openai_key,
+    }

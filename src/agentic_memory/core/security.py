@@ -45,6 +45,12 @@ class SecretScanPolicy:
             group=1,
         ),
         _PatternRule(
+            name="ai_service_api_key",
+            regex=re.compile(
+                r"\b(?:sk-ant-(?:api\d+-)?|sk_live_|sk_test_|sk-proj-)[A-Za-z0-9_\-]{16,}\b"
+            ),
+        ),
+        _PatternRule(
             name="high_entropy_string",
             regex=re.compile(r"\b[A-Za-z0-9][A-Za-z0-9/_+=-]{31,}\b"),
         ),
