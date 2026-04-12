@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-04-12
+
+### Fixed
+
+- `memory_values_add` / `memory_values_update` の `evidence[].date` / `add_evidence[].date` 形式不正時に「`Invalid \`evidence[].date\`: value must be an ISO 8601 date (YYYY-MM-DD).`」と明示的に返すよう修正。従来は `"Missing fields: date (YYYY-MM-DD)"` と表示され missing と malformed が混同されていた
+- `memory_values_add` / `memory_values_update` で `confidence` が [0.0, 1.0] 範囲外の場合、hint を `"Provide \`confidence\` as a float in the inclusive range [0.0, 1.0] ..."` と具体化
+
 ## [0.18.2] - 2026-04-12
 
 ### Fixed
@@ -727,7 +734,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.3...HEAD
+[0.18.3]: https://github.com/RK0429/agentic-memory/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/RK0429/agentic-memory/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/RK0429/agentic-memory/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/RK0429/agentic-memory/compare/v0.17.0...v0.18.0
