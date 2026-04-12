@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-04-12
+
+### Fixed
+
+- Filter-only and category-only values search now reports a zero score instead of surfacing confidence as score
+- `memory_state_add` now exposes cap-drop info in the response
+
 ## [0.18.1] - 2026-04-12
 
 ### Added
@@ -720,7 +727,8 @@ memory_values_demote(ids=["v-1"], reason="confidence dropped", confirm=True)
 - Optional dense embedding search (sentence-transformers)
 - CI/CD with GitHub Actions
 
-[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/RK0429/agentic-memory/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/RK0429/agentic-memory/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/RK0429/agentic-memory/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/RK0429/agentic-memory/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/RK0429/agentic-memory/compare/v0.16.3...v0.17.0
