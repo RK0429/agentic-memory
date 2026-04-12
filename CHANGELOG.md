@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-04-12
+
+### Added
+
+- `memory_knowledge_search` / `memory_values_search` の応答トップレベルに `score_type` フィールドを追��した。クエリ検索時は `"bm25"`、domain/category-only フィルタ時は `"chronological"` を返す
+- `memory_knowledge_delete` の応答に `had_related` フィールドを追加した。削除対象エントリに related リンクがあったかを示す（プレビュー・実削除の両方）
+- 8 つのバッチ操作ツールの docstring に部分コミット挙動の���明を追記した（`knowledge_add`, `knowledge_update`, `knowledge_delete`, `values_add`, `values_update`, `values_delete`, `values_promote`, `values_demote`）
+
+### Changed
+
+- **BREAKING**: `memory_knowledge_update` のパラメータ `sources` を `add_sources` に改名した。append 操作であることを明示し、`memory_values_update` の `add_evidence` と命名規約を統一した
+- `memory_knowledge_search` / `memory_values_search` で `query=""` かつ `domain=""`（または `category=""`）を渡した場��のエラーメッセージを改善した（`"At least one of query or domain is required (both were empty)"`）
+- `memory_values_search` の category-only フィルタ時のソート順を confidence 降順から `updated_at` 降順に変更し、`memory_knowledge_search` の domain-only フィルタと統一した
+
 ## [0.22.0] - 2026-04-12
 
 ### Added
