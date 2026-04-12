@@ -1999,6 +1999,12 @@ def memory_state_add(
     existing items matching any pattern are removed before adding new items
     (upsert semantics: remove old + add new in one step).
     A single string is also accepted and treated as a one-item list.
+    The response always includes `dropped_by_cap` (int) and `dropped_items` (list[str]);
+    they are `0` / `[]` when the section cap is not exceeded. When the cap is exceeded,
+    `enforce_cap` trims from the tail (oldest existing entries) after new items are
+    prepended, so `after` is the authoritative count of items actually persisted and
+    `dropped_items` reveals which existing entries were evicted. `added` remains the
+    count of items the user attempted to insert and is not reduced by cap trimming.
     Returns command output including updated state path.
     """
     resolved = _resolve_dir(memory_dir)

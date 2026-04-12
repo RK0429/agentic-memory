@@ -1191,7 +1191,7 @@ def cmd_add(
         removed_count = before_count - len(filtered)
         existing = filtered
     merged = deduplicate(new_items + existing)
-    sections[section_name], _ = enforce_cap(merged, get_cap(section_name))
+    sections[section_name], dropped = enforce_cap(merged, get_cap(section_name))
     after_count = len(sections[section_name])
     save_state(state_path, sections)
     summary = json.dumps(
@@ -1202,6 +1202,8 @@ def cmd_add(
             "removed": removed_count,
             "before": before_count,
             "after": after_count,
+            "dropped_by_cap": len(dropped),
+            "dropped_items": [item.text for item in dropped],
         },
         ensure_ascii=False,
     )

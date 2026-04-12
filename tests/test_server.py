@@ -179,6 +179,37 @@ def test_memory_state_add(tmp_memory_dir: Path, monkeypatch) -> None:
     assert "Task B" in str(payload["output"])
 
 
+def test_memory_state_add_reports_cap_drop(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    result = memory_state_add(
+        section="focus",
+        items=["Task 1", "Task 2", "Task 3", "Task 4", "Task 5"],
+        memory_dir=str(tmp_memory_dir),
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["dropped_by_cap"] == 2
+    assert set(payload["dropped_items"]) == {"Task 4", "Task 5"}
+    assert payload["after"] == 3
+
+
+def test_memory_state_add_no_drop_when_under_cap(tmp_memory_dir: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    result = memory_state_add(
+        section="focus",
+        items=["Task A", "Task B"],
+        memory_dir=str(tmp_memory_dir),
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["dropped_by_cap"] == 0
+    assert payload["dropped_items"] == []
+
+
 def test_memory_state_add_accepts_section_alias_and_string_replace(
     tmp_memory_dir: Path, monkeypatch
 ) -> None:
