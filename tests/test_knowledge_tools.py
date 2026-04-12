@@ -542,6 +542,33 @@ def test_memory_knowledge_search_domain_only_returns_null_score(
     assert [entry["score"] for entry in payload["entries"]] == [None, None]
 
 
+def test_memory_knowledge_search_domain_only_ignores_min_score(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    _knowledge_add_payload(
+        tmp_memory_dir,
+        [
+            {"title": "Rust ownership", "content": "Ownership summary", "domain": "rust"},
+            {"title": "Rust lifetimes", "content": "Lifetime summary", "domain": "rust"},
+        ],
+    )
+
+    payload = json.loads(
+        memory_knowledge_search(
+            domain="rust",
+            min_score=9999.0,
+            memory_dir=str(tmp_memory_dir),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert len(payload["entries"]) == 2
+    assert [entry["score"] for entry in payload["entries"]] == [None, None]
+
+
 def test_memory_knowledge_search_min_score_filters_lower_scored_matches(
     tmp_memory_dir: Path,
     monkeypatch,
