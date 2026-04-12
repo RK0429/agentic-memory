@@ -275,6 +275,17 @@ def _validation_error_payload(message: str, *, default_hint: str) -> str:
                 '"autonomous_research", "user_taught".'
             ),
         )
+    if "is not a valid Accuracy" in text or "is not a valid UserUnderstanding" in text:
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint=(
+                'Valid `user_understanding` values: "unknown", "novice", '
+                '"familiar", "proficient", "expert".'
+                if "is not a valid UserUnderstanding" in text
+                else 'Valid `accuracy` values: "verified", "likely", "uncertain".'
+            ),
+        )
     return _error_payload(
         error_type="validation_error",
         message=text,

@@ -403,6 +403,51 @@ def test_memory_knowledge_add_validates_schema_enum_defaults_and_batch_limits(
     assert empty["message"] == "Batch cannot be empty"
 
 
+def test_memory_knowledge_add_lists_valid_accuracy_and_user_understanding_values_in_hint(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    invalid_accuracy = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "Accuracy validation",
+                    "content": "Accuracy validation",
+                    "domain": "rust",
+                    "accuracy": "super-verified",
+                }
+            ],
+        )
+    )
+    assert invalid_accuracy["ok"] is False
+    assert invalid_accuracy["error_type"] == "validation_error"
+    assert "is not a valid Accuracy" in invalid_accuracy["message"]
+    for value in ("verified", "likely", "uncertain"):
+        assert value in invalid_accuracy["hint"]
+
+    invalid_user_understanding = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "title": "User understanding validation",
+                    "content": "User understanding validation",
+                    "domain": "rust",
+                    "user_understanding": "super-expert",
+                }
+            ],
+        )
+    )
+    assert invalid_user_understanding["ok"] is False
+    assert invalid_user_understanding["error_type"] == "validation_error"
+    assert "is not a valid UserUnderstanding" in invalid_user_understanding["message"]
+    for value in ("unknown", "novice", "familiar", "proficient", "expert"):
+        assert value in invalid_user_understanding["hint"]
+
+
 def test_memory_knowledge_search_supports_cjk_full_content_and_toggle(
     tmp_memory_dir: Path,
     monkeypatch,
