@@ -932,6 +932,15 @@ def _require_batch_id(
     return item.strip(), None
 
 
+def _unknown_update_fields(
+    update: Mapping[str, Any],
+    *,
+    allowed_fields: tuple[str, ...],
+) -> list[str]:
+    allowed_keys = {"id", *allowed_fields}
+    return [key for key in update if key not in allowed_keys]
+
+
 _values_service = ValuesService()
 _distillation_preparer = DistillationPreparer()
 _promotion_service = PromotionService()
@@ -1290,6 +1299,25 @@ def memory_values_update(
             results.append(id_error)
             continue
         assert item_id is not None
+
+        allowed_fields = ("confidence", "add_evidence", "description")
+        unknown_fields = _unknown_update_fields(update, allowed_fields=allowed_fields)
+        if unknown_fields:
+            results.append(
+                _batch_item_error_result(
+                    item_index,
+                    item_id=item_id,
+                    message=(
+                        f"Unknown update fields: {', '.join(unknown_fields)}. "
+                        "Allowed update fields are: confidence, add_evidence, description"
+                    ),
+                    hint=(
+                        "Remove unsupported keys and retry with only: confidence, "
+                        "add_evidence, description."
+                    ),
+                )
+            )
+            continue
 
         results.append(
             _batch_item_result_from_payload(
@@ -2919,6 +2947,33 @@ def memory_knowledge_update(
             results.append(id_error)
             continue
         assert item_id is not None
+
+        allowed_fields = (
+            "content",
+            "accuracy",
+            "sources",
+            "user_understanding",
+            "related",
+            "tags",
+        )
+        unknown_fields = _unknown_update_fields(update, allowed_fields=allowed_fields)
+        if unknown_fields:
+            results.append(
+                _batch_item_error_result(
+                    item_index,
+                    item_id=item_id,
+                    message=(
+                        f"Unknown update fields: {', '.join(unknown_fields)}. "
+                        "Allowed update fields are: content, accuracy, sources, "
+                        "user_understanding, related, tags"
+                    ),
+                    hint=(
+                        "Remove unsupported keys and retry with only: content, accuracy, "
+                        "sources, user_understanding, related, tags."
+                    ),
+                )
+            )
+            continue
 
         results.append(
             _batch_item_result_from_payload(

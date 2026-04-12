@@ -731,6 +731,44 @@ def test_memory_values_update_validates_missing_fields_and_add_evidence_shape(
     assert invalid_shape["message"] == "`add_evidence` must be a list of evidence objects."
 
 
+def test_memory_values_update_rejects_unknown_fields(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer explicit evidence batches", "category": "workflow"}],
+        )
+    )
+
+    unknown_only = _single_result(
+        _values_update_payload(tmp_memory_dir, [{"id": added["id"], "unexpected": True}])
+    )
+    assert unknown_only["ok"] is False
+    assert unknown_only["id"] == added["id"]
+    assert unknown_only["error_type"] == "validation_error"
+    assert unknown_only["message"] == (
+        "Unknown update fields: unexpected. "
+        "Allowed update fields are: confidence, add_evidence, description"
+    )
+
+    mixed_fields = _single_result(
+        _values_update_payload(
+            tmp_memory_dir,
+            [{"id": added["id"], "description": "Updated", "unexpected": True}],
+        )
+    )
+    assert mixed_fields["ok"] is False
+    assert mixed_fields["id"] == added["id"]
+    assert mixed_fields["error_type"] == "validation_error"
+    assert mixed_fields["message"] == (
+        "Unknown update fields: unexpected. "
+        "Allowed update fields are: confidence, add_evidence, description"
+    )
+
+
 def test_memory_values_update_missing_id_takes_precedence_over_missing_fields(
     tmp_memory_dir: Path,
     monkeypatch,

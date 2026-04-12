@@ -682,6 +682,47 @@ def test_memory_knowledge_update_validates_missing_fields(
     )
 
 
+def test_memory_knowledge_update_rejects_unknown_fields(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_memory_dir.parent)
+
+    added = _single_result(
+        _knowledge_add_payload(
+            tmp_memory_dir,
+            [{"title": "Rust ownership", "content": "Ownership summary", "domain": "rust"}],
+        )
+    )
+
+    unknown_only = _single_result(
+        _knowledge_update_payload(tmp_memory_dir, [{"id": added["id"], "unexpected": True}])
+    )
+    assert unknown_only["ok"] is False
+    assert unknown_only["id"] == added["id"]
+    assert unknown_only["error_type"] == "validation_error"
+    assert unknown_only["message"] == (
+        "Unknown update fields: unexpected. "
+        "Allowed update fields are: content, accuracy, sources, user_understanding, "
+        "related, tags"
+    )
+
+    mixed_fields = _single_result(
+        _knowledge_update_payload(
+            tmp_memory_dir,
+            [{"id": added["id"], "content": "Updated summary", "unexpected": True}],
+        )
+    )
+    assert mixed_fields["ok"] is False
+    assert mixed_fields["id"] == added["id"]
+    assert mixed_fields["error_type"] == "validation_error"
+    assert mixed_fields["message"] == (
+        "Unknown update fields: unexpected. "
+        "Allowed update fields are: content, accuracy, sources, user_understanding, "
+        "related, tags"
+    )
+
+
 def test_memory_knowledge_update_missing_id_takes_precedence_over_missing_fields(
     tmp_memory_dir: Path,
     monkeypatch,
