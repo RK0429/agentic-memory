@@ -220,7 +220,8 @@ def test_memory_values_add_isolates_secret_and_schema_errors(
     }
     assert payload["results"][2]["ok"] is False
     assert payload["results"][3]["ok"] is False
-    assert "{ref, summary, date (YYYY-MM-DD)}" in payload["results"][3]["hint"]
+    assert '{ref, summary, date: "YYYY-MM-DD"}' in payload["results"][3]["hint"]
+    assert "Missing fields: date" in payload["results"][3]["hint"]
     assert len(list((tmp_memory_dir / "values").glob("*.md"))) == 1
 
 
@@ -250,15 +251,137 @@ def test_memory_values_add_invalid_evidence_date_reports_iso_hint(
 
     assert payload["ok"] is False
     assert payload["error_type"] == "validation_error"
-    assert (
-        payload["message"] == "Invalid `evidence` entry: required fields are missing or malformed."
+    assert payload["message"] == (
+        "Invalid `evidence[].date`: value must be an ISO 8601 date (YYYY-MM-DD)."
     )
-    assert "{ref, summary, date (YYYY-MM-DD)}" in payload["hint"]
+    assert payload["hint"] == (
+        "Format each evidence `date` as YYYY-MM-DD (e.g. '2026-04-12') and retry."
+    )
 
     public_doc = server_module.memory_values_add.__doc__ or ""
     private_doc = server_module._memory_values_add_single.__doc__ or ""
     assert "YYYY-MM-DD" in public_doc
     assert "YYYY-MM-DD" in private_doc
+
+
+def test_memory_values_add_invalid_evidence_date_us_format(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    """`04-12-2026` のような非 ISO 形式の date が ISO 8601 hint を返すこと。"""
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    payload = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer ISO formatted evidence dates strictly",
+                    "category": "workflow",
+                    "confidence": 0.9,
+                    "evidence": [
+                        {
+                            "ref": "memory/2026-04-12/note.md",
+                            "summary": "US format date",
+                            "date": "04-12-2026",
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"].startswith("Invalid `evidence[].date`")
+    assert "YYYY-MM-DD" in payload["hint"]
+
+
+def test_memory_values_add_confidence_out_of_range_reports_specific_hint(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    """confidence=1.5 が confidence 範囲専用の hint を返すこと。"""
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    payload = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer valid confidence ranges",
+                    "category": "workflow",
+                    "confidence": 1.5,
+                }
+            ],
+        )
+    )
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "confidence" in payload["message"].lower()
+    assert "[0.0, 1.0]" in payload["hint"]
+    assert "`confidence`" in payload["hint"]
+
+
+def test_memory_values_add_evidence_missing_date_reports_real_key(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    """date キー欠落時に Missing fields が実キー 'date' を含むこと。"""
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    payload = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "description": "Prefer evidence with required fields",
+                    "category": "workflow",
+                    "evidence": [
+                        {
+                            "ref": "memory/2026-04-12/note.md",
+                            "summary": "missing date key",
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert "Missing fields: date" in payload["hint"]
+    assert '{ref, summary, date: "YYYY-MM-DD"}' in payload["hint"]
+
+
+def test_memory_values_update_invalid_add_evidence_date_us_format(
+    tmp_memory_dir: Path,
+    monkeypatch,
+) -> None:
+    """`memory_values_update` の add_evidence で非 ISO 形式 date がエラーを返すこと。"""
+    monkeypatch.chdir(tmp_memory_dir.parent)
+    added = _single_result(
+        _values_add_payload(
+            tmp_memory_dir,
+            [{"description": "Prefer ISO add_evidence dates", "category": "workflow"}],
+        )
+    )
+    payload = _single_result(
+        _values_update_payload(
+            tmp_memory_dir,
+            [
+                {
+                    "id": added["id"],
+                    "add_evidence": [
+                        {
+                            "ref": "memory/2026-04-12/note.md",
+                            "summary": "US format date",
+                            "date": "04-12-2026",
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+    assert payload["ok"] is False
+    assert payload["error_type"] == "validation_error"
+    assert payload["message"].startswith("Invalid `add_evidence[].date`")
+    assert "YYYY-MM-DD" in payload["hint"]
 
 
 def test_memory_values_add_rejects_malformed_description_per_item_and_continues(

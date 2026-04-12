@@ -646,6 +646,15 @@ def _values_error_payload(message: str) -> str:
             message=text,
             hint="This entry is not currently promoted. No demotion is needed.",
         )
+    if "confidence must be between" in text:
+        return _error_payload(
+            error_type="validation_error",
+            message=text,
+            hint=(
+                "Provide `confidence` as a float in the inclusive range [0.0, 1.0] "
+                "(e.g. 0.8) and retry."
+            ),
+        )
     return _error_payload(
         error_type="validation_error",
         message=text,
@@ -683,9 +692,11 @@ def _required_schema_hint(
     field_name: str,
     schema_fields: tuple[str, ...],
     payload: Any,
+    *,
+    schema_repr: str | None = None,
 ) -> str:
     missing_fields = _missing_required_fields(payload, schema_fields)
-    schema = "{" + ", ".join(schema_fields) + "}"
+    schema = schema_repr if schema_repr is not None else "{" + ", ".join(schema_fields) + "}"
     return (
         f"Pass `{field_name}` as a list of objects with shape {schema}. "
         f"Missing fields: {', '.join(missing_fields)}."
@@ -972,20 +983,17 @@ def _memory_values_add_single(
             message="Invalid `evidence` entry: required fields are missing or malformed.",
             hint=_required_schema_hint(
                 "evidence",
-                ("ref", "summary", "date (YYYY-MM-DD)"),
+                ("ref", "summary", "date"),
                 evidence,
+                schema_repr='{ref, summary, date: "YYYY-MM-DD"}',
             ),
         )
     except ValueError as exc:
         if evidence is not None and "isoformat" in str(exc).lower():
             return _error_payload(
                 error_type="validation_error",
-                message="Invalid `evidence` entry: required fields are missing or malformed.",
-                hint=_required_schema_hint(
-                    "evidence",
-                    ("ref", "summary", "date (YYYY-MM-DD)"),
-                    evidence,
-                ),
+                message="Invalid `evidence[].date`: value must be an ISO 8601 date (YYYY-MM-DD).",
+                hint="Format each evidence `date` as YYYY-MM-DD (e.g. '2026-04-12') and retry.",
             )
         return _values_error_payload(str(exc))
 
@@ -1165,8 +1173,9 @@ def _memory_values_update_single(
             message="Invalid `add_evidence` entry: required fields are missing or malformed.",
             hint=_required_schema_hint(
                 "add_evidence",
-                ("ref", "summary", "date (YYYY-MM-DD)"),
+                ("ref", "summary", "date"),
                 add_evidence,
+                schema_repr='{ref, summary, date: "YYYY-MM-DD"}',
             ),
         )
     except TypeError as exc:
@@ -1177,8 +1186,9 @@ def _memory_values_update_single(
             message="Invalid `add_evidence` entry: required fields are missing or malformed.",
             hint=_required_schema_hint(
                 "add_evidence",
-                ("ref", "summary", "date (YYYY-MM-DD)"),
+                ("ref", "summary", "date"),
                 add_evidence,
+                schema_repr='{ref, summary, date: "YYYY-MM-DD"}',
             ),
         )
     except FileNotFoundError as exc:
@@ -1187,12 +1197,10 @@ def _memory_values_update_single(
         if add_evidence is not None and "isoformat" in str(exc).lower():
             return _error_payload(
                 error_type="validation_error",
-                message="Invalid `add_evidence` entry: required fields are missing or malformed.",
-                hint=_required_schema_hint(
-                    "add_evidence",
-                    ("ref", "summary", "date (YYYY-MM-DD)"),
-                    add_evidence,
+                message=(
+                    "Invalid `add_evidence[].date`: value must be an ISO 8601 date (YYYY-MM-DD)."
                 ),
+                hint="Format each evidence `date` as YYYY-MM-DD (e.g. '2026-04-12') and retry.",
             )
         return _values_error_payload(str(exc))
 
