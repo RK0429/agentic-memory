@@ -87,6 +87,8 @@ class SecretScanPolicy:
     def _is_high_entropy_candidate(value: str) -> bool:
         if len(value) < 32:
             return False
+        if len(value) in {32, 40, 64} and re.fullmatch(r"[0-9a-fA-F]+", value):
+            return False
         if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
             return False
         if value.lower() == value or value.upper() == value:

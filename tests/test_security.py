@@ -43,6 +43,32 @@ def test_secret_scan_policy_ignores_safe_text() -> None:
     assert SecretScanPolicy.contains_secret(text) is False
 
 
+def test_secret_scan_policy_ignores_hex_digests_but_keeps_entropy_detection() -> None:
+    md5_digest = "d41d8cd98f00b204e9800998ecf8427E"
+    sha1_digest = "Da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    sha256_digest = "E3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    entropy = "X7f0sM8qL2nP5vR9" + "tW1yZ4cB6dH3kJ8m"
+
+    digest_text = f"""
+    md5 = {md5_digest}
+    sha1 = {sha1_digest}
+    sha256 = {sha256_digest}
+    """
+    assert SecretScanPolicy.scan(digest_text) == []
+    assert SecretScanPolicy.contains_secret(digest_text) is False
+
+    labeled_matches = SecretScanPolicy.scan(f"api_key={sha256_digest}")
+    assert "generic_api_token" in {match.pattern_name for match in labeled_matches}
+    assert any(
+        match.pattern_name == "generic_api_token" and match.matched_text == sha256_digest
+        for match in labeled_matches
+    )
+
+    matches = SecretScanPolicy.scan(f"entropy = {entropy}")
+    assert [match.pattern_name for match in matches] == ["high_entropy_string"]
+    assert matches[0].matched_text == entropy
+
+
 def test_secret_scan_detects_ai_service_api_keys() -> None:
     anthropic_key = "sk-ant-" + "api03-" + "AbCdEfGh1234567890abcd"
     anthropic_short_key = "sk-ant-" + "AbCdEfGh1234567890abcdef"
