@@ -2722,6 +2722,9 @@ def memory_knowledge_add(
     `"memory_note"`, `"web"`, `"user_direct"`, `"document"`, `"code"`, or `"other"`.
     For backward compatibility, each batch item may also pass `source_type` as an
     alias of `origin`; if both are present, `origin` takes precedence.
+    `origin`/`source_type` are entry-level provenance fields for the Knowledge entry.
+    Do not confuse them with `sources[].type`, which is the evidence/reference type
+    for an individual source/reference.
     Secret detection rejects only the affected item with `validation_error`.
     Batch items are processed independently; a failure in one item does not
     roll back other items (partial commit).

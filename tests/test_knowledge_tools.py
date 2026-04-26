@@ -643,6 +643,8 @@ def test_memory_knowledge_add_docstring_documents_sources_schema() -> None:
     assert "Each source object requires `type`, `ref`, and `summary` fields." in add_doc
     assert "`sources[].type` is the per-reference kind" in add_doc
     assert "`source_type` as an" in add_doc
+    assert "`origin`/`source_type` are entry-level provenance fields" in add_doc
+    assert "`sources[].type`, which is the evidence/reference type" in add_doc
     assert "partial commit" in add_doc
     for value in (
         '"memory_distillation"',
