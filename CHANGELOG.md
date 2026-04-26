@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-04-26
+
+### Changed
+
+- `memory_knowledge_add` のツール説明文で、Knowledge entry 全体の `origin` / `source_type` と個別参照の `sources[].type` の違いを明確化した。
+
+### Fixed
+
+- Secret scan の高エントロピー検出で、MD5 / SHA-1 / SHA-256 形式の hex digest を通常の digest として扱い、誤検知しないようにした。明示的な API key ラベル付き値や通常の高エントロピー文字列の検出は維持される。
+
 ## [0.23.1] - 2026-04-13
 
 ### Changed
